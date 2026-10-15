@@ -31,4 +31,4 @@ QT_QPA_PLATFORM=offscreen pytest
 
 - commit message 遵循 Conventional Commits 1.0.0, description 使用中文.
 - 代码, Markdown, commit message 中统一使用半角标点.
-- lint: `pylint main.py`(配置见 `.pylintrc`).
+- lint: `pylint --rcfile=../.pylintrc main.py`(配置在课程根目录 `.pylintrc`).

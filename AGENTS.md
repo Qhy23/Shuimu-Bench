@@ -17,7 +17,8 @@
 
 - **标点**: 代码, Markdown, commit message 中全部使用半角标点(与用户的聊天不受此限).
 - **Commit**: 遵循 Conventional Commits 1.0.0 (https://www.conventionalcommits.org/zh-hans/v1.0.0/), `<description>` 使用中文. 示例: `feat: 新增课程工作区的 SQLite 索引`.
-- **lint**: 提交前运行 `.venv/bin/pylint <changed-files>`; PySide6 的 E0611 由 `.pylintrc` 的 extension-pkg-allow-list 处理, 不要用行内 disable 绕过.
+- **lint**: 提交前运行 `.venv/bin/pylint --rcfile=../.pylintrc <changed-files>`; `.pylintrc` 位于课程根目录(项目外一层), PySide6 的 E0611 由其 extension-pkg-allow-list 处理, 不要用行内 disable 绕过.
+- **Commit 署名**: AI 参与生成的提交在 message 末尾加 trailer: `Co-Authored-By: Kimi K3 (OpenCode) <noreply@opencode.ai>`.
 - **安全**: 不提交 API Key 等凭据; `.env`, `.venv/`, `*.db` 已在 .gitignore.
 
 ## 范围控制
@@ -30,7 +31,7 @@
 
 ```bash
 source .venv/bin/activate
-python main.py                          # 运行
-QT_QPA_PLATFORM=offscreen pytest        # 测试
-pylint main.py                          # lint
+python main.py                                # 运行
+QT_QPA_PLATFORM=offscreen pytest              # 测试
+pylint --rcfile=../.pylintrc main.py          # lint(配置在课程根目录)
 ```
