@@ -1,0 +1,21 @@
+# 本地凭据与配置
+.env
+.env.*
+!.env.example
+
+# Python 环境与缓存
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 打包产物
+build/
+dist/
+*.spec
+
+# 本地数据(开发期生成的数据库等)
+*.db
+*.db-shm
+*.db-wal
