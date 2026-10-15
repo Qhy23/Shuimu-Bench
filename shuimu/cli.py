@@ -1,5 +1,9 @@
 """命令行接口: 与 GUI 共用存储与整理逻辑, 供无头环境与 AI 工具外部测试.
 
+两种用法:
+  一次性: python cli.py <子命令> [参数]
+  交互式: python cli.py            (不带子命令进入 REPL, 逐行输入命令)
+
 示例:
   python cli.py add-course 高等数学
   python cli.py add 1 /path/to/file.pdf
@@ -11,6 +15,7 @@
 
 import argparse
 import os
+import shlex
 import sys
 
 from .app import default_db_path
@@ -24,8 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     """构建参数解析器."""
     parser = argparse.ArgumentParser(prog="shuimu", description=__doc__)
     parser.add_argument("--db", default=default_db_path(),
-                        help="数据库路径(默认 data/shuimu.db)")
-    sub = parser.add_subparsers(dest="command", required=True)
+                        help="数据库路径(默认 data/shuimu.db; 仅启动时生效)")
+    sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("courses", help="列出全部课程")
 
@@ -73,51 +78,85 @@ def _print_resources(storage: Storage, course_id=None) -> None:
                   f" | {status} | {res['path_or_url']}")
 
 
+def run_command(storage: Storage, args) -> int:
+    """执行一条已解析的命令, 返回退出码. 不持有连接, 由调用方管理."""
+    if args.command == "courses":
+        for c in storage.list_courses():
+            print(f"#{c['id']} {c['name']}")
+
+    elif args.command == "add-course":
+        cid = storage.add_course(args.name)
+        print(f"已建课程 #{cid} {args.name}")
+
+    elif args.command == "add":
+        kind = _detect_kind(args.target)
+        if kind != "link" and not os.path.exists(args.target):
+            print(f"路径不存在: {args.target}", file=sys.stderr)
+            return 2
+        rid = storage.add_resource(args.course_id, kind, args.target)
+        storage.log_operation("add_resource", rid, path_snapshot=args.target)
+        print(f"已登记 #{rid} [{KIND_LABEL[kind]}] {args.target}")
+
+    elif args.command == "resources":
+        _print_resources(storage, args.course_id)
+
+    elif args.command == "remove":
+        res = storage.get_resource(args.resource_id)
+        if res is None:
+            print(f"资源不存在: #{args.resource_id}", file=sys.stderr)
+            return 2
+        storage.remove_resource(args.resource_id)
+        storage.log_operation("remove_resource",
+                              path_snapshot=res["path_or_url"])
+        print(f"已移除 #{args.resource_id}")
+
+    elif args.command == "organize":
+        return _cmd_organize(storage, args)
+
+    elif args.command == "log":
+        for op in storage.list_operations(args.limit):
+            print(f"#{op['id']} [{op['status']}] {op['action']}"
+                  f" | {op['path_snapshot'] or '-'} | {op['detail'] or ''}")
+    return 0
+
+
 def main(argv=None) -> int:
-    """CLI 入口, 返回进程退出码."""
+    """CLI 入口: 带子命令则单次执行, 不带则进入交互模式."""
     args = build_parser().parse_args(argv)
     storage = Storage(args.db)
     try:
-        if args.command == "courses":
-            for c in storage.list_courses():
-                print(f"#{c['id']} {c['name']}")
-
-        elif args.command == "add-course":
-            cid = storage.add_course(args.name)
-            print(f"已建课程 #{cid} {args.name}")
-
-        elif args.command == "add":
-            kind = _detect_kind(args.target)
-            if kind != "link" and not os.path.exists(args.target):
-                print(f"路径不存在: {args.target}", file=sys.stderr)
-                return 2
-            rid = storage.add_resource(args.course_id, kind, args.target)
-            storage.log_operation("add_resource", rid, path_snapshot=args.target)
-            print(f"已登记 #{rid} [{KIND_LABEL[kind]}] {args.target}")
-
-        elif args.command == "resources":
-            _print_resources(storage, args.course_id)
-
-        elif args.command == "remove":
-            res = storage.get_resource(args.resource_id)
-            if res is None:
-                print(f"资源不存在: #{args.resource_id}", file=sys.stderr)
-                return 2
-            storage.remove_resource(args.resource_id)
-            storage.log_operation("remove_resource",
-                                  path_snapshot=res["path_or_url"])
-            print(f"已移除 #{args.resource_id}")
-
-        elif args.command == "organize":
-            return _cmd_organize(storage, args)
-
-        elif args.command == "log":
-            for op in storage.list_operations(args.limit):
-                print(f"#{op['id']} [{op['status']}] {op['action']}"
-                      f" | {op['path_snapshot'] or '-'} | {op['detail'] or ''}")
+        if args.command is None:
+            return repl(storage)
+        return run_command(storage, args)
     finally:
         storage.close()
-    return 0
+
+
+def repl(storage: Storage) -> int:
+    """交互模式: 一次启动, 逐行输入子命令; help 查看用法, exit/quit 退出."""
+    print("水木工作台 CLI 交互模式. 输入 help 查看命令, exit 退出.")
+    parser = build_parser()
+    while True:
+        try:
+            line = input("shuimu> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not line:
+            continue
+        if line in ("exit", "quit"):
+            return 0
+        if line == "help":
+            parser.print_help()
+            continue
+        try:
+            args = parser.parse_args(shlex.split(line))
+        except SystemExit:
+            continue  # argparse 解析失败时已打印错误, 不退出 REPL
+        if getattr(args, "command", None):
+            run_command(storage, args)
+        else:
+            parser.print_help()
 
 
 def _cmd_organize(storage: Storage, args) -> int:

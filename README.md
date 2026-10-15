@@ -32,7 +32,7 @@ python main.py        # GUI
 python cli.py --help  # CLI(与 GUI 共用同一数据库, 供无头环境与 AI 工具测试)
 ```
 
-CLI 示例: `python cli.py add-course 高等数学` / `python cli.py add 1 /path/file.pdf` / `python cli.py organize <目录> [--yes]` / `python cli.py log`.
+CLI 两种用法: `python cli.py <子命令>` 单次执行; 不带子命令 `python cli.py` 进入交互模式(一次启动逐行输入, help 查看命令, exit 退出). 子命令示例: `add-course 高等数学` / `add 1 /path/file.pdf` / `organize <目录> [--yes]` / `log`.
 
 开发环境: Linux/WSL2; Windows 打包后续处理.
 

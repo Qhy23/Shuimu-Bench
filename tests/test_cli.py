@@ -62,6 +62,28 @@ class TestResourceCommands:
         assert f.exists()  # 磁盘文件不动
 
 
+class TestRepl:
+    """交互模式: 不带子命令启动, 逐行输入."""
+
+    def test_repl_session(self, capsys, db, monkeypatch):
+        """REPL 内连续执行多条命令后 exit 退出."""
+        inputs = iter(["add-course 数学", "courses", "bad-cmd", "exit"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+        code = main(["--db", db])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "已建课程" in out
+        assert "数学" in out  # courses 输出
+        # bad-cmd 不应中断 REPL(argparse 错误后继续)
+
+    def test_repl_eof_exits(self, db, monkeypatch):
+        """EOF(Ctrl+D)正常退出."""
+        def raise_eof(_):
+            raise EOFError
+        monkeypatch.setattr("builtins.input", raise_eof)
+        assert main(["--db", db]) == 0
+
+
 class TestOrganizeCommand:
     """整理子命令: 预览不动作, --yes 才执行."""
 
