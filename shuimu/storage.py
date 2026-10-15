@@ -77,7 +77,9 @@ class Storage:
     # ---- 资源 ----
 
     def add_resource(self, course_id: int, kind: str, path_or_url: str) -> int:
-        """把文件/目录/链接登记进课程. 文件类资源记录 size+mtime 供变更检测."""
+        """把文件/目录/链接登记进课程. 文件类资源统一存绝对路径并记录 size+mtime."""
+        if kind != "link":
+            path_or_url = os.path.abspath(path_or_url)
         size, mtime = None, None
         if kind in ("file", "dir") and os.path.exists(path_or_url):
             stat = os.stat(path_or_url)

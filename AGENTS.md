@@ -31,7 +31,15 @@
 
 ```bash
 source .venv/bin/activate
-python main.py                                # 运行
+python main.py                                # 运行 GUI
+python cli.py --help                          # CLI(无头/外部测试用)
 QT_QPA_PLATFORM=offscreen pytest              # 测试
-pylint --rcfile=../.pylintrc main.py          # lint(配置在课程根目录)
+pylint --rcfile=../.pylintrc main.py shuimu/ tests/   # lint(配置在课程根目录)
 ```
+
+## 数据组织
+
+- 数据库: `project/data/shuimu.db`(SQLite, WAL; 已 gitignore).
+- 三表: `courses`(课程), `resources`(索引: kind 为 file/dir/link, 文件类统一存绝对路径 + size/mtime), `operations`(操作留痕, params/detail 为 JSON).
+- 索引只存引用, 不复制文件本体; 文件失效保留记录, 由 UI 标灰.
+- 测试伪资料: 课程根目录 `content/`(仓库外), 单元测试一律用 tmp_path 保持隔离.

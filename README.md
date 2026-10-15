@@ -28,10 +28,15 @@ tests/               # pytest 单元测试 + GUI 冒烟测试
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python main.py
+python main.py        # GUI
+python cli.py --help  # CLI(与 GUI 共用同一数据库, 供无头环境与 AI 工具测试)
 ```
 
+CLI 示例: `python cli.py add-course 高等数学` / `python cli.py add 1 /path/file.pdf` / `python cli.py organize <目录> [--yes]` / `python cli.py log`.
+
 开发环境: Linux/WSL2; Windows 打包后续处理.
+
+测试用伪资料在课程根目录 `content/`(课程目录树 + 待整理散乱目录).
 
 ## 测试
 

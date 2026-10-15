@@ -93,6 +93,19 @@ class TestResource:
         with pytest.raises(Exception):
             storage.add_resource(course_id, "file", str(f))
 
+    def test_relative_path_stored_absolute(self, storage, course_id, tmp_path,
+                                           monkeypatch):
+        """相对路径登记后转为绝对路径, 换工作目录后校验仍有效."""
+        f = tmp_path / "rel.txt"
+        f.write_text("x")
+        monkeypatch.chdir(tmp_path)
+        rid = storage.add_resource(course_id, "file", "rel.txt")
+        row = storage.get_resource(rid)
+        assert os.path.isabs(row["path_or_url"])
+        monkeypatch.chdir("/")
+        exists, _ = Storage.check_resource(row)
+        assert exists
+
 
 class TestOperations:
     """操作留痕."""
