@@ -107,6 +107,31 @@ class TestResource:
         assert exists
 
 
+class TestDeleteCourse:
+    """删除课程: 级联移除资源索引, 磁盘文件不动."""
+
+    def test_cascade_removes_resources(self, storage, tmp_path):
+        """删课程后其资源索引一并消失(依赖外键 CASCADE), 磁盘文件保留."""
+        cid = storage.add_course("临时课")
+        f = tmp_path / "keep.txt"
+        f.write_text("x")
+        rid = storage.add_resource(cid, "file", str(f))
+        removed = storage.delete_course(cid)
+        assert removed == 1
+        assert storage.get_course(cid) is None
+        assert storage.get_resource(rid) is None
+        assert f.exists()
+
+    def test_other_courses_unaffected(self, storage, course_id, tmp_path):
+        """删一门课不影响其他课程的资源."""
+        f = tmp_path / "x.txt"
+        f.write_text("x")
+        rid = storage.add_resource(course_id, "file", str(f))
+        other = storage.add_course("别的课")
+        storage.delete_course(other)
+        assert storage.get_resource(rid) is not None
+
+
 class TestOperations:
     """操作留痕."""
 

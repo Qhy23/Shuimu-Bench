@@ -47,6 +47,8 @@ class Storage:
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
+        # SQLite 默认不启用外键, 必须逐连接打开, 否则 ON DELETE CASCADE 不生效.
+        self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -73,6 +75,24 @@ class Storage:
         if courses:
             return courses[0]["id"]
         return self.add_course("未分组")
+
+    def get_course(self, course_id: int) -> sqlite3.Row:
+        """按 id 取课程."""
+        return self._conn.execute(
+            "SELECT * FROM courses WHERE id = ?", (course_id,)
+        ).fetchone()
+
+    def delete_course(self, course_id: int) -> int:
+        """删除课程, 其资源索引经外键 CASCADE 一并移除(不动磁盘文件).
+
+        返回被级联移除的资源条数(供留痕与提示).
+        """
+        count = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM resources WHERE course_id = ?", (course_id,)
+        ).fetchone()["n"]
+        self._conn.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+        self._conn.commit()
+        return count
 
     # ---- 资源 ----
 

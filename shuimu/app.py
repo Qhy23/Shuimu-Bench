@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         row.addWidget(_button("添加链接", self._add_link))
         layout.addLayout(row)
         row2 = QHBoxLayout()
+        row2.addWidget(_button("删除课程", self._delete_course))
         row2.addWidget(_button("移除选中", self._remove_selected))
         row2.addWidget(_button("刷新", self.reload_courses))
         layout.addLayout(row2)
@@ -202,13 +203,40 @@ class MainWindow(QMainWindow):
         self.refresh_log()
         self.statusBar().showMessage(f"已加入: {path}")
 
+    def _delete_course(self) -> None:
+        """删除选中课程: 确认后级联移除其资源索引, 磁盘文件不动."""
+        item = self.course_tree.currentItem()
+        if item is None:
+            self.statusBar().showMessage("请先选中课程")
+            return
+        course_id = item.data(0, ROLE_COURSE_ID)
+        if course_id is None:
+            course_id = item.parent().data(0, ROLE_COURSE_ID)
+        course = self.storage.get_course(course_id)
+        if course is None:
+            return
+        n = len(self.storage.list_resources(course_id))
+        answer = QMessageBox.question(
+            self, "删除课程",
+            f"删除课程「{course['name']}」及其 {n} 条资源索引?\n(磁盘文件不受影响)")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        removed = self.storage.delete_course(course_id)
+        self.storage.log_operation(
+            "delete_course", path_snapshot=course["name"],
+            detail={"removed_resources": removed})
+        self.storage.ensure_default_course()
+        self.reload_courses()
+        self.refresh_log()
+        self.statusBar().showMessage(f"已删除课程: {course['name']}")
+
     def _remove_selected(self) -> None:
         item = self.course_tree.currentItem()
         if item is None:
             return
         rid = item.data(0, ROLE_RESOURCE_ID)
         if rid is None:
-            self.statusBar().showMessage("课程节点暂不支持删除")
+            self.statusBar().showMessage("选中的是课程节点, 请用「删除课程」按钮")
             return
         res = self.storage.get_resource(rid)
         if res is None:

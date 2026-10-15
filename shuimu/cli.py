@@ -37,6 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_add_course = sub.add_parser("add-course", help="新建课程")
     p_add_course.add_argument("name")
 
+    p_del_course = sub.add_parser("del-course", help="删除课程及其资源索引(不动磁盘)")
+    p_del_course.add_argument("course_id", type=int)
+
     p_add = sub.add_parser("add", help="把文件/目录/链接登记进课程")
     p_add.add_argument("course_id", type=int)
     p_add.add_argument("target", help="本地路径或 http(s) 链接")
@@ -87,6 +90,17 @@ def run_command(storage: Storage, args) -> int:
     elif args.command == "add-course":
         cid = storage.add_course(args.name)
         print(f"已建课程 #{cid} {args.name}")
+
+    elif args.command == "del-course":
+        course = storage.get_course(args.course_id)
+        if course is None:
+            print(f"课程不存在: #{args.course_id}", file=sys.stderr)
+            return 2
+        removed = storage.delete_course(args.course_id)
+        storage.log_operation("delete_course", path_snapshot=course["name"],
+                              detail={"removed_resources": removed})
+        print(f"已删除课程 #{args.course_id} {course['name']}"
+              f"(级联移除 {removed} 条资源索引)")
 
     elif args.command == "add":
         kind = _detect_kind(args.target)

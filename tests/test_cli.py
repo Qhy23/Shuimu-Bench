@@ -62,6 +62,29 @@ class TestResourceCommands:
         assert f.exists()  # 磁盘文件不动
 
 
+class TestDeleteCourseCommand:
+    """del-course 子命令."""
+
+    def test_delete_course(self, capsys, db, tmp_path):
+        """删除课程并级联移除其资源, 留痕可查."""
+        run(capsys, db, "add-course", "临时课")
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        run(capsys, db, "add", "1", str(f))
+        code, out = run(capsys, db, "del-course", "1")
+        assert code == 0 and "级联移除 1" in out
+        _, out = run(capsys, db, "courses")
+        assert "临时课" not in out
+        _, log = run(capsys, db, "log")
+        assert "delete_course" in log
+        assert f.exists()
+
+    def test_delete_missing_course_rejected(self, capsys, db):
+        """删除不存在的课程返回退出码 2."""
+        code, _ = run(capsys, db, "del-course", "999")
+        assert code == 2
+
+
 class TestRepl:
     """交互模式: 不带子命令启动, 逐行输入."""
 
