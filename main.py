@@ -4,7 +4,8 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from shuimu.app import MainWindow, default_db_path
+from shuimu.app import MainWindow
+from shuimu.paths import default_db_path
 from shuimu.storage import Storage
 
 APP_TITLE = "水木工作台 ShuimuBench"

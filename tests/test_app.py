@@ -16,13 +16,13 @@ def test_main_window_structure(qtbot, tmp_path):
     storage.close()
 
 
-def test_add_link_via_storage_shows_in_tree(qtbot, tmp_path):
-    """登记链接资源后, 课程树出现对应节点."""
+def test_add_link_via_controller_shows_in_tree(qtbot, tmp_path):
+    """经 controller 登记链接后, 课程树出现对应节点."""
     storage = Storage(str(tmp_path / "ui2.db"))
     window = MainWindow(storage)
     qtbot.addWidget(window)
     course_id = storage.list_courses()[0]["id"]
-    storage.add_resource(course_id, "link", "https://learn.tsinghua.edu.cn")
+    window.ctl.add_resource(course_id, "https://learn.tsinghua.edu.cn")
     window.reload_courses()
     course_node = window.course_tree.topLevelItem(0)
     assert course_node.childCount() == 1

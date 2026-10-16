@@ -44,7 +44,9 @@ class Storage:
     """工作区数据库. 所有写操作立即提交."""
 
     def __init__(self, db_path: str):
-        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        db_path = os.path.abspath(db_path)
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self.db_path = db_path
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
         # SQLite 默认不启用外键, 必须逐连接打开, 否则 ON DELETE CASCADE 不生效.

@@ -31,18 +31,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import organize
+from .controller import Controller
 from .storage import Storage
 
 KIND_LABEL = {"file": "[文件]", "dir": "[目录]", "link": "[链接]"}
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1
-
-
-def default_db_path() -> str:
-    """默认数据库位置: 项目根目录 data/shuimu.db."""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(root, "data", "shuimu.db")
 
 
 def _button(text: str, slot) -> QPushButton:
@@ -58,7 +52,7 @@ class MainWindow(QMainWindow):
     def __init__(self, storage: Storage):
         super().__init__()
         self.storage = storage
-        self.storage.ensure_default_course()
+        self.ctl = Controller(storage)
         self._plan = []
         self.dir_edit = None
         self.plan_table = None
@@ -165,8 +159,11 @@ class MainWindow(QMainWindow):
 
     def _add_course(self) -> None:
         name, ok = QInputDialog.getText(self, "新建课程", "课程名称:")
-        if ok and name.strip():
-            self.storage.add_course(name.strip())
+        if not ok:
+            return
+        result = self.ctl.add_course(name)
+        self.statusBar().showMessage(result.message)
+        if result.ok:
             self.reload_courses()
 
     def _add_link(self) -> None:
@@ -177,14 +174,11 @@ class MainWindow(QMainWindow):
         url, ok = QInputDialog.getText(self, "添加链接", "URL(http/https):")
         if not ok or not url.strip():
             return
-        url = url.strip()
-        if not url.startswith(("http://", "https://")):
-            self.statusBar().showMessage("链接需以 http:// 或 https:// 开头")
-            return
-        rid = self.storage.add_resource(course_id, "link", url)
-        self.storage.log_operation("add_resource", rid, path_snapshot=url)
-        self.reload_courses()
-        self.refresh_log()
+        result = self.ctl.add_resource(course_id, url.strip())
+        self.statusBar().showMessage(result.message)
+        if result.ok:
+            self.reload_courses()
+            self.refresh_log()
 
     def _add_selected_files(self) -> None:
         course_id = self._current_course_id()
@@ -195,13 +189,11 @@ class MainWindow(QMainWindow):
         if not index.isValid():
             self.statusBar().showMessage("请先在中栏选中文件或目录")
             return
-        path = self.file_model.filePath(index)
-        kind = "dir" if os.path.isdir(path) else "file"
-        rid = self.storage.add_resource(course_id, kind, path)
-        self.storage.log_operation("add_resource", rid, path_snapshot=path)
-        self.reload_courses()
-        self.refresh_log()
-        self.statusBar().showMessage(f"已加入: {path}")
+        result = self.ctl.add_resource(course_id, self.file_model.filePath(index))
+        self.statusBar().showMessage(result.message)
+        if result.ok:
+            self.reload_courses()
+            self.refresh_log()
 
     def _delete_course(self) -> None:
         """删除选中课程: 确认后级联移除其资源索引, 磁盘文件不动."""
@@ -221,14 +213,10 @@ class MainWindow(QMainWindow):
             f"删除课程「{course['name']}」及其 {n} 条资源索引?\n(磁盘文件不受影响)")
         if answer != QMessageBox.StandardButton.Yes:
             return
-        removed = self.storage.delete_course(course_id)
-        self.storage.log_operation(
-            "delete_course", path_snapshot=course["name"],
-            detail={"removed_resources": removed})
-        self.storage.ensure_default_course()
+        result = self.ctl.delete_course(course_id)
+        self.statusBar().showMessage(result.message)
         self.reload_courses()
         self.refresh_log()
-        self.statusBar().showMessage(f"已删除课程: {course['name']}")
 
     def _remove_selected(self) -> None:
         item = self.course_tree.currentItem()
@@ -246,9 +234,8 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.storage.remove_resource(rid)
-        self.storage.log_operation(
-            "remove_resource", path_snapshot=res["path_or_url"])
+        result = self.ctl.remove_resource(rid)
+        self.statusBar().showMessage(result.message)
         self.reload_courses()
         self.refresh_log()
 
@@ -304,38 +291,31 @@ class MainWindow(QMainWindow):
         self.dir_edit.setText(path)
 
     def _preview_plan(self) -> None:
-        try:
-            self._plan = organize.build_plan(self.dir_edit.text().strip())
-        except NotADirectoryError:
-            self.statusBar().showMessage("目录不存在, 请检查输入")
+        directory = self.dir_edit.text().strip()
+        result = self.ctl.preview_organize(directory)
+        self.statusBar().showMessage(result.message)
+        if not result.ok:
             return
+        self._plan = result.detail["plan"]
         self.plan_table.setRowCount(len(self._plan))
         for row, item in enumerate(self._plan):
             self.plan_table.setItem(row, 0, QTableWidgetItem(item.src))
             self.plan_table.setItem(row, 1, QTableWidgetItem(item.dst))
-        self.statusBar().showMessage(f"预览: {len(self._plan)} 个文件待移动")
 
     def _execute_plan(self) -> None:
         plan = self._plan
+        directory = self.dir_edit.text().strip()
         if not plan:
             self.statusBar().showMessage("请先生成预览")
             return
         answer = QMessageBox.question(
             self, "执行整理", f"将移动 {len(plan)} 个文件, 确认执行?")
         if answer != QMessageBox.StandardButton.Yes:
-            self.storage.log_operation(
-                "organize", status="cancelled",
-                path_snapshot=self.dir_edit.text().strip())
+            self.ctl.cancel_organize(directory)
             self.refresh_log()
             return
-        moved, errors = organize.execute_plan(plan)
-        status = "ok" if not errors else "failed"
-        detail = {"moved": moved, "errors": errors} if errors else {"moved": moved}
-        self.storage.log_operation(
-            "organize", status=status,
-            params={"directory": self.dir_edit.text().strip()},
-            path_snapshot=self.dir_edit.text().strip(), detail=detail)
+        result = self.ctl.execute_organize(directory, plan)
         self.plan_table.setRowCount(0)
         self._plan = []
         self.refresh_log()
-        self.statusBar().showMessage(f"整理完成: 移动 {moved} 个, 失败 {len(errors)} 个")
+        self.statusBar().showMessage(result.message)

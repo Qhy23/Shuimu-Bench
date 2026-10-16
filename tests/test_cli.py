@@ -67,14 +67,15 @@ class TestDeleteCourseCommand:
 
     def test_delete_course(self, capsys, db, tmp_path):
         """删除课程并级联移除其资源, 留痕可查."""
-        run(capsys, db, "add-course", "临时课")
+        run(capsys, db, "add-course", "临时课")  # #1 是自动建的"未分组", 临时课为 #2
         f = tmp_path / "a.txt"
         f.write_text("x")
-        run(capsys, db, "add", "1", str(f))
-        code, out = run(capsys, db, "del-course", "1")
+        run(capsys, db, "add", "2", str(f))
+        code, out = run(capsys, db, "del-course", "2")
         assert code == 0 and "级联移除 1" in out
         _, out = run(capsys, db, "courses")
         assert "临时课" not in out
+        assert "未分组" in out  # 默认课程不受影响
         _, log = run(capsys, db, "log")
         assert "delete_course" in log
         assert f.exists()
@@ -125,7 +126,7 @@ class TestOrganizeCommand:
         target.mkdir()
         (target / "a.pdf").write_text("x")
         code, out = run(capsys, db, "organize", str(target), "--yes")
-        assert code == 0 and "已移动 1" in out
+        assert code == 0 and "整理完成" in out and "移动 1" in out
         assert (target / "文档" / "a.pdf").exists()
         _, log = run(capsys, db, "log")
         assert "organize" in log

@@ -14,12 +14,11 @@
 """
 
 import argparse
-import os
 import shlex
 import sys
 
-from .app import default_db_path
-from .organize import build_plan, execute_plan
+from .controller import Controller
+from .paths import default_db_path
 from .storage import Storage
 
 KIND_LABEL = {"file": "文件", "dir": "目录", "link": "链接"}
@@ -60,13 +59,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _detect_kind(target: str) -> str:
-    """按形态判断资源类型: http(s) 为链接, 目录为 dir, 其余为 file."""
-    if target.startswith(("http://", "https://")):
-        return "link"
-    return "dir" if os.path.isdir(target) else "file"
-
-
 def _print_resources(storage: Storage, course_id=None) -> None:
     """打印资源列表; course_id 为 None 时遍历全部课程."""
     courses = storage.list_courses()
@@ -81,54 +73,40 @@ def _print_resources(storage: Storage, course_id=None) -> None:
                   f" | {status} | {res['path_or_url']}")
 
 
-def run_command(storage: Storage, args) -> int:
+def run_command(ctl: Controller, args) -> int:
     """执行一条已解析的命令, 返回退出码. 不持有连接, 由调用方管理."""
     if args.command == "courses":
-        for c in storage.list_courses():
+        for c in ctl.storage.list_courses():
             print(f"#{c['id']} {c['name']}")
 
     elif args.command == "add-course":
-        cid = storage.add_course(args.name)
-        print(f"已建课程 #{cid} {args.name}")
+        result = ctl.add_course(args.name)
+        print(result.message)
+        return 0 if result.ok else 2
 
     elif args.command == "del-course":
-        course = storage.get_course(args.course_id)
-        if course is None:
-            print(f"课程不存在: #{args.course_id}", file=sys.stderr)
-            return 2
-        removed = storage.delete_course(args.course_id)
-        storage.log_operation("delete_course", path_snapshot=course["name"],
-                              detail={"removed_resources": removed})
-        print(f"已删除课程 #{args.course_id} {course['name']}"
-              f"(级联移除 {removed} 条资源索引)")
+        result = ctl.delete_course(args.course_id)
+        print(result.message, file=sys.stderr if not result.ok else sys.stdout)
+        return 0 if result.ok else 2
 
     elif args.command == "add":
-        kind = _detect_kind(args.target)
-        if kind != "link" and not os.path.exists(args.target):
-            print(f"路径不存在: {args.target}", file=sys.stderr)
-            return 2
-        rid = storage.add_resource(args.course_id, kind, args.target)
-        storage.log_operation("add_resource", rid, path_snapshot=args.target)
-        print(f"已登记 #{rid} [{KIND_LABEL[kind]}] {args.target}")
+        result = ctl.add_resource(args.course_id, args.target)
+        print(result.message, file=sys.stderr if not result.ok else sys.stdout)
+        return 0 if result.ok else 2
 
     elif args.command == "resources":
-        _print_resources(storage, args.course_id)
+        _print_resources(ctl.storage, args.course_id)
 
     elif args.command == "remove":
-        res = storage.get_resource(args.resource_id)
-        if res is None:
-            print(f"资源不存在: #{args.resource_id}", file=sys.stderr)
-            return 2
-        storage.remove_resource(args.resource_id)
-        storage.log_operation("remove_resource",
-                              path_snapshot=res["path_or_url"])
-        print(f"已移除 #{args.resource_id}")
+        result = ctl.remove_resource(args.resource_id)
+        print(result.message, file=sys.stderr if not result.ok else sys.stdout)
+        return 0 if result.ok else 2
 
     elif args.command == "organize":
-        return _cmd_organize(storage, args)
+        return _cmd_organize(ctl, args)
 
     elif args.command == "log":
-        for op in storage.list_operations(args.limit):
+        for op in ctl.storage.list_operations(args.limit):
             print(f"#{op['id']} [{op['status']}] {op['action']}"
                   f" | {op['path_snapshot'] or '-'} | {op['detail'] or ''}")
     return 0
@@ -139,14 +117,15 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     storage = Storage(args.db)
     try:
+        ctl = Controller(storage)
         if args.command is None:
-            return repl(storage)
-        return run_command(storage, args)
+            return repl(ctl)
+        return run_command(ctl, args)
     finally:
         storage.close()
 
 
-def repl(storage: Storage) -> int:
+def repl(ctl: Controller) -> int:
     """交互模式: 一次启动, 逐行输入子命令; help 查看用法, exit/quit 退出."""
     print("水木工作台 CLI 交互模式. 输入 help 查看命令, exit 退出.")
     parser = build_parser()
@@ -168,33 +147,28 @@ def repl(storage: Storage) -> int:
         except SystemExit:
             continue  # argparse 解析失败时已打印错误, 不退出 REPL
         if getattr(args, "command", None):
-            run_command(storage, args)
+            run_command(ctl, args)
         else:
             parser.print_help()
 
 
-def _cmd_organize(storage: Storage, args) -> int:
+def _cmd_organize(ctl: Controller, args) -> int:
     """整理子命令: 先预览, --yes 才执行并留痕."""
-    try:
-        plan = build_plan(args.directory)
-    except NotADirectoryError:
-        print(f"目录不存在: {args.directory}", file=sys.stderr)
+    preview = ctl.preview_organize(args.directory)
+    if not preview.ok:
+        print(preview.message, file=sys.stderr)
         return 2
+    plan = preview.detail["plan"]
     for item in plan:
         print(f"  {item.src} -> {item.dst}")
     if not args.yes:
         print(f"共 {len(plan)} 项(预览). 加 --yes 执行.")
         return 0
-    moved, errors = execute_plan(plan)
-    status = "ok" if not errors else "failed"
-    storage.log_operation("organize", status=status,
-                          params={"directory": args.directory},
-                          path_snapshot=args.directory,
-                          detail={"moved": moved, "errors": errors})
-    print(f"已移动 {moved} 个, 失败 {len(errors)} 个.")
-    for err in errors:
+    result = ctl.execute_organize(args.directory, plan)
+    print(result.message)
+    for err in result.detail.get("errors", []):
         print(f"  失败: {err}", file=sys.stderr)
-    return 0 if not errors else 1
+    return 0 if result.ok else 1
 
 
 if __name__ == "__main__":
