@@ -7,10 +7,12 @@ from PySide6.QtWidgets import QApplication
 from shuimu.app import MainWindow
 from shuimu.paths import default_db_path
 from shuimu.storage import Storage
+from shuimu.theme import apply_theme
 
 def main() -> int:
     """初始化存储与主窗口, 进入事件循环."""
     app = QApplication(sys.argv)
+    apply_theme(app)
     storage = Storage(default_db_path())
     window = MainWindow(storage)
     cfg = window.ctl.config["app"]

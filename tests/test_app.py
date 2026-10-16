@@ -1,5 +1,7 @@
 """GUI 冒烟测试: 主窗口三栏结构. 详细交互由人工演示核对."""
 
+from PySide6.QtCore import Qt
+
 from shuimu.app import MainWindow
 from shuimu.storage import Storage
 
@@ -13,6 +15,16 @@ def test_main_window_structure(qtbot, tmp_path):
     assert window.course_tree.topLevelItemCount() == 1  # 默认课程"未分组"
     assert window.tabs.count() == 2
     assert "暂无操作记录" in window.log_view.toPlainText()
+    storage.close()
+
+
+def test_main_window_frameless(qtbot, tmp_path):
+    """主窗口无边框且带自绘标题栏."""
+    storage = Storage(str(tmp_path / "ui_frameless.db"))
+    window = MainWindow(storage)
+    qtbot.addWidget(window)
+    assert window.windowFlags() & Qt.WindowType.FramelessWindowHint
+    assert window.title_bar is not None
     storage.close()
 
 

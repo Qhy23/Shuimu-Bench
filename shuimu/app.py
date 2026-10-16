@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizeGrip,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
 from .controller import KIND_LABEL, Controller
 from .paths import default_workspace_root
 from .storage import Storage
+from .titlebar import TitleBar
 
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1
@@ -52,7 +54,7 @@ def _warn(parent, title: str, text: str) -> None:
 
 
 class MainWindow(QMainWindow):
-    """三栏主窗口."""
+    """三栏主窗口(无边框, 自绘标题栏)."""
 
     def __init__(self, storage: Storage):
         super().__init__()
@@ -64,12 +66,26 @@ class MainWindow(QMainWindow):
         self.root_edit = None
         self.workspace_root = default_workspace_root()
 
-        self.splitter = QSplitter(self)
-        self.setCentralWidget(self.splitter)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+
+        container = QWidget(self)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        self.title_bar = TitleBar(self, self.ctl.config["app"]["title"])
+        container_layout.addWidget(self.title_bar)
+
+        self.splitter = QSplitter(container)
+        container_layout.addWidget(self.splitter)
+        self.setCentralWidget(container)
         self._build_left()
         self._build_center()
         self._build_right()
         self.splitter.setSizes(self.ctl.config["app"]["splitter_sizes"])
+
+        grip = QSizeGrip(self)
+        grip.setStyleSheet("background: transparent;")
+        self.statusBar().addPermanentWidget(grip)
 
         self.reload_courses()
         self.refresh_log()
