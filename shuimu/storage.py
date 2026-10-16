@@ -9,6 +9,8 @@ import os
 import sqlite3
 import time
 
+from .config import load_config
+
 SCHEMA = """
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS courses (
@@ -71,12 +73,17 @@ class Storage:
         """全部课程, 按创建时间排序."""
         return self._conn.execute("SELECT * FROM courses ORDER BY created_at").fetchall()
 
-    def ensure_default_course(self) -> int:
-        """没有任何课程时创建默认课程"未分组", 返回课程 id."""
+    def ensure_default_course(self, name: str = None) -> int:
+        """没有任何课程时创建默认课程, 返回课程 id.
+
+        name 缺省取配置里的 course.default_name.
+        """
+        if name is None:
+            name = load_config()["course"]["default_name"]
         courses = self.list_courses()
         if courses:
             return courses[0]["id"]
-        return self.add_course("未分组")
+        return self.add_course(name)
 
     def get_course(self, course_id: int) -> sqlite3.Row:
         """按 id 取课程."""

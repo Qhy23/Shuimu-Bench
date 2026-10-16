@@ -17,11 +17,9 @@ import argparse
 import shlex
 import sys
 
-from .controller import Controller
+from .controller import KIND_LABEL, Controller
 from .paths import default_db_path
 from .storage import Storage
-
-KIND_LABEL = {"file": "文件", "dir": "目录", "link": "链接"}
 
 
 def build_parser() -> argparse.ArgumentParser:

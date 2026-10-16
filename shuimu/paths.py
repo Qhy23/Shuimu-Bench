@@ -16,12 +16,12 @@ def default_db_path() -> str:
     规范放用户数据目录: Windows %APPDATA%, Linux ~/.local/share.
     """
     if getattr(sys, "frozen", False):
-        base = _user_data_dir()
+        base = user_data_dir()
         return os.path.join(base, "shuimu.db")
     return os.path.join(project_root(), "data", "shuimu.db")
 
 
-def _user_data_dir() -> str:
+def user_data_dir() -> str:
     """平台用户数据目录."""
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")

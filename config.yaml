@@ -1,0 +1,20 @@
+# 水木工作台配置文件
+# 全部字段可选, 缺省时使用内置默认值; 编辑后重启生效.
+# 优先级: 用户数据目录 config.yaml > 项目根 config.yaml(本文件) > 内置默认值.
+
+app:
+  title: "水木工作台 ShuimuBench"
+  window_size: [1200, 720]        # 主窗口初始尺寸(宽, 高)
+  splitter_sizes: [240, 520, 400] # 三栏初始宽度(左/中/右)
+
+course:
+  default_name: "未分组"          # 空工作区时自动创建的默认课程名
+
+organize:
+  fallback_category: "其他"       # 未匹配扩展名的归类
+  categories:                     # 整理规则: 类别 -> 扩展名列表(小写带点)
+    文档: [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".md", ".xls", ".xlsx", ".csv"]
+    图片: [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"]
+    音视频: [".mp3", ".wav", ".mp4", ".mkv", ".mov", ".avi", ".flv"]
+    压缩包: [".zip", ".rar", ".7z", ".tar", ".gz"]
+    代码: [".py", ".c", ".cpp", ".h", ".java", ".js", ".ts", ".html", ".css"]

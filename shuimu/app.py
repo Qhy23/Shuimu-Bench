@@ -31,11 +31,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .controller import Controller
+from .controller import KIND_LABEL, Controller
 from .paths import default_workspace_root
 from .storage import Storage
 
-KIND_LABEL = {"file": "[文件]", "dir": "[目录]", "link": "[链接]"}
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1
 
@@ -70,7 +69,7 @@ class MainWindow(QMainWindow):
         self._build_left()
         self._build_center()
         self._build_right()
-        self.splitter.setSizes([240, 520, 400])
+        self.splitter.setSizes(self.ctl.config["app"]["splitter_sizes"])
 
         self.reload_courses()
         self.refresh_log()
@@ -192,7 +191,7 @@ class MainWindow(QMainWindow):
             node.setData(0, ROLE_COURSE_ID, course["id"])
             for res in self.storage.list_resources(course["id"]):
                 exists, changed = Storage.check_resource(res)
-                label = KIND_LABEL[res["kind"]] + " " + res["display_name"]
+                label = "[" + KIND_LABEL[res["kind"]] + "] " + res["display_name"]
                 if not exists:
                     label += " (失效)"
                 elif changed:

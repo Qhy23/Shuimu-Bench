@@ -3,6 +3,8 @@
 import os
 import sys
 
+import yaml
+
 from shuimu.paths import default_db_path, default_workspace_root, project_root
 
 
@@ -32,3 +34,16 @@ class TestWorkspaceRoot:
         root = default_workspace_root()
         assert os.path.basename(root) == "content"
         assert os.path.isdir(root)
+
+
+class TestConfigYamlExample:
+    """项目根的示例 config.yaml."""
+
+    def test_example_file_valid_and_loadable(self):
+        """示例文件可解析且键结构与默认值一致."""
+        example = os.path.join(project_root(), "config.yaml")
+        with open(example, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert set(data) == {"app", "course", "organize"}
+        assert data["course"]["default_name"] == "未分组"
+        assert "文档" in data["organize"]["categories"]

@@ -1,22 +1,19 @@
 """目录整理: 按文件类型归类到子目录, 预览后再执行.
 
-只做顶层普通文件, 不递归, 不动隐藏文件. 归类是纯函数, 便于测试.
+只做顶层普通文件, 不递归, 不动隐藏文件. 归类规则由调用方以
+rules={"categories": {...}, "fallback": ...} 传入(默认取 config.DEFAULTS).
 """
 
 import os
 import shutil
 from dataclasses import dataclass
 
-CATEGORY_MAP = {
-    "文档": {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".md",
-             ".xls", ".xlsx", ".csv"},
-    "图片": {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"},
-    "音视频": {".mp3", ".wav", ".mp4", ".mkv", ".mov", ".avi", ".flv"},
-    "压缩包": {".zip", ".rar", ".7z", ".tar", ".gz"},
-    "代码": {".py", ".c", ".cpp", ".h", ".java", ".js", ".ts",
-             ".html", ".css"},
+from .config import DEFAULTS
+
+_DEFAULT_RULES = {
+    "categories": DEFAULTS["organize"]["categories"],
+    "fallback": DEFAULTS["organize"]["fallback_category"],
 }
-FALLBACK_CATEGORY = "其他"
 
 
 @dataclass
@@ -27,13 +24,14 @@ class MoveItem:
     dst: str
 
 
-def category_of(filename: str) -> str:
-    """按扩展名判断归类, 无法识别归入"其他"."""
+def category_of(filename: str, rules: dict = None) -> str:
+    """按扩展名判断归类, 无法识别归入 fallback."""
+    rules = rules or _DEFAULT_RULES
     ext = os.path.splitext(filename)[1].lower()
-    for category, exts in CATEGORY_MAP.items():
+    for category, exts in rules["categories"].items():
         if ext in exts:
             return category
-    return FALLBACK_CATEGORY
+    return rules["fallback"]
 
 
 def _dedupe(dst: str, taken: set) -> str:
@@ -49,7 +47,7 @@ def _dedupe(dst: str, taken: set) -> str:
         i += 1
 
 
-def build_plan(directory: str) -> list:
+def build_plan(directory: str, rules: dict = None) -> list:
     """生成归类计划: 顶层普通文件按类型移动到 category 子目录.
 
     返回按文件名排序的 MoveItem 列表; 目录不存在时抛 NotADirectoryError.
@@ -62,7 +60,7 @@ def build_plan(directory: str) -> list:
         src = os.path.join(directory, name)
         if name.startswith(".") or not os.path.isfile(src):
             continue
-        dst = os.path.join(directory, category_of(name), name)
+        dst = os.path.join(directory, category_of(name, rules), name)
         dst = _dedupe(dst, taken)
         taken.add(dst)
         items.append(MoveItem(src=src, dst=dst))

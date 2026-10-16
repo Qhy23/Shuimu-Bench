@@ -8,6 +8,7 @@
 import os
 from dataclasses import dataclass, field
 
+from .config import load_config, organize_rules
 from .organize import build_plan, execute_plan
 from .storage import Storage
 
@@ -32,11 +33,13 @@ def detect_kind(target: str) -> str:
 
 
 class Controller:
-    """业务动作集合, 持有 Storage. 无界面状态."""
+    """业务动作集合, 持有 Storage 与配置. 无界面状态."""
 
-    def __init__(self, storage: Storage):
+    def __init__(self, storage: Storage, config: dict = None):
         self.storage = storage
-        self.storage.ensure_default_course()
+        self.config = config or load_config()
+        self.organize_rules = organize_rules(self.config)
+        self.storage.ensure_default_course(self.config["course"]["default_name"])
 
     def add_course(self, name: str) -> ActionResult:
         """新建课程."""
@@ -55,7 +58,7 @@ class Controller:
         self.storage.log_operation(
             "delete_course", path_snapshot=course["name"],
             detail={"removed_resources": removed})
-        self.storage.ensure_default_course()
+        self.storage.ensure_default_course(self.config["course"]["default_name"])
         return ActionResult(
             True, f"已删除课程 {course['name']}(级联移除 {removed} 条索引)",
             {"removed_resources": removed})
@@ -84,9 +87,10 @@ class Controller:
         """生成整理计划(不落盘). detail["plan"] 为 MoveItem 列表.
 
         自动排除本程序数据库文件(含 -wal/-shm), 避免整理把库文件挪走.
+        归类规则来自配置(organize 段).
         """
         try:
-            plan = build_plan(directory)
+            plan = build_plan(directory, rules=self.organize_rules)
         except NotADirectoryError:
             return ActionResult(False, f"目录不存在: {directory}")
         db = self.storage.db_path
