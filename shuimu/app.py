@@ -7,7 +7,7 @@
 import os
 import time
 
-from PySide6.QtCore import QDir, Qt, QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QBrush, QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from .controller import Controller
+from .paths import default_workspace_root
 from .storage import Storage
 
 KIND_LABEL = {"file": "[文件]", "dir": "[目录]", "link": "[链接]"}
@@ -46,6 +47,11 @@ def _button(text: str, slot) -> QPushButton:
     return btn
 
 
+def _warn(parent, title: str, text: str) -> None:
+    """弹出警告对话框(独立成函数便于测试替换)."""
+    QMessageBox.warning(parent, title, text)
+
+
 class MainWindow(QMainWindow):
     """三栏主窗口."""
 
@@ -56,6 +62,8 @@ class MainWindow(QMainWindow):
         self._plan = []
         self.dir_edit = None
         self.plan_table = None
+        self.root_edit = None
+        self.workspace_root = default_workspace_root()
 
         self.splitter = QSplitter(self)
         self.setCentralWidget(self.splitter)
@@ -92,14 +100,58 @@ class MainWindow(QMainWindow):
         panel = QWidget(self.splitter)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
+        # 路径栏: 显示并调整中栏工作目录
+        row = QHBoxLayout()
+        self.root_edit = QLineEdit(self.workspace_root)
+        self.root_edit.setToolTip("中栏工作目录, 回车生效")
+        self.root_edit.returnPressed.connect(self._apply_root_edit)
+        row.addWidget(self.root_edit)
+        row.addWidget(_button("上级", self._go_up))
+        row.addWidget(_button("浏览...", self._pick_workspace_root))
+        layout.addLayout(row)
         self.file_model = QFileSystemModel(panel)
-        self.file_model.setRootPath(QDir.homePath())
+        self.file_model.setRootPath("")  # 模型挂载整个文件系统, 视图定位到工作目录
         self.file_view = QTreeView(panel)
         self.file_view.setModel(self.file_model)
-        self.file_view.setRootIndex(self.file_model.index(QDir.homePath()))
+        self.file_view.setRootIndex(self.file_model.index(self.workspace_root))
         self.file_view.setColumnWidth(0, 260)
+        self.file_view.doubleClicked.connect(self._on_browser_double_clicked)
         layout.addWidget(self.file_view)
         layout.addWidget(_button("加入选中课程", self._add_selected_files))
+
+    def set_workspace_root(self, path: str) -> bool:
+        """调整中栏工作目录. 成功返回 True 并同步路径栏与视图."""
+        path = os.path.abspath(os.path.expanduser(path.strip()))
+        if not os.path.isdir(path):
+            self.statusBar().showMessage(f"目录不存在: {path}")
+            self.root_edit.setText(self.workspace_root)
+            _warn(self, "无效的工作目录",
+                  f"目录不存在或不可访问:\n{path}\n\n已保持当前工作目录不变.")
+            return False
+        self.workspace_root = path
+        self.root_edit.setText(path)
+        self.file_view.setRootIndex(self.file_model.index(path))
+        self.statusBar().showMessage(f"工作目录: {path}")
+        return True
+
+    def _apply_root_edit(self) -> None:
+        self.set_workspace_root(self.root_edit.text())
+
+    def _pick_workspace_root(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "选择工作目录", self.workspace_root)
+        if path:
+            self.set_workspace_root(path)
+
+    def _go_up(self) -> None:
+        parent = os.path.dirname(self.workspace_root)
+        if parent != self.workspace_root:
+            self.set_workspace_root(parent)
+
+    def _on_browser_double_clicked(self, index) -> None:
+        """双击目录则进入该目录."""
+        if self.file_model.isDir(index):
+            self.set_workspace_root(self.file_model.filePath(index))
 
     def _build_right(self) -> None:
         self.tabs = QTabWidget(self.splitter)
@@ -110,8 +162,12 @@ class MainWindow(QMainWindow):
     def _build_organize_tab(self) -> QWidget:
         tab = QWidget(self.tabs)
         layout = QVBoxLayout(tab)
+        hint = QLabel("整理功能: 把指定目录里的散乱文件按类型归类到子目录. "
+                      "这里选的是要整理的目录, 与中栏浏览位置互不影响.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         row = QHBoxLayout()
-        self.dir_edit = QLineEdit(QDir.homePath())
+        self.dir_edit = QLineEdit(self.workspace_root)
         row.addWidget(QLabel("目录:"))
         row.addWidget(self.dir_edit)
         row.addWidget(_button("浏览...", self._pick_dir))
@@ -256,7 +312,7 @@ class MainWindow(QMainWindow):
             return
         if os.path.isfile(path):
             path = os.path.dirname(path)
-        self.file_view.setRootIndex(self.file_model.index(path))
+        self.set_workspace_root(path)
 
     # ---- 右栏: 日志 ----
 
@@ -295,6 +351,7 @@ class MainWindow(QMainWindow):
         result = self.ctl.preview_organize(directory)
         self.statusBar().showMessage(result.message)
         if not result.ok:
+            _warn(self, "无法生成预览", result.message + "\n\n请检查目录路径是否正确.")
             return
         self._plan = result.detail["plan"]
         self.plan_table.setRowCount(len(self._plan))

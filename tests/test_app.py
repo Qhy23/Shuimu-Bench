@@ -28,3 +28,40 @@ def test_add_link_via_controller_shows_in_tree(qtbot, tmp_path):
     assert course_node.childCount() == 1
     assert "[链接]" in course_node.child(0).text(0)
     storage.close()
+
+
+def test_workspace_root_switch(qtbot, tmp_path, monkeypatch):
+    """中栏工作目录可切换, 非法目录弹警告框且保持当前状态."""
+    warnings = []
+    monkeypatch.setattr("shuimu.app._warn",
+                        lambda _p, title, text: warnings.append((title, text)))
+    storage = Storage(str(tmp_path / "ui3.db"))
+    window = MainWindow(storage)
+    qtbot.addWidget(window)
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    original = window.workspace_root
+    assert window.set_workspace_root(str(sub))
+    assert window.workspace_root == str(sub)
+    assert window.root_edit.text() == str(sub)
+    # 非法目录: 弹警告框, 拒绝并回退路径栏
+    assert not window.set_workspace_root(str(tmp_path / "nonexistent"))
+    assert len(warnings) == 1 and "无效的工作目录" in warnings[0][0]
+    assert window.workspace_root == str(sub)
+    assert window.root_edit.text() == str(sub)
+    assert original != str(sub)
+    storage.close()
+
+
+def test_preview_bad_dir_warns(qtbot, tmp_path, monkeypatch):
+    """整理页输入非法目录时弹警告框."""
+    warnings = []
+    monkeypatch.setattr("shuimu.app._warn",
+                        lambda _p, title, text: warnings.append((title, text)))
+    storage = Storage(str(tmp_path / "ui4.db"))
+    window = MainWindow(storage)
+    qtbot.addWidget(window)
+    window.dir_edit.setText(str(tmp_path / "nonexistent"))
+    window._preview_plan()
+    assert len(warnings) == 1 and "无法生成预览" in warnings[0][0]
+    storage.close()

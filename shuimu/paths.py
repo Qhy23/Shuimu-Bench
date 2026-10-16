@@ -29,3 +29,14 @@ def _user_data_dir() -> str:
     base = os.environ.get("XDG_DATA_HOME") or os.path.join(
         os.path.expanduser("~"), ".local", "share")
     return os.path.join(base, "shuimu")
+
+
+def default_workspace_root() -> str:
+    """中栏文件浏览器的默认根目录.
+
+    优先用课程根目录的 content/(测试伪资料), 不存在则退回家目录.
+    """
+    content = os.path.join(os.path.dirname(project_root()), "content")
+    if os.path.isdir(content):
+        return content
+    return os.path.expanduser("~")
