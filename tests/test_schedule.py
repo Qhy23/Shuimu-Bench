@@ -275,7 +275,6 @@ class TestTodoLogic:
 
     def test_sorted_todos(self):
         """未完成在前(有截止早者前, 无截止随后), 完成置底, tid 决胜."""
-        today = date(2026, 10, 23)
         todos = [
             _todo(tid=1, title="无截止"),
             _todo(tid=2, title="明天", due=date(2026, 10, 24)),
