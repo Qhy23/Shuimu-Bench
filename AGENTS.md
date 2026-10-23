@@ -41,5 +41,6 @@ pylint --rcfile=../.pylintrc main.py shuimu/ tests/   # lint(配置在课程根�
 
 - 数据库: `project/data/shuimu.db`(SQLite, WAL; 已 gitignore).
 - 三表: `courses`(课程), `resources`(索引: kind 为 file/dir/link, 文件类统一存绝对路径 + size/mtime), `operations`(操作留痕, params/detail 为 JSON).
+- 日程数据: `project/data/schedule.yaml`(独立于 SQLite; gitignore), 模板 `data/schedule.example.yaml` 随仓库分发; 纯逻辑在 `shuimu/schedule.py`, 页签在 `shuimu/schedule_view.py`.
 - 索引只存引用, 不复制文件本体; 文件失效保留记录, 由 UI 标灰.
 - 测试伪资料: 课程根目录 `content/`(仓库外), 单元测试一律用 tmp_path 保持隔离.
