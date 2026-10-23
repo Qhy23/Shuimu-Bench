@@ -5,6 +5,9 @@
 """
 
 import os
+import platform
+import shutil
+import subprocess
 import time
 
 from PySide6.QtCore import Qt, QUrl
@@ -51,6 +54,47 @@ def _button(text: str, slot) -> QPushButton:
 def _warn(parent, title: str, text: str) -> None:
     """弹出警告对话框(独立成函数便于测试替换)."""
     QMessageBox.warning(parent, title, text)
+
+
+def _open_local(path: str) -> bool:
+    """用系统默认程序打开本地文件或目录(独立成函数便于测试替换)."""
+    via_wsl = _wslview_open(path)
+    if via_wsl is not None:
+        return via_wsl
+    return QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+
+def _open_url(url: str) -> bool:
+    """用系统浏览器打开链接(独立成函数便于测试替换)."""
+    via_wsl = _wslview_open(url)
+    if via_wsl is not None:
+        return via_wsl
+    return QDesktopServices.openUrl(QUrl(url))
+
+
+def _in_wsl() -> bool:
+    """是否运行在 WSL 内(内核版本号含 microsoft 或设置 WSL_DISTRO_NAME)."""
+    return "microsoft" in platform.release().lower() or bool(
+        os.environ.get("WSL_DISTRO_NAME"))
+
+
+def _wslview_open(target: str):
+    """WSL 内优先用 wslview 打开, 转发给 Windows 默认程序.
+
+    WSL 里 xdg-open 的默认关联常指向 snap 应用(如 chromium), snapd 在
+    WSL 中不可用导致打开失败; wslview 直接走 Windows 文件关联.
+    非 WSL 或未安装 wslview 时返回 None, 由调用方回退 Qt.
+    """
+    if not _in_wsl():
+        return None
+    wslview = shutil.which("wslview")
+    if not wslview:
+        return None
+    try:
+        proc = subprocess.run([wslview, target], check=False, timeout=15)
+    except subprocess.TimeoutExpired:
+        return False
+    return proc.returncode == 0
 
 
 class MainWindow(QMainWindow):
@@ -164,9 +208,13 @@ class MainWindow(QMainWindow):
             self.set_workspace_root(parent)
 
     def _on_browser_double_clicked(self, index) -> None:
-        """双击目录则进入该目录."""
+        """双击目录进入该目录, 双击文件用系统默认程序打开."""
         if self.file_model.isDir(index):
             self.set_workspace_root(self.file_model.filePath(index))
+            return
+        path = self.file_model.filePath(index)
+        if not _open_local(path):
+            self.statusBar().showMessage(f"无法打开: {path}")
 
     def _build_right(self) -> None:
         self.tabs = QTabWidget(self.splitter)
@@ -311,7 +359,7 @@ class MainWindow(QMainWindow):
         self.refresh_log()
 
     def _on_resource_activated(self, item, _column) -> None:
-        """双击资源: 链接用浏览器打开; 文件/目录在中栏定位."""
+        """双击资源: 链接用浏览器打开, 文件用系统默认程序打开, 目录在中栏定位."""
         rid = item.data(0, ROLE_RESOURCE_ID)
         if rid is None:
             return
@@ -320,13 +368,19 @@ class MainWindow(QMainWindow):
             return
         path = res["path_or_url"]
         if res["kind"] == "link":
-            QDesktopServices.openUrl(QUrl(path))
+            if not _open_url(path):
+                self.statusBar().showMessage(f"无法打开链接: {path}")
             return
         if not os.path.exists(path):
             self.statusBar().showMessage(f"已失效: {path}")
             return
         if os.path.isfile(path):
-            path = os.path.dirname(path)
+            if _open_local(path):
+                self.statusBar().showMessage(f"已打开: {path}")
+            else:
+                _warn(self, "无法打开文件",
+                      f"系统没有可用于打开该文件的默认程序:\n{path}")
+            return
         self.set_workspace_root(path)
 
     # ---- 右栏: 日志 ----
