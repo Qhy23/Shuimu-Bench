@@ -1,0 +1,359 @@
+"""日程页签: 周历(课表+事件)与待办列表.
+
+上段周历 7 天列(横向滚动, 今天列高亮, 可翻周); 下段待办树(勾选完成/逾期
+红色/完成划线置底). 渲染完全由 controller.schedule_snapshot() 全量驱动;
+课表与事件在外部编辑, QFileSystemWatcher 自动重载; 待办可 GUI 新建与勾选,
+经 Controller 写回 YAML 并留痕.
+"""
+
+import os
+from datetime import date, timedelta
+
+from PySide6.QtCore import Qt, QFileSystemWatcher
+from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDateEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from . import theme
+from .controller import Controller
+from .schedule import (
+    DayEntry,
+    entries_for_week,
+    semester_week,
+    sorted_todos,
+    todo_status,
+    week_start,
+)
+
+ROLE_TID = Qt.UserRole + 2
+WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+def _warn(parent, title: str, text: str) -> None:
+    """弹出警告对话框(独立成函数便于测试替换)."""
+    QMessageBox.warning(parent, title, text)
+
+
+class TodoDialog(QDialog):
+    """新建待办对话框: 标题必填, 截止可选, 课程可选."""
+
+    def __init__(self, course_names: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("新建待办")
+        form = QFormLayout(self)
+        self.title_edit = QLineEdit(self)
+        self.title_edit.setPlaceholderText("必填, 如: 微积分作业 6")
+        form.addRow("标题", self.title_edit)
+        self.due_check = QCheckBox("设置截止", self)
+        self.due_edit = QDateEdit(self)
+        self.due_edit.setCalendarPopup(True)
+        self.due_edit.setDisplayFormat("yyyy-MM-dd")
+        self.due_edit.setDate(self.due_edit.date().currentDate())
+        self.due_edit.setEnabled(False)
+        self.due_check.toggled.connect(self.due_edit.setEnabled)
+        form.addRow(self.due_check, self.due_edit)
+        self.course_box = QComboBox(self)
+        self.course_box.addItem("(不关联)")
+        self.course_box.addItems(course_names)
+        form.addRow("课程", self.course_box)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _accept_if_valid(self) -> None:
+        """标题为空时警告且不关闭."""
+        if not self.title_edit.text().strip():
+            _warn(self, "无法创建", "标题不能为空")
+            return
+        self.accept()
+
+    def values(self) -> tuple:
+        """返回 (标题, 截止 date 或 None, 课程名或空串)."""
+        due = None
+        if self.due_check.isChecked():
+            due = self.due_edit.date().toPython()
+        course = ""
+        if self.course_box.currentIndex() > 0:
+            course = self.course_box.currentText()
+        return self.title_edit.text().strip(), due, course
+
+
+class ScheduleTab(QWidget):
+    """日程页签: 上段周历, 下段待办."""
+
+    def __init__(self, controller: Controller, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        self._self_write = False
+        self._monday = week_start(date.today())
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.warn_bar = QLabel(self)
+        self.warn_bar.setObjectName("warnbar")
+        self.warn_bar.setWordWrap(True)
+        self.warn_bar.hide()
+        layout.addWidget(self.warn_bar)
+
+        self.splitter = QSplitter(Qt.Orientation.Vertical, self)
+        layout.addWidget(self.splitter)
+        self.splitter.addWidget(self._build_week_view())
+        self.splitter.addWidget(self._build_todo_view())
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
+
+        self._watcher = QFileSystemWatcher(self)
+        self._watch_files()
+        self._watcher.fileChanged.connect(self._on_file_changed)
+        self._watcher.directoryChanged.connect(self._on_dir_changed)
+
+        self._render_all()
+
+    # ---- 界面构建 ----
+
+    def _build_week_view(self) -> QWidget:
+        """上段: 翻周导航 + 7 天列(横向滚动)."""
+        panel = QWidget(self.splitter)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        nav = QHBoxLayout()
+        prev_btn = QPushButton("<", panel)
+        prev_btn.setFixedWidth(32)
+        next_btn = QPushButton(">", panel)
+        next_btn.setFixedWidth(32)
+        self.today_btn = QPushButton("回到今天", panel)
+        self.week_label = QLabel("", panel)
+        self.week_label.setObjectName("dayhead")
+        prev_btn.clicked.connect(lambda: self._shift_week(-1))
+        next_btn.clicked.connect(lambda: self._shift_week(1))
+        self.today_btn.clicked.connect(self._go_today)
+        nav.addWidget(prev_btn)
+        nav.addWidget(self.week_label)
+        nav.addWidget(next_btn)
+        nav.addStretch(1)
+        nav.addWidget(self.today_btn)
+        layout.addLayout(nav)
+
+        self.columns_host = QWidget(panel)
+        columns = QHBoxLayout(self.columns_host)
+        columns.setContentsMargins(0, 0, 0, 0)
+        columns.setSpacing(6)
+        columns.addStretch(1)
+        self.day_columns = []
+        for _index in range(7):  # 0=周一 ... 6=周日
+            col = QFrame(self.columns_host)
+            col.setObjectName("daycol")
+            col.setMinimumWidth(130)
+            col_layout = QVBoxLayout(col)
+            col_layout.setContentsMargins(4, 4, 4, 4)
+            head = QLabel("", col)
+            head.setObjectName("dayhead")
+            head.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            col_layout.addWidget(head)
+            col_layout.addStretch(1)
+            columns.addWidget(col)
+            self.day_columns.append((col, head))
+        scroll = QScrollArea(panel)
+        scroll.setWidget(self.columns_host)
+        scroll.setWidgetResizable(True)
+        layout.addWidget(scroll)
+        return panel
+
+    def _build_todo_view(self) -> QWidget:
+        """下段: 新建按钮 + 待办树."""
+        panel = QWidget(self.splitter)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        add_btn = QPushButton("新建待办", panel)
+        add_btn.clicked.connect(self._add_todo)
+        row.addWidget(add_btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+        self.todo_tree = QTreeWidget(panel)
+        self.todo_tree.setHeaderLabels(["事项", "截止", "课程"])
+        self.todo_tree.setRootIsDecorated(False)
+        self.todo_tree.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self.todo_tree)
+        return panel
+
+    # ---- 渲染 ----
+
+    def _render_all(self) -> None:
+        """以快照全量重渲染周历/待办/警告条."""
+        snapshot = self.controller.schedule_snapshot()
+        self._render_week(snapshot)
+        self._render_todos(snapshot)
+        if snapshot.warnings:
+            self.warn_bar.setText(
+                "日程文件有无法解析的条目: " + "; ".join(snapshot.warnings))
+            self.warn_bar.show()
+        else:
+            self.warn_bar.hide()
+
+    def _render_week(self, snapshot) -> None:
+        """重建 7 天列: 卡片来自 entries_for_week, 今天列高亮."""
+        today = date.today()
+        is_this_week = week_start(today) == self._monday
+        self._set_week_label()
+        entries = entries_for_week(snapshot, self._monday,
+                                   self.controller.semester_start())
+        for index, (col, head) in enumerate(self.day_columns):
+            weekday = index + 1
+            day = self._monday + timedelta(days=index)
+            head.setText(f"{WEEKDAY_NAMES[index]}\n{day.strftime('%m/%d')}")
+            is_today = is_this_week and weekday == today.weekday() + 1
+            col.setObjectName("daycol-today" if is_today else "daycol")
+            col_layout = col.layout()
+            while col_layout.count() > 2:  # 保留列头与末尾弹簧
+                item = col_layout.takeAt(1)
+                if item.widget():
+                    item.widget().deleteLater()
+            for entry in entries[weekday]:
+                col_layout.insertWidget(col_layout.count() - 1,
+                                        self._make_card(entry))
+
+    def _make_card(self, entry: DayEntry) -> QFrame:
+        """一张课表/事件卡片: 时段 + 标题 + 可选地点."""
+        card = QFrame(self.columns_host)
+        card.setObjectName("slotcard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(6, 4, 6, 4)
+        card_layout.setSpacing(0)
+        end_text = entry.end.strftime("%H:%M") if entry.end else ""
+        time_label = QLabel(f"{entry.start.strftime('%H:%M')}-{end_text}", card)
+        title_label = QLabel(entry.title, card)
+        title_label.setObjectName("cardtitle")
+        title_label.setWordWrap(True)
+        card_layout.addWidget(time_label)
+        card_layout.addWidget(title_label)
+        if entry.location:
+            loc_label = QLabel(entry.location, card)
+            loc_label.setWordWrap(True)
+            card_layout.addWidget(loc_label)
+        return card
+
+    def _set_week_label(self) -> None:
+        """导航行文本: 日期区间, 配置学期起点时附第几周."""
+        end = self._monday + timedelta(days=6)
+        text = f"{self._monday.strftime('%m/%d')} - {end.strftime('%m/%d')}"
+        start = self.controller.semester_start()
+        if start:
+            text += f" · 第 {semester_week(self._monday, start)} 周"
+        self.week_label.setText(text)
+
+    def _render_todos(self, snapshot) -> None:
+        """重建待办树. blockSignals 防止 setCheckState 触发 itemChanged."""
+        today = date.today()
+        self.todo_tree.blockSignals(True)
+        self.todo_tree.clear()
+        for todo in sorted_todos(snapshot.todos):
+            status = todo_status(todo, today)
+            item = QTreeWidgetItem([todo.title, "", todo.course])
+            item.setCheckState(0, Qt.CheckState.Checked if todo.done
+                               else Qt.CheckState.Unchecked)
+            item.setData(0, ROLE_TID, todo.tid)
+            if todo.due is not None:
+                due_text = todo.due.strftime("%m-%d")
+                if status == "overdue":
+                    due_text += " · 逾期"
+                    item.setForeground(1, QBrush(QColor(theme.DANGER)))
+                elif status == "today":
+                    due_text += " · 今天"
+                item.setText(1, due_text)
+            if status == "done":
+                font = QFont(item.font(0))
+                font.setStrikeOut(True)
+                item.setFont(0, font)
+                item.setForeground(0, QBrush(QColor(theme.FG_DIM)))
+            self.todo_tree.addTopLevelItem(item)
+        self.todo_tree.blockSignals(False)
+
+    # ---- 交互 ----
+
+    def _shift_week(self, delta: int) -> None:
+        """翻周; 日期溢出(极远翻页)忽略本次."""
+        try:
+            self._monday += timedelta(weeks=delta)
+        except OverflowError:
+            return
+        self._render_all()
+
+    def _go_today(self) -> None:
+        """回到今天所在周."""
+        self._monday = week_start(date.today())
+        self._render_all()
+
+    def _add_todo(self) -> None:
+        """对话框新建待办并写回."""
+        dialog = TodoDialog(self.controller.course_names(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        title, due, course = dialog.values()
+        self._mutate(lambda: self.controller.add_todo(title, due, course))
+
+    def _on_item_changed(self, item, _column) -> None:
+        """勾选状态变化 -> toggle_todo 写回."""
+        tid = item.data(0, ROLE_TID)
+        if tid is None:
+            return
+        self._mutate(lambda: self.controller.toggle_todo(tid))
+
+    def _mutate(self, action) -> None:
+        """写回动作统一入口: 抑制自写触发的 watcher, 完成后刷新.
+
+        标志只在下一次 fileChanged 消费一次; 保存失败时立即清除.
+        """
+        self._self_write = True
+        result = action()
+        if not result.ok:
+            self._self_write = False
+            _warn(self, "日程操作失败", result.message)
+        self._render_all()
+
+    # ---- 文件监听 ----
+
+    def _watch_files(self) -> None:
+        """(重新)挂载日程文件与父目录监听."""
+        path = self.controller.schedule_path
+        watch_dir = os.path.dirname(path) or "."
+        watched = self._watcher.files() + self._watcher.directories()
+        for target in (path, watch_dir):
+            if target not in watched:
+                self._watcher.addPath(target)
+
+    def _on_file_changed(self, path: str) -> None:
+        """文件内容变化: 自写被抑制一次, 其余直接重载."""
+        if self._self_write:
+            self._self_write = False
+        else:
+            self._render_all()
+        if path not in self._watcher.files():
+            self._watcher.addPath(path)  # 原子替换后旧监听失效, 重挂
+
+    def _on_dir_changed(self, _path: str) -> None:
+        """目录变化(文件被删/替换): 清抑制标志, 重挂监听并重载(缺失会重播种)."""
+        self._self_write = False
+        self._watch_files()
+        self._render_all()

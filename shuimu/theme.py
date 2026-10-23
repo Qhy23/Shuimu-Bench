@@ -14,6 +14,7 @@ BG_HOVER = "#2f2f44"       # 条目悬停
 FG_TEXT = "#e4e4ef"        # 主文字
 FG_DIM = "#8a8a9e"         # 次要文字
 BORDER = "#3a3a4e"         # 边框
+DANGER = "#e5484d"         # 警示: 逾期/失败
 RADIUS = "8px"
 FONT_SIZE = "13px"
 
@@ -137,6 +138,33 @@ QToolTip {{
     color: {FG_TEXT};
     border: 1px solid {BORDER};
     padding: 4px 8px;
+}}
+QFrame#daycol, QFrame#daycol-today {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+}}
+QFrame#daycol-today {{
+    background-color: {BG_HOVER};
+    border: 1px solid {PRIMARY};
+}}
+QFrame#slotcard {{
+    background-color: {BG_PANEL};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+}}
+QLabel#dayhead {{
+    color: {FG_DIM};
+    background: transparent;
+    font-weight: 600;
+}}
+QLabel#cardtitle {{
+    color: {FG_TEXT};
+    background: transparent;
+}}
+QLabel#warnbar {{
+    color: {DANGER};
+    background: transparent;
 }}
 """
 

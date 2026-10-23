@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from .controller import KIND_LABEL, Controller
 from .paths import default_workspace_root
+from .schedule_view import ScheduleTab
 from .storage import Storage
 from .titlebar import TitleBar
 
@@ -100,10 +101,10 @@ def _wslview_open(target: str):
 class MainWindow(QMainWindow):
     """三栏主窗口(无边框, 自绘标题栏)."""
 
-    def __init__(self, storage: Storage):
+    def __init__(self, storage: Storage, schedule_path: str = None):
         super().__init__()
         self.storage = storage
-        self.ctl = Controller(storage)
+        self.ctl = Controller(storage, schedule_path=schedule_path)
         self._plan = []
         self.dir_edit = None
         self.plan_table = None
@@ -221,6 +222,7 @@ class MainWindow(QMainWindow):
         self.log_view = QPlainTextEdit(readOnly=True)
         self.tabs.addTab(self.log_view, "日志")
         self.tabs.addTab(self._build_organize_tab(), "整理")
+        self.tabs.addTab(ScheduleTab(self.ctl, self.tabs), "日程")
 
     def _build_organize_tab(self) -> QWidget:
         tab = QWidget(self.tabs)
