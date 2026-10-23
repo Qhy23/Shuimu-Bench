@@ -8,6 +8,8 @@
 import os
 from dataclasses import dataclass, field
 
+import xlrd
+
 from .config import load_config, organize_rules, semester_start_date
 from .organize import build_plan, execute_plan
 from .paths import default_schedule_path, template_schedule_path
@@ -19,6 +21,7 @@ from .schedule import (
     save_schedule,
     toggle_todo as sched_toggle_todo,
 )
+from .schedule_import import parse_portal_xls
 from .storage import Storage
 
 
@@ -176,6 +179,31 @@ class Controller:
         return ActionResult(
             True, f"待办 #{tid} 已标记为{'完成' if todo.done else '未完成'}",
             {"tid": tid, "done": todo.done})
+
+    def import_timetable(self, path: str) -> ActionResult:
+        """从门户导出的课表 .xls 导入, 替换 timetable 段(事件/待办不动)."""
+        try:
+            parsed = parse_portal_xls(path)
+        except (OSError, ValueError, xlrd.XLRDError) as exc:
+            return ActionResult(False, f"导入失败: {exc}")
+        data = self.schedule_snapshot()
+        replaced = len(data.timetable)
+        data.timetable = parsed.slots
+        try:
+            save_schedule(self.schedule_path, data)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "import_timetable", params={"path": path},
+            detail={"imported": len(parsed.slots), "replaced": replaced,
+                    "unscheduled": parsed.unscheduled})
+        message = f"已导入课表 {len(parsed.slots)} 条(替换原 {replaced} 条)"
+        if parsed.unscheduled:
+            message += f", 另有 {parsed.unscheduled} 门无时间安排未导入"
+        return ActionResult(True, message,
+                            {"imported": len(parsed.slots),
+                             "replaced": replaced,
+                             "warnings": parsed.warnings})
 
     def course_names(self) -> list:
         """课程名列表, 供新建待办对话框下拉."""

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -143,16 +144,19 @@ class ScheduleTab(QWidget):
         next_btn = QPushButton(">", panel)
         next_btn.setFixedWidth(32)
         self.today_btn = QPushButton("回到今天", panel)
+        self.import_btn = QPushButton("导入课表...", panel)
         self.week_label = QLabel("", panel)
         self.week_label.setObjectName("dayhead")
         prev_btn.clicked.connect(lambda: self._shift_week(-1))
         next_btn.clicked.connect(lambda: self._shift_week(1))
         self.today_btn.clicked.connect(self._go_today)
+        self.import_btn.clicked.connect(self._import_timetable)
         nav.addWidget(prev_btn)
         nav.addWidget(self.week_label)
         nav.addWidget(next_btn)
         nav.addStretch(1)
         nav.addWidget(self.today_btn)
+        nav.addWidget(self.import_btn)
         layout.addLayout(nav)
 
         self.columns_host = QWidget(panel)
@@ -319,6 +323,29 @@ class ScheduleTab(QWidget):
         if tid is None:
             return
         self._mutate(lambda: self.controller.toggle_todo(tid))
+
+    def _import_timetable(self) -> None:
+        """从门户导出的 .xls 导入课表: 选文件 -> 确认替换 -> 写回."""
+        path, _selected = QFileDialog.getOpenFileName(
+            self, "选择门户导出的课表", "", "课表导出 (*.xls)")
+        if not path:
+            return
+        current = self.controller.schedule_snapshot()
+        answer = QMessageBox.question(
+            self, "导入课表",
+            f"将用文件内容替换现有课表({len(current.timetable)} 条),\n"
+            "事件与待办不受影响. 继续?")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._self_write = True
+        result = self.controller.import_timetable(path)
+        if not result.ok:
+            self._self_write = False
+            _warn(self, "导入失败", result.message)
+        elif result.detail.get("warnings"):
+            _warn(self, "导入完成(部分条目有提示)",
+                  result.message + "\n\n" + "\n".join(result.detail["warnings"]))
+        self._render_all()
 
     def _mutate(self, action) -> None:
         """写回动作统一入口: 抑制自写触发的 watcher, 完成后刷新.

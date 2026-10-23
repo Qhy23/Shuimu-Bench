@@ -1,11 +1,13 @@
 """controller.py 单元测试: 业务动作层(不依赖 Qt)."""
 
 import json
-from datetime import date
+import os
+from datetime import date, time
 
 import pytest
 
 from shuimu.controller import Controller, detect_kind
+from shuimu.schedule import Event, save_schedule
 from shuimu.storage import Storage
 
 
@@ -155,3 +157,28 @@ class TestScheduleActions:
     def test_course_names(self, ctl):
         """课程名列表含默认课程."""
         assert "未分组" in ctl.course_names()
+
+    def test_import_timetable(self, ctl):
+        """导入替换 timetable 段, 事件与待办保留, 留痕计数."""
+        fixture = os.path.join(os.path.dirname(__file__), "fixtures",
+                               "portal_sample.xls")
+        ctl.add_todo("任务")
+        data = ctl.schedule_snapshot()
+        data.events.append(Event(date(2026, 10, 27), time(19), None, "讲座", ""))
+        save_schedule(ctl.schedule_path, data)
+
+        result = ctl.import_timetable(fixture)
+        assert result.ok and result.detail["imported"] == 8
+        after = ctl.schedule_snapshot()
+        assert len(after.timetable) == 8
+        assert len(after.todos) == 1 and len(after.events) == 1  # 不受影响
+        ops = ctl.storage.list_operations()
+        assert ops[0]["action"] == "import_timetable"
+        assert json.loads(ops[0]["detail"])["replaced"] == 0
+
+    def test_import_timetable_bad_file(self, ctl, tmp_path):
+        """不存在的文件与非课表文件都返回失败."""
+        assert not ctl.import_timetable(str(tmp_path / "nope.xls")).ok
+        bad = tmp_path / "bad.xls"
+        bad.write_text("not an excel", encoding="utf-8")
+        assert not ctl.import_timetable(str(bad)).ok

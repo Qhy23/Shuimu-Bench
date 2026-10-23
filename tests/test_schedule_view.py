@@ -1,5 +1,6 @@
-"""schedule_view.py GUI 测试: 页签结构, 周历渲染, 待办写回, watcher 重载."""
+"""schedule_view.py GUI 测试: 页签结构, 周历渲染, 待办写回, watcher 重载, 课表导入."""
 
+import os
 from datetime import date, timedelta
 
 import pytest
@@ -167,3 +168,47 @@ class TestWatcher:
         assert yaml_path.exists()
         assert tab.todo_tree.topLevelItemCount() == 1  # 模板里的 模板任务
         assert tab.todo_tree.topLevelItem(0).text(0) == "模板任务"
+
+
+class TestImportTimetable:
+    """从门户导出 .xls 导入课表."""
+
+    def test_import_replaces_timetable(self, sched_env, monkeypatch):
+        """确认后导入: timetable 被替换, 留痕与刷新到位."""
+        warnings = []
+        monkeypatch.setattr(schedule_view, "_warn",
+                            lambda _p, title, text: warnings.append((title, text)))
+        ctl, tab, yaml_path = sched_env
+        fixture = os.path.join(os.path.dirname(__file__), "fixtures",
+                               "portal_sample.xls")
+        monkeypatch.setattr(
+            schedule_view.QFileDialog, "getOpenFileName",
+            staticmethod(lambda *a, **k: (fixture, "")))
+        monkeypatch.setattr(
+            schedule_view.QMessageBox, "question",
+            staticmethod(lambda *a, **k: schedule_view.QMessageBox.StandardButton.Yes))
+        tab._import_timetable()
+        data = load_schedule(str(yaml_path))
+        assert len(data.timetable) == 8
+        titles = {slot.title for slot in data.timetable}
+        assert "高等数学A" in titles and "AI编程进阶：方法与实践" in titles
+        assert any(op["action"] == "import_timetable"
+                   for op in ctl.storage.list_operations())
+        # 单双周降级提示经 _warn 弹窗(已打桩记录, 不弹真实模态框)
+        assert any("单周" in text or "双周" in text
+                   for _t, text in warnings)
+
+    def test_import_cancelled(self, sched_env, monkeypatch):
+        """确认框选否时不改动文件."""
+        _ctl, tab, yaml_path = sched_env
+        before = yaml_path.read_text(encoding="utf-8")
+        monkeypatch.setattr(schedule_view, "_warn",
+                            lambda _p, title, text: None)
+        monkeypatch.setattr(
+            schedule_view.QFileDialog, "getOpenFileName",
+            staticmethod(lambda *a, **k: ("whatever.xls", "")))
+        monkeypatch.setattr(
+            schedule_view.QMessageBox, "question",
+            staticmethod(lambda *a, **k: schedule_view.QMessageBox.StandardButton.No))
+        tab._import_timetable()
+        assert yaml_path.read_text(encoding="utf-8") == before
