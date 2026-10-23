@@ -20,4 +20,4 @@ organize:
     代码: [".py", ".c", ".cpp", ".h", ".java", ".js", ".ts", ".html", ".css"]
 
 schedule:
-  semester_start: ""             # 学期第 1 周的周一, 如 "2026-09-14"; 留空不启用周次过滤
+  semester_start: "2026-09-14"    # 学期第 1 周的周一; 留空不启用周次过滤
