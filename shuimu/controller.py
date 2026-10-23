@@ -1,4 +1,4 @@
-"""业务动作层: 登记资源, 删除课程, 整理目录等动作的统一实现.
+"""业务动作层: 登记资源, 删除课程, 整理目录, 日程等动作的统一实现.
 
 不依赖 Qt. GUI 槽函数与 CLI 子命令都是本层的薄封装;
 未来 QML 桥接层(controller QObject)同样只调这里.
@@ -8,8 +8,17 @@
 import os
 from dataclasses import dataclass, field
 
-from .config import load_config, organize_rules
+from .config import load_config, organize_rules, semester_start_date
 from .organize import build_plan, execute_plan
+from .paths import default_schedule_path, template_schedule_path
+from .schedule import (
+    ScheduleData,
+    add_todo as sched_add_todo,
+    ensure_schedule_file,
+    load_schedule,
+    save_schedule,
+    toggle_todo as sched_toggle_todo,
+)
 from .storage import Storage
 
 
@@ -35,10 +44,14 @@ def detect_kind(target: str) -> str:
 class Controller:
     """业务动作集合, 持有 Storage 与配置. 无界面状态."""
 
-    def __init__(self, storage: Storage, config: dict = None):
+    def __init__(self, storage: Storage, config: dict = None,
+                 schedule_path: str = None):
         self.storage = storage
         self.config = config or load_config()
         self.organize_rules = organize_rules(self.config)
+        self.schedule_path = schedule_path or default_schedule_path()
+        self._semester_start = semester_start_date(self.config)
+        self._schedule_seeded = False
         self.storage.ensure_default_course(self.config["course"]["default_name"])
 
     def add_course(self, name: str) -> ActionResult:
@@ -116,3 +129,54 @@ class Controller:
         """记录一次取消的整理."""
         self.storage.log_operation("organize", status="cancelled",
                                    path_snapshot=directory)
+
+    # ---- 日程 ----
+
+    def semester_start(self):
+        """学期起点(建议第 1 周周一), 未配置返回 None."""
+        return self._semester_start
+
+    def schedule_snapshot(self) -> ScheduleData:
+        """当前日程快照. 首次调用或数据文件缺失时(重新)播种."""
+        if not self._schedule_seeded or not os.path.isfile(self.schedule_path):
+            ensure_schedule_file(self.schedule_path, template_schedule_path())
+            self._schedule_seeded = True
+        return load_schedule(self.schedule_path)
+
+    def add_todo(self, title: str, due=None, course: str = "") -> ActionResult:
+        """新建任务备忘, 写回 YAML 并留痕."""
+        title = title.strip()
+        if not title:
+            return ActionResult(False, "标题不能为空")
+        data = self.schedule_snapshot()
+        todo = sched_add_todo(data, title, due, course)
+        try:
+            save_schedule(self.schedule_path, data)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "add_todo", params={"title": title},
+            detail={"tid": todo.tid, "due": str(todo.due) if todo.due else None})
+        return ActionResult(True, f"已添加待办 #{todo.tid} {title}",
+                            {"tid": todo.tid})
+
+    def toggle_todo(self, tid: int) -> ActionResult:
+        """按 id 翻转待办完成状态, 写回 YAML 并留痕."""
+        data = self.schedule_snapshot()
+        todo = sched_toggle_todo(data, tid)
+        if todo is None:
+            return ActionResult(
+                False, f"待办不存在: #{tid}(文件可能已被外部修改)")
+        try:
+            save_schedule(self.schedule_path, data)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "toggle_todo", params={"tid": tid}, detail={"done": todo.done})
+        return ActionResult(
+            True, f"待办 #{tid} 已标记为{'完成' if todo.done else '未完成'}",
+            {"tid": tid, "done": todo.done})
+
+    def course_names(self) -> list:
+        """课程名列表, 供新建待办对话框下拉."""
+        return [c["name"] for c in self.storage.list_courses()]

@@ -1,5 +1,8 @@
 """controller.py 单元测试: 业务动作层(不依赖 Qt)."""
 
+import json
+from datetime import date
+
 import pytest
 
 from shuimu.controller import Controller, detect_kind
@@ -7,10 +10,12 @@ from shuimu.storage import Storage
 
 
 @pytest.fixture()
-def ctl(tmp_path):
-    """每个测试用独立的 controller + 临时数据库."""
+def ctl(tmp_path, monkeypatch):
+    """每个测试用独立的 controller + 临时数据库 + 临时日程文件(模板隔离)."""
+    monkeypatch.setattr("shuimu.controller.template_schedule_path",
+                        lambda: str(tmp_path / "no-such-template.yaml"))
     storage = Storage(str(tmp_path / "ctl.db"))
-    yield Controller(storage)
+    yield Controller(storage, schedule_path=str(tmp_path / "s.yaml"))
     storage.close()
 
 
@@ -108,3 +113,45 @@ class TestOrganizeActions:
         """取消整理留痕为 cancelled."""
         ctl.cancel_organize(str(tmp_path))
         assert ctl.storage.list_operations()[0]["status"] == "cancelled"
+
+
+class TestScheduleActions:
+    """日程动作."""
+
+    def test_snapshot_seeds_lazily(self, ctl, tmp_path):
+        """首次 snapshot 播种数据文件(模板缺失退化为骨架)."""
+        path = tmp_path / "s.yaml"
+        assert not path.exists()
+        data = ctl.schedule_snapshot()
+        assert path.exists() and data.warnings == []
+
+    def test_add_todo(self, ctl):
+        """新建待办落盘并留痕."""
+        result = ctl.add_todo("  微积分作业  ", date(2026, 10, 26), "微积分")
+        assert result.ok and result.detail["tid"] == 1
+        data = ctl.schedule_snapshot()
+        assert data.todos[0].title == "微积分作业"  # 已 strip
+        assert data.todos[0].due == date(2026, 10, 26)
+        ops = ctl.storage.list_operations()
+        assert ops[0]["action"] == "add_todo"
+        assert json.loads(ops[0]["params"])["title"] == "微积分作业"
+
+    def test_add_todo_blank_title(self, ctl):
+        """空标题拒绝且不落盘."""
+        assert not ctl.add_todo("   ").ok
+        assert ctl.schedule_snapshot().todos == []
+
+    def test_toggle_todo(self, ctl):
+        """翻转完成状态写回并留痕; 不存在的 id 失败."""
+        tid = ctl.add_todo("任务").detail["tid"]
+        result = ctl.toggle_todo(tid)
+        assert result.ok and result.detail["done"] is True
+        assert ctl.schedule_snapshot().todos[0].done is True
+        ops = ctl.storage.list_operations()
+        assert ops[0]["action"] == "toggle_todo"
+        assert json.loads(ops[0]["detail"])["done"] is True
+        assert not ctl.toggle_todo(999).ok
+
+    def test_course_names(self, ctl):
+        """课程名列表含默认课程."""
+        assert "未分组" in ctl.course_names()
