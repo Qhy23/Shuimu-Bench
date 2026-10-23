@@ -42,10 +42,11 @@ CLI 两种用法: `python cli.py <子命令>` 单次执行; 不带子命令 `pyt
 
 数据文件 `data/schedule.yaml`(首次运行自动从 `data/schedule.example.yaml` 播种):
 
+- **课表导入**: 信息门户"个人课表"导出的 .xls 可经"导入课表..."按钮一键导入(替换课表段, 事件与待办不动); 6 大节映射标准时段, 支持全周/前后八周/X-Y周/第N周, 单双周降级为每周并提示
 - 课表(timetable)与事件(events)在任意外部编辑器修改, 保存后 GUI 自动重载
 - 待办(todos)可在 GUI 新建与勾选, 也可外部编辑; GUI 保存会全量重写文件, 手写注释会丢失
 - 课表条目可选 `weeks: [起, 止]` 学期周次, 需在 config.yaml 配置 `schedule.semester_start`(学期第 1 周的周一)后生效
-- 已知限制: 并发编辑无锁, 以最后写入为准
+- 已知限制: 并发编辑无锁, 以最后写入为准; 依赖 xlrd(仅解析 .xls, 不支持 .xlsx)
 
 开发环境: Linux/WSL2; Windows 打包后续处理.
 
