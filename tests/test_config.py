@@ -1,6 +1,13 @@
 """config.py 单元测试: 配置加载, 合并与回退."""
 
-from shuimu.config import DEFAULTS, load_config, organize_rules
+from datetime import date
+
+from shuimu.config import (
+    DEFAULTS,
+    load_config,
+    organize_rules,
+    semester_start_date,
+)
 
 
 class TestLoadConfig:
@@ -50,3 +57,28 @@ class TestOrganizeRules:
         rules = organize_rules(DEFAULTS)
         assert "文档" in rules["categories"]
         assert rules["fallback"] == "其他"
+
+
+class TestSemesterStartDate:
+    """学期起点解析."""
+
+    def test_empty_and_missing(self):
+        """空串与缺失返回 None."""
+        assert semester_start_date(DEFAULTS) is None
+        assert semester_start_date({}) is None
+        assert semester_start_date({"schedule": None}) is None
+
+    def test_valid_string(self):
+        """合法 YYYY-MM-DD 字符串."""
+        cfg = {"schedule": {"semester_start": "2026-09-14"}}
+        assert semester_start_date(cfg) == date(2026, 9, 14)
+
+    def test_invalid_format_falls_back(self):
+        """非法格式静默回退 None."""
+        cfg = {"schedule": {"semester_start": "2026/09/14"}}
+        assert semester_start_date(cfg) is None
+
+    def test_yaml_date_object(self):
+        """YAML 未加引号日期解析成的 date 对象一并接受."""
+        cfg = {"schedule": {"semester_start": date(2026, 9, 14)}}
+        assert semester_start_date(cfg) == date(2026, 9, 14)

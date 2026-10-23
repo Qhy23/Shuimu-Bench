@@ -5,7 +5,13 @@ import sys
 
 import yaml
 
-from shuimu.paths import default_db_path, default_workspace_root, project_root
+from shuimu.paths import (
+    default_db_path,
+    default_schedule_path,
+    default_workspace_root,
+    project_root,
+    template_schedule_path,
+)
 
 
 class TestDefaultDbPath:
@@ -44,6 +50,25 @@ class TestConfigYamlExample:
         example = os.path.join(project_root(), "config.yaml")
         with open(example, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        assert set(data) == {"app", "course", "organize"}
+        assert set(data) == {"app", "course", "organize", "schedule"}
         assert data["course"]["default_name"] == "未分组"
         assert "文档" in data["organize"]["categories"]
+
+
+class TestSchedulePaths:
+    """日程数据文件与模板路径."""
+
+    def test_dev_mode_under_project(self):
+        """源码运行时数据文件与模板都在项目 data/ 下."""
+        path = default_schedule_path()
+        assert path.endswith(os.path.join("data", "schedule.yaml"))
+        assert project_root() in path
+        assert template_schedule_path().endswith("schedule.example.yaml")
+
+    def test_frozen_mode_uses_user_dir(self, monkeypatch, tmp_path):
+        """打包后数据文件落到平台用户数据目录."""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        path = default_schedule_path()
+        assert str(tmp_path) in path
+        monkeypatch.delattr(sys, "frozen", raising=False)

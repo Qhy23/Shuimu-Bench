@@ -6,6 +6,7 @@
 
 import copy
 import os
+from datetime import date
 
 import yaml
 
@@ -32,6 +33,9 @@ DEFAULTS = {
                     ".html", ".css"],
         },
     },
+    "schedule": {
+        "semester_start": "",  # 学期第 1 周的周一(YYYY-MM-DD), 空为不启用周次过滤
+    },
 }
 
 
@@ -56,6 +60,24 @@ def organize_rules(cfg: dict) -> dict:
     """从完整配置提取整理规则(categories + fallback)."""
     org = cfg["organize"]
     return {"categories": org["categories"], "fallback": org["fallback_category"]}
+
+
+def semester_start_date(cfg: dict):
+    """提取并解析学期起点(建议填第 1 周的周一).
+
+    空串/缺失返回 None(不启用周次过滤); 格式非法同样返回 None,
+    静默回退不中断启动, 与 load_config 对损坏文件的容错一致.
+    YAML 未加引号的日期会被解析成 date 对象, 一并接受.
+    """
+    raw = (cfg.get("schedule") or {}).get("semester_start", "")
+    if isinstance(raw, date):
+        return raw
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _candidates(path):
