@@ -142,13 +142,13 @@ class ScheduleTab(QWidget):
         next_btn = QPushButton(">", panel)
         next_btn.setFixedWidth(32)
         self.today_btn = QPushButton("回到今天", panel)
-        self.import_btn = QPushButton("导入课表...", panel)
+        self.import_btn = QPushButton("导入课程...", panel)
         self.week_label = QLabel("", panel)
         self.week_label.setObjectName("dayhead")
         prev_btn.clicked.connect(lambda: self._shift_week(-1))
         next_btn.clicked.connect(lambda: self._shift_week(1))
         self.today_btn.clicked.connect(self._go_today)
-        self.import_btn.clicked.connect(self._import_timetable)
+        self.import_btn.clicked.connect(self._import_courses)
         nav.addWidget(prev_btn)
         nav.addWidget(self.week_label)
         nav.addWidget(next_btn)
@@ -199,8 +199,7 @@ class ScheduleTab(QWidget):
     def _render_week(self, snapshot) -> None:
         """渲染当前周: 导航标签与时间网格, 本周时滚动定位到当前时刻附近."""
         self._set_week_label()
-        entries = entries_for_week(snapshot, self._monday,
-                                   self.controller.semester_start())
+        entries = entries_for_week(snapshot, self._monday)
         self.week_grid.set_week(self._monday, entries)
         if self.week_grid.today_column():
             self.week_scroll.verticalScrollBar().setValue(
@@ -272,21 +271,21 @@ class ScheduleTab(QWidget):
             return
         self._mutate(lambda: self.controller.toggle_todo(tid))
 
-    def _import_timetable(self) -> None:
-        """从门户导出的 .xls 导入课表: 选文件 -> 确认替换 -> 写回."""
+    def _import_courses(self) -> None:
+        """从个人校历 .html 导入课程: 选文件 -> 确认替换 courses 段 -> 写回."""
         path, _selected = QFileDialog.getOpenFileName(
-            self, "选择门户导出的课表", "", "课表导出 (*.xls)")
+            self, "选择个人校历页面", "", "个人校历 (*.html *.htm)")
         if not path:
             return
         current = self.controller.schedule_snapshot()
         answer = QMessageBox.question(
-            self, "导入课表",
-            f"将用文件内容替换现有课表({len(current.timetable)} 条),\n"
-            "事件与待办不受影响. 继续?")
+            self, "导入课程",
+            f"将用个人校历替换课程数据(现 {len(current.courses)} 条),\n"
+            "手动事件与待办不受影响. 继续?")
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._self_write = True
-        result = self.controller.import_timetable(path)
+        result = self.controller.import_courses(path)
         if not result.ok:
             self._self_write = False
             _warn(self, "导入失败", result.message)

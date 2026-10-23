@@ -4,10 +4,10 @@
 纯 YAML; GUI 保存(new/toggle todo)会全量重写该文件, 手写注释会丢失.
 
 schema 三段:
-  timetable: {weekday: 1-7, start: "HH:MM", end: "HH:MM", title,
-              location?, weeks?: [起, 止]}       # 每周重复; weeks 为学期周次
-  events:    {date: "YYYY-MM-DD", start, end?, title, location?}  # 一次性
-  todos:     {id, title, due?, course?, done}   # id 程序维护, 缺失自动补号
+  courses: [{date: "YYYY-MM-DD", start: "HH:MM", end: "HH:MM", title,
+             location?}]   # 导入的课程数据(个人校历 html, 一般不手编)
+  manual:  [{date, start, end, title, location?}]  # 手动添加的事件(预留)
+  todos:   [{id, title, due?, course?, done}]      # id 程序维护, 缺失自动补号
 """
 
 import os
@@ -17,28 +17,13 @@ from datetime import date, time, timedelta
 
 import yaml
 
-HEADER = ("# 水木工作台日程数据(timetable/events/todos).\n"
+HEADER = ("# 水木工作台日程数据(courses=导入课程, manual=手动事件, todos=待办).\n"
           "# 注意: GUI 保存会重写本文件, 手写注释会丢失.\n")
-
-_SEMESTER_HINT = ("timetable 含 weeks 字段, 但 config.yaml 未配置 "
-                  "schedule.semester_start, 周次过滤未生效(该条每周显示)")
-
-
-@dataclass
-class TimetableSlot:
-    """每周重复的课表条目."""
-
-    weekday: int  # 1-7, ISO 周一=1
-    start: time
-    end: time
-    title: str
-    location: str = ""
-    weeks: tuple = None  # 学期周次闭区间(起, 止), None 不过滤
 
 
 @dataclass
 class Event:
-    """特定时间的一次性事件."""
+    """一次有确切日期与起止时间的事件(课程或手动添加)."""
 
     date: date
     start: time
@@ -60,21 +45,21 @@ class Todo:
 
 @dataclass
 class DayEntry:
-    """周历列内单张卡片的统一投影(课表/事件归一)."""
+    """周历列内单张卡片的统一投影."""
 
     start: time
     end: time = None
     title: str = ""
     location: str = ""
-    is_event: bool = False
+    is_manual: bool = False  # True=手动事件, False=导入课程
 
 
 @dataclass
 class ScheduleData:
     """一次完整加载的日程."""
 
-    timetable: list = field(default_factory=list)
-    events: list = field(default_factory=list)
+    courses: list = field(default_factory=list)
+    manual: list = field(default_factory=list)
     todos: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
 
@@ -98,53 +83,24 @@ def _parse_date(raw) -> date:
     return date.fromisoformat(raw)
 
 
-def _parse_common(raw, *, need_end) -> dict:
-    """timetable/events 条目的公共字段校验."""
+def _parse_event(raw) -> Event:
+    """解析 courses/manual 条目, 非法抛 ValueError(带原因)."""
     if not isinstance(raw, dict):
         raise ValueError("条目须为映射")
     start = _parse_time(raw.get("start"))
     end = None
     if raw.get("end") is not None:
         end = _parse_time(raw.get("end"))
-    if end is None and need_end:
-        raise ValueError("缺少 end 时间")
-    if end is not None and end <= start:
-        raise ValueError("end 须晚于 start(不支持跨天)")
+        if end <= start:
+            raise ValueError("end 须晚于 start")
     title = raw.get("title")
     if not isinstance(title, str) or not title.strip():
         raise ValueError("title 须为非空字符串")
     location = raw.get("location", "")
     if not isinstance(location, str):
         raise ValueError("location 须为字符串")
-    return {"start": start, "end": end,
-            "title": title.strip(), "location": location}
-
-
-def _parse_slot(raw) -> TimetableSlot:
-    """解析 timetable 条目, 非法抛 ValueError(带原因)."""
-    fields = _parse_common(raw, need_end=True)
-    weekday = raw.get("weekday")
-    if not isinstance(weekday, int) or isinstance(weekday, bool) \
-            or not 1 <= weekday <= 7:
-        raise ValueError(f"weekday 须为 1-7 的整数: {weekday!r}")
-    weeks = None
-    weeks_raw = raw.get("weeks")
-    if weeks_raw is not None:
-        if not isinstance(weeks_raw, list) or len(weeks_raw) != 2 \
-                or not all(isinstance(w, int) and not isinstance(w, bool)
-                           and w >= 1 for w in weeks_raw) \
-                or weeks_raw[0] > weeks_raw[1]:
-            raise ValueError("weeks 须为 [起, 止], 正整数且 起<=止")
-        weeks = (weeks_raw[0], weeks_raw[1])
-    return TimetableSlot(weekday, fields["start"], fields["end"],
-                         fields["title"], fields["location"], weeks)
-
-
-def _parse_event(raw) -> Event:
-    """解析 events 条目, 非法抛 ValueError(带原因)."""
-    fields = _parse_common(raw, need_end=False)
-    return Event(_parse_date(raw.get("date")), fields["start"],
-                 fields["end"], fields["title"], fields["location"])
+    return Event(_parse_date(raw.get("date")), start, end,
+                 title.strip(), location)
 
 
 def _parse_todo(raw, fallback_tid: int) -> Todo:
@@ -194,6 +150,7 @@ def load_schedule(path: str) -> ScheduleData:
 
     文件缺失返回空(播种归 ensure_schedule_file); YAML 损坏或顶层非映射
     整体回退为空并记一条 warning; 单条目非法跳过并记 warning(带段落与序号).
+    旧版 timetable/events 段不再使用, 静默忽略.
     """
     data = ScheduleData()
     if not os.path.isfile(path):
@@ -217,17 +174,13 @@ def load_schedule(path: str) -> ScheduleData:
             return []
         return raw
 
-    for i, raw in enumerate(section("timetable"), 1):
-        try:
-            data.timetable.append(_parse_slot(raw))
-        except ValueError as exc:
-            data.warnings.append(f"timetable 第 {i} 条跳过: {exc}")
-
-    for i, raw in enumerate(section("events"), 1):
-        try:
-            data.events.append(_parse_event(raw))
-        except ValueError as exc:
-            data.warnings.append(f"events 第 {i} 条跳过: {exc}")
+    for name in ("courses", "manual"):
+        target = data.courses if name == "courses" else data.manual
+        for i, raw in enumerate(section(name), 1):
+            try:
+                target.append(_parse_event(raw))
+            except ValueError as exc:
+                data.warnings.append(f"{name} 第 {i} 条跳过: {exc}")
 
     parsed = []
     for i, raw in enumerate(section("todos"), 1):
@@ -244,21 +197,20 @@ def save_schedule(path: str, data: ScheduleData) -> None:
 
     date/time 序列化为字符串; OSError 由调用方(Controller)处理.
     """
-    root = {
-        "timetable": [
-            {"weekday": s.weekday, "start": s.start.strftime("%H:%M"),
-             "end": s.end.strftime("%H:%M"), "title": s.title,
-             "location": s.location,
-             **({"weeks": list(s.weeks)} if s.weeks else {})}
-            for s in data.timetable
-        ],
-        "events": [
+
+    def dump_events(entries):
+        return [
             {"date": e.date.strftime("%Y-%m-%d"),
              "start": e.start.strftime("%H:%M"),
              **({"end": e.end.strftime("%H:%M")} if e.end else {}),
-             "title": e.title, "location": e.location}
-            for e in data.events
-        ],
+             "title": e.title,
+             **({"location": e.location} if e.location else {})}
+            for e in entries
+        ]
+
+    root = {
+        "courses": dump_events(data.courses),
+        "manual": dump_events(data.manual),
         "todos": [
             {"id": t.tid, "title": t.title,
              **({"due": t.due.strftime("%Y-%m-%d")} if t.due else {}),
@@ -301,34 +253,27 @@ def week_start(day: date) -> date:
 
 
 def semester_week(day: date, start: date) -> int:
-    """学期周次 = (day - start) // 7 + 1. 负数原样返回(过滤自然不命中)."""
+    """学期周次 = (day - start) // 7 + 1. 负数原样返回."""
     return (day - start).days // 7 + 1
 
 
-def entries_for_week(data: ScheduleData, monday: date, sem_start=None) -> dict:
+def entries_for_week(data: ScheduleData, monday: date) -> dict:
     """返回 {weekday(1-7): 按开始时间排序的 DayEntry 列表}.
 
-    课表: weeks 有值且 sem_start 有值时按 monday 的学期周过滤; weeks 有值
-    但 sem_start 未配置则不过滤并追加一条 warning(宁多勿漏, 只记一次).
-    事件: date 落在 [monday, monday+6] 归入对应列.
+    courses 与 manual 中的事件按 date 落在 [monday, monday+6] 归入对应列.
     """
     result = {wd: [] for wd in range(1, 8)}
-    current_week = semester_week(monday, sem_start) if sem_start else None
-    for slot in data.timetable:
-        if slot.weeks is not None:
-            if current_week is None:
-                if _SEMESTER_HINT not in data.warnings:
-                    data.warnings.append(_SEMESTER_HINT)
-            elif not slot.weeks[0] <= current_week <= slot.weeks[1]:
-                continue
-        result[slot.weekday].append(DayEntry(
-            slot.start, slot.end, slot.title, slot.location, is_event=False))
-    for event in data.events:
-        offset = (event.date - monday).days
-        if 0 <= offset <= 6:
-            result[offset + 1].append(DayEntry(
-                event.start, event.end, event.title, event.location,
-                is_event=True))
+
+    def place(entries, is_manual):
+        for entry in entries:
+            offset = (entry.date - monday).days
+            if 0 <= offset <= 6:
+                result[offset + 1].append(DayEntry(
+                    entry.start, entry.end, entry.title, entry.location,
+                    is_manual))
+
+    place(data.manual, True)
+    place(data.courses, False)
     for entries in result.values():
         entries.sort(key=lambda e: (e.start, e.title))
     return result

@@ -1,182 +1,107 @@
-"""从清华大学信息门户导出的课表 .xls 导入(纯逻辑, 不依赖 Qt).
+"""从信息门户"个人校历"页面另存的 HTML 导入课程(纯逻辑, 不依赖 Qt).
 
-门户"个人课表"导出为 BIFF 二进制 .xls(report 工作表):
-  - 某行为星期表头(星期一..星期日), 其下"第N节"行构成 6 大节网格
-  - 常规课单元格: "课程名(教师;属性;周次;地点)", 周次如 全周/前八周/5-12周
-  - 实验课单元格可含多条(\\r\\n 分隔): "实验名(地点;第N周)" 单周次
-  - 网格后为"未安排时间课程"明细区(无时间, 不导入只计数)
+页面为服务端渲染的展开视图: "★YYYY-MM-DD" 日期分节, 节内表格每行一次
+上课(开始时间|结束时间|分类|内容|地点|说明), 含确切课时与调休/调课结果.
 
-时段映射与 thu-info-app 项目总结的 6 大节标准一致(仅参考其公开协议
-格式, 未复制其代码, 该项目为 BSL 1.1 许可).
+联排课在页面里是相邻的多行(如 08:00-09:35 与 09:50-11:25), 本模块按
+"同日同名且间隔不超过 15 分钟"合并为一条(阈值与 thu-info-app 的
+mergeAdjacent 一致; 仅参考其公开行为, 未复制其 BSL 1.1 代码).
 """
 
 import re
 from dataclasses import dataclass, field
-from datetime import time
+from datetime import date, time
+from html import unescape
 
-import xlrd
+from .schedule import Event
 
-from .schedule import TimetableSlot
-
-# 6 大节 -> (开始, 结束)
-SESSION_TIMES = {
-    1: (time(8, 0), time(9, 35)),
-    2: (time(9, 50), time(12, 15)),
-    3: (time(13, 30), time(15, 5)),
-    4: (time(15, 20), time(16, 55)),
-    5: (time(17, 5), time(18, 40)),
-    6: (time(19, 20), time(21, 45)),
-}
-
-WEEKDAY_OF_HEADER = {"星期一": 1, "星期二": 2, "星期三": 3, "星期四": 4,
-                     "星期五": 5, "星期六": 6, "星期日": 7}
-
-WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-
-_WEEK_FIELD = re.compile(r"^(第\d+周|\d+\s*[-–—至]\s*\d+\s*周|[前后]8?八?周|全周|单周|双周)$")
+_DATE_HEAD = re.compile(r"★\s*(\d{4}-\d{2}-\d{2})")
+_TIME_CELL = re.compile(r"^(\d{1,2}):(\d{2})$")
+MERGE_GAP_MIN = 15  # 同日同名条目间隔不超过该分钟数时合并
 
 
 @dataclass
 class ImportResult:
     """一次导入的解析结果."""
 
-    slots: list = field(default_factory=list)
+    events: list = field(default_factory=list)
+    merged: int = 0  # 被合并掉的行数
     warnings: list = field(default_factory=list)
-    unscheduled: int = 0  # 未安排时间课程条数(不导入)
 
 
-def parse_week_spec(text: str):
-    """周次字段转 weeks 区间. 返回 ((起, 止) 或 None, 警告或 None).
+def _clean_html(fragment: str) -> str:
+    """去标签, 反转义实体, 空白折叠为单个空格."""
+    text = unescape(re.sub(r"<[^>]+>", " ", fragment))
+    return re.sub(r"\s+", " ", text).strip()
 
-    None 表示不过滤(每周显示). 无法识别抛 ValueError; 单周/双周无法用
-    区间表达, 降级为每周并给出警告.
+
+def _minutes(value: time) -> int:
+    return value.hour * 60 + value.minute
+
+
+def merge_adjacent(events: list) -> list:
+    """同日同名且间隔不超过 MERGE_GAP_MIN 分钟的条目合并为一条.
+
+    就地修改并返回入参列表(要求条目已属同一天); 三节以上连排会链式合并.
     """
-    text = text.strip()
-    if text == "全周":
-        return None, None
-    if text in ("前八周", "前8周"):
-        return (1, 8), None
-    if text in ("后八周", "后8周"):
-        return (9, 16), None  # 按标准 16 周学期
-    if text in ("单周", "双周"):
-        return None, f"\"{text}\"无法按区间表达, 已按每周导入"
-    match = re.fullmatch(r"第(\d+)周", text)
-    if match:
-        week = int(match.group(1))
-        return (week, week), None
-    match = re.fullmatch(r"(\d+)\s*[-–—至]\s*(\d+)\s*周", text)
-    if match:
-        begin, end = int(match.group(1)), int(match.group(2))
-        if begin > end:
-            raise ValueError(f"周次区间起大于止: {text}")
-        return (begin, end), None
-    raise ValueError(f"无法识别的周次: {text}")
+    merged = []
+    for entry in sorted(events, key=lambda e: (e.start, e.title)):
+        previous = merged[-1] if merged else None
+        if (previous is not None and previous.title == entry.title
+                and 0 <= _minutes(entry.start) - _minutes(previous.end)
+                <= MERGE_GAP_MIN):
+            previous.end = entry.end
+        else:
+            merged.append(entry)
+    return merged
 
 
-def _parse_entry(text: str, weekday: int, session: int):
-    """解析单元格内一条课程文本, 返回 TimetableSlot; 非法抛 ValueError."""
-    text = text.strip()
-    if "(" not in text or not text.endswith(")"):
-        raise ValueError(f"缺少括注字段: {text}")
-    title, _, tail = text.rpartition("(")
-    title = title.strip()
-    if not title:
-        raise ValueError(f"缺少课程名: {text}")
-    fields = [f.strip() for f in re.split(r"[；;]", tail[:-1]) if f.strip()]
-    week_idx = next((i for i, f in enumerate(fields) if _WEEK_FIELD.match(f)),
-                    None)
-    if week_idx is None:
-        raise ValueError(f"缺少周次字段: {text}")
-    weeks, warning = parse_week_spec(fields[week_idx])
-    # 周次字段之后是地点(常规课); 之前是地点(实验课"地点;第N周"格式)
-    rest = fields[week_idx + 1:] or fields[:week_idx]
-    location = "；".join(rest)
-    start, end = SESSION_TIMES[session]
-    slot = TimetableSlot(weekday, start, end, title, location, weeks)
-    return slot, warning
-
-
-def _find_weekday_header(sheet):
-    """定位星期表头行, 返回 (列->weekday 映射, 行号); 未找到返回 ({}, -1)."""
-    for row in range(sheet.nrows):
-        mapping = {}
-        for col in range(sheet.ncols):
-            value = sheet.cell_value(row, col)
-            if isinstance(value, str) and value.strip() in WEEKDAY_OF_HEADER:
-                mapping[col] = WEEKDAY_OF_HEADER[value.strip()]
-        if len(mapping) >= 5:
-            return mapping, row
-    return {}, -1
-
-
-def _is_unscheduled_marker(sheet, row) -> bool:
-    """该行是否为"未安排时间课程"分节标记."""
-    for col in range(sheet.ncols):
-        value = sheet.cell_value(row, col)
-        if isinstance(value, str) and "未安排时间课程" in value:
-            return True
-    return False
-
-
-def _scan_unscheduled_count(sheet, start_row) -> int:
-    """统计明细区数据行数(跳过表头行)."""
-    count = 0
-    header_seen = False
-    for row in range(start_row, sheet.nrows):
-        first = str(sheet.cell_value(row, 0)).strip()
-        is_header = first == "课程号"
-        header_seen = header_seen or is_header
-        if header_seen and not is_header and first:
-            count += 1
-    return count
-
-
-def _scan_session_row(sheet, row, weekday_of_col, result: ImportResult) -> None:
-    """扫描一个"第N节"行: 各星期列单元格按换行拆条解析进 result."""
-    first = str(sheet.cell_value(row, 0)).strip()
-    match = re.fullmatch(r"第(\d+)节", first)
-    if not match:
-        return
-    session = int(match.group(1))
-    if session not in SESSION_TIMES:
-        result.warnings.append(f"第 {session} 节超出 1-6 范围, 该行跳过")
-        return
-    for col, weekday in sorted(weekday_of_col.items()):
-        value = sheet.cell_value(row, col)
-        if not isinstance(value, str) or not value.strip():
+def _parse_calendar_rows(segment: str, day: date, result: ImportResult) -> None:
+    """解析一个日期节内的表格行: 带时间的行收集, 联排课合并后追加."""
+    events = []
+    for tr in re.finditer(r"<tr[^>]*>([\s\S]*?)</tr>", segment):
+        cells = [_clean_html(cell) for cell in re.findall(
+            r"<td[^>]*>([\s\S]*?)</td>", tr.group(1))]
+        if len(cells) < 5:
             continue
-        for entry in re.split(r"[\r\n]+", value):
-            if not entry.strip():
-                continue
-            try:
-                slot, warning = _parse_entry(entry.strip(), weekday, session)
-            except ValueError as exc:
-                result.warnings.append(
-                    f"第{session}节 {WEEKDAY_NAMES[weekday - 1]}列跳过: {exc}")
-                continue
-            if warning:
-                result.warnings.append(f"{slot.title}: {warning}")
-            result.slots.append(slot)
+        start_match = _TIME_CELL.match(cells[0])
+        end_match = _TIME_CELL.match(cells[1])
+        if not start_match or not end_match or not cells[3]:
+            continue
+        title = cells[3] + (f"({cells[5]})" if len(cells) > 5 and cells[5]
+                            else "")
+        events.append(Event(
+            day,
+            time(int(start_match.group(1)), int(start_match.group(2))),
+            time(int(end_match.group(1)), int(end_match.group(2))),
+            title, cells[4]))
+    merged_events = merge_adjacent(events)
+    result.events.extend(merged_events)
+    result.merged += len(events) - len(merged_events)
 
 
-def parse_portal_xls(path: str) -> ImportResult:
-    """解析门户导出的课表 .xls, 返回 slots/warnings/未安排计数.
+def parse_calendar_html(path: str) -> ImportResult:
+    """解析门户"个人校历"页面另存的 HTML, 每次上课解析为一条 Event.
 
-    结构扫描而非硬编码坐标: 先找星期表头行(>=5 个 星期X 单元格), 其下
-    首列为"第N节"的行是时段行; 出现"未安排时间课程"后进入明细区.
+    无时间列的行(页面骨架)跳过; 说明列非空时追加到标题括注内.
+    文件编码 utf-8 失败回退 gb18030(页面声明 gb2312, 浏览器另存可能已是
+    utf-8).
     """
-    book = xlrd.open_workbook(path)
-    sheet = book.sheet_by_index(0)
-    weekday_of_col, header_row = _find_weekday_header(sheet)
-    if not weekday_of_col:
-        raise ValueError("未找到星期表头行(需含 星期一..星期日)")
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("gb18030", errors="replace")
 
     result = ImportResult()
-    details_row = sheet.nrows
-    for row in range(header_row + 1, sheet.nrows):
-        if _is_unscheduled_marker(sheet, row):
-            details_row = row
-            break
-        _scan_session_row(sheet, row, weekday_of_col, result)
-    result.unscheduled = _scan_unscheduled_count(sheet, details_row + 1)
+    heads = list(_DATE_HEAD.finditer(text))
+    if not heads:
+        raise ValueError("未找到日期分节(需含 ★YYYY-MM-DD)")
+    for index, head in enumerate(heads):
+        day = date.fromisoformat(head.group(1))
+        end = heads[index + 1].start() if index + 1 < len(heads) else len(text)
+        _parse_calendar_rows(text[head.end():end], day, result)
+    if not result.events:
+        result.warnings.append("页面不含任何带时间的日历条目")
     return result

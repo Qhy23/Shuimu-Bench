@@ -1,22 +1,17 @@
 # 水木工作台日程模板(schedule.example.yaml).
 # 首次运行时复制为 data/schedule.yaml, 程序实际读取的是后者(可在其中自由编辑).
-# 三段: timetable=每周重复课表, events=一次性事件, todos=任务备忘.
+# 三段: courses=导入的课程数据(个人校历 html, 一般不手编),
+#       manual=手动添加的事件, todos=任务备忘.
 # 注意: GUI 保存(新建/勾选 todo)会重写 data/schedule.yaml, 手写注释会丢失.
 
-timetable:
-  - weekday: 2            # 1=周一 ... 7=周日
-    start: "19:20"        # 时间须加引号(不加引号会被 YAML 当成 60 进制数)
+courses:
+  - date: 2026-10-27
+    start: "19:20"        # 时间建议加引号
     end: "20:55"
-    title: AI 编程进阶:方法与实践
-    location: 待定
-    weeks: [5, 12]        # 可选, 学期第几周到第几周; 需在 config.yaml 配置 semester_start 后生效
+    title: AI 编程进阶：方法与实践
+    location: 建华/经管新楼A312
 
-events:
-  - date: 2026-10-27      # 日期可不加引号
-    start: "19:00"
-    end: "21:00"
-    title: AI 编程进阶第 3 讲(代码生成, 理解与调试)
-    location: 待定
+manual: []                 # 手动添加的事件, 格式与 courses 相同
 
 todos:
   - id: 1                 # id 由程序维护, 新增条目可不写, 保存时自动补

@@ -158,27 +158,31 @@ class TestScheduleActions:
         """课程名列表含默认课程."""
         assert "未分组" in ctl.course_names()
 
-    def test_import_timetable(self, ctl):
-        """导入替换 timetable 段, 事件与待办保留, 留痕计数."""
+    def test_import_courses(self, ctl):
+        """个人校历导入替换 courses 段, manual 与待办保留, 留痕含合并数."""
         fixture = os.path.join(os.path.dirname(__file__), "fixtures",
-                               "portal_sample.xls")
+                               "portal_calendar_sample.html")
         ctl.add_todo("任务")
         data = ctl.schedule_snapshot()
-        data.events.append(Event(date(2026, 10, 27), time(19), None, "讲座", ""))
+        data.manual.append(Event(date(2026, 10, 27), time(9), time(10),
+                                 "手动事件", ""))
         save_schedule(ctl.schedule_path, data)
 
-        result = ctl.import_timetable(fixture)
-        assert result.ok and result.detail["imported"] == 8
+        result = ctl.import_courses(fixture)
+        assert result.ok and result.detail["courses"] == 3
+        assert result.detail["merged"] == 1
         after = ctl.schedule_snapshot()
-        assert len(after.timetable) == 8
-        assert len(after.todos) == 1 and len(after.events) == 1  # 不受影响
+        assert len(after.courses) == 3
+        assert after.courses[0].end == time(11, 25)  # 联排课合并
+        assert len(after.manual) == 1 and len(after.todos) == 1
         ops = ctl.storage.list_operations()
-        assert ops[0]["action"] == "import_timetable"
-        assert json.loads(ops[0]["detail"])["replaced"] == 0
+        assert ops[0]["action"] == "import_courses"
+        detail = json.loads(ops[0]["detail"])
+        assert detail["replaced"] == 0 and detail["merged"] == 1
 
-    def test_import_timetable_bad_file(self, ctl, tmp_path):
-        """不存在的文件与非课表文件都返回失败."""
-        assert not ctl.import_timetable(str(tmp_path / "nope.xls")).ok
-        bad = tmp_path / "bad.xls"
-        bad.write_text("not an excel", encoding="utf-8")
-        assert not ctl.import_timetable(str(bad)).ok
+    def test_import_courses_bad_file(self, ctl, tmp_path):
+        """不存在的文件与无分节的 html 都返回失败."""
+        assert not ctl.import_courses(str(tmp_path / "nope.html")).ok
+        no_dates = tmp_path / "plain.html"
+        no_dates.write_text("<html></html>", encoding="utf-8")
+        assert not ctl.import_courses(str(no_dates)).ok

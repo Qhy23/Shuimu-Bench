@@ -17,7 +17,7 @@ from shuimu.week_grid import (
 
 def _entry(start, end=None, title="课", location=""):
     """快速构造 DayEntry."""
-    return DayEntry(start, end, title, location, is_event=end is None)
+    return DayEntry(start, end, title, location, is_manual=False)
 
 
 class TestLayoutDay:

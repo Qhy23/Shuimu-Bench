@@ -1,164 +1,114 @@
-"""schedule_import.py 测试: 周次解析, 条目解析, 结构扫描与真实二进制 fixture."""
+"""schedule_import.py 测试: 个人校历 html 解析与联排课合并."""
 
 import os
-from datetime import time
+from datetime import date, time
 
 import pytest
 
-from shuimu.schedule_import import (
-    SESSION_TIMES,
-    parse_portal_xls,
-    parse_week_spec,
-)
-from shuimu.schedule import TimetableSlot
+from shuimu.schedule import Event
+from shuimu.schedule_import import merge_adjacent, parse_calendar_html
 
-FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "portal_sample.xls")
+CALENDAR_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures",
+                                "portal_calendar_sample.html")
+
+DAY = date(2026, 10, 26)
 
 
-class TestWeekSpec:
-    """周次字段解析."""
+def _event(start, end, title="课", location="", day=None):
+    """快速构造同一天的事件."""
+    return Event(day or DAY, start, end, title, location)
 
-    def test_keywords(self):
-        """全周/前后八周/单双周."""
-        assert parse_week_spec("全周") == (None, None)
-        assert parse_week_spec("前八周") == ((1, 8), None)
-        assert parse_week_spec("后8周") == ((9, 16), None)
-        weeks, warning = parse_week_spec("单周")
-        assert weeks is None and warning
 
-    def test_ranges(self):
-        """区间与单周次."""
-        assert parse_week_spec("5-12周") == ((5, 12), None)
-        assert parse_week_spec("第4周") == ((4, 4), None)
+class TestMergeAdjacent:
+    """联排课合并规则."""
 
-    def test_invalid(self):
-        """无法识别与起大于止抛 ValueError."""
+    def test_gap_15_merges(self):
+        """间隔恰 15 分钟的同名课合并为一条."""
+        merged = merge_adjacent([_event(time(8), time(9, 35)),
+                                 _event(time(9, 50), time(11, 25), title="课")])
+        assert len(merged) == 1
+        assert (merged[0].start, merged[0].end) == (time(8), time(11, 25))
+
+    def test_gap_16_not_merged(self):
+        """间隔超过 15 分钟不合并."""
+        merged = merge_adjacent([_event(time(8), time(9, 35)),
+                                 _event(time(9, 51), time(11, 25), title="课")])
+        assert len(merged) == 2
+
+    def test_different_title_not_merged(self):
+        """同时间相邻但课名不同不合并."""
+        merged = merge_adjacent([_event(time(8), time(9, 35), title="a"),
+                                 _event(time(9, 50), time(11, 25), title="b")])
+        assert len(merged) == 2
+
+    def test_title_only_location_ignored(self):
+        """合并只看课名, 地点不同也合并(同日联排换教室)."""
+        merged = merge_adjacent([_event(time(8), time(9, 35), location="一教"),
+                                 _event(time(9, 50), time(11, 25), title="课",
+                                        location="三教")])
+        assert len(merged) == 1 and merged[0].location == "一教"
+
+    def test_three_chain_merges(self):
+        """三节连排链式合并为一条."""
+        merged = merge_adjacent([_event(time(8), time(9, 35)),
+                                 _event(time(9, 50), time(11, 25), title="课"),
+                                 _event(time(11, 25), time(12, 10), title="课")])
+        assert len(merged) == 1
+        assert (merged[0].start, merged[0].end) == (time(8), time(12, 10))
+
+    def test_unsorted_input_handled(self):
+        """乱序输入按开始时间归并."""
+        merged = merge_adjacent([_event(time(9, 50), time(11, 25), title="课"),
+                                 _event(time(8), time(9, 35))])
+        assert len(merged) == 1 and merged[0].start == time(8)
+
+
+class TestCalendarHtml:
+    """个人校历 HTML(展开视图)解析."""
+
+    def test_fixture_events_and_merge(self):
+        """4 行课经联排合并得 3 条事件, 合并 1 处."""
+        result = parse_calendar_html(CALENDAR_FIXTURE)
+        assert len(result.events) == 3 and result.merged == 1
+        assert not result.warnings
+        math = result.events[0]
+        assert (math.date, math.start, math.end) == (
+            date(2026, 10, 26), time(8), time(11, 25))  # 08:00+09:50 合并
+        assert math.title == "高等数学A(1)" and math.location == "一教101"
+
+    def test_exact_course_hours_kept(self):
+        """逐次事件保留确切课时."""
+        result = parse_calendar_html(CALENDAR_FIXTURE)
+        ai = [e for e in result.events if "AI" in e.title][0]
+        assert (ai.start, ai.end) == (time(19, 20), time(20, 55))
+        assert ai.title == "AI 编程进阶(第 5 周)"  # 说明列追加
+
+    def test_scaffold_rows_skipped(self):
+        """无时间列的骨架行与表头行跳过."""
+        result = parse_calendar_html(CALENDAR_FIXTURE)
+        titles = [e.title for e in result.events]
+        assert "无时间列的骨架行应跳过" not in titles
+        assert "开始时间" not in titles
+
+    def test_no_date_sections_raises(self, tmp_path):
+        """没有日期分节时报错."""
+        f = tmp_path / "x.html"
+        f.write_text("<html>没有星号分节</html>", encoding="utf-8")
         with pytest.raises(ValueError):
-            parse_week_spec("有时上")
-        with pytest.raises(ValueError):
-            parse_week_spec("9-3周")
+            parse_calendar_html(str(f))
 
+    def test_no_timed_rows_warns(self, tmp_path):
+        """有分节但无带时间条目时给警告."""
+        f = tmp_path / "empty.html"
+        f.write_text("★2026-10-26<tr><td>x</td></tr>", encoding="utf-8")
+        result = parse_calendar_html(str(f))
+        assert not result.events and result.warnings
 
-class TestFixtureIntegration:
-    """真实二进制 fixture(合成, 与门户导出同构)."""
-
-    def _find(self, title):
-        slots = parse_portal_xls(FIXTURE).slots
-        return [s for s in slots if s.title == title]
-
-    def test_counts(self):
-        """正常课 + 一格双实验共 8 条, 未安排 2 门."""
-        result = parse_portal_xls(FIXTURE)
-        assert len(result.slots) == 8
-        assert result.unscheduled == 2
-
-    def test_regular_course(self):
-        """常规课: 名称/地点/周次/时段映射正确."""
-        slots = self._find("高等数学A")
-        assert len(slots) == 1
-        slot = slots[0]
-        assert slot.weekday == 1 and slot.location == "一教101"
-        assert slot.weeks is None  # 全周不过滤
-        assert (slot.start, slot.end) == SESSION_TIMES[1]
-
-    def test_week_ranges(self):
-        """区间周次与前八周."""
-        assert self._find("大学物理")[0].weeks == (5, 12)
-        assert self._find("程序设计")[0].weeks == (1, 8)
-
-    def test_single_week_experiments(self):
-        """一格双实验按 \\r\\n 拆分, 各自单周次, 地点在周次之前."""
-        exp_a = self._find("实验A- subgroup")
-        exp_b = self._find("实验B- subgroup")
-        assert exp_a[0].weeks == (4, 4) and exp_a[0].location == "老工物馆137房间"
-        assert exp_b[0].weeks == (5, 5) and exp_b[0].location == "工物馆120"
-        assert exp_a[0].weekday == 1 and exp_a[0].start == time(19, 20)
-
-    def test_odd_even_week_fallback_warning(self):
-        """单周/双周降级为每周并记警告."""
-        titles = {w.split(":")[0] for w in parse_portal_xls(FIXTURE).warnings}
-        assert "人工智能导论" in titles and "英语" in titles
-        assert self._find("人工智能导论")[0].weeks is None
-
-    def test_real_course_shape(self):
-        """与真实门户导出同构的 AI 编程课条目."""
-        slot = self._find("AI编程进阶：方法与实践")[0]
-        assert slot.weekday == 2 and slot.weeks == (5, 12)
-        assert slot.location == "建华/经管新楼A312"
-        assert (slot.start, slot.end) == SESSION_TIMES[6]
-
-
-class TestStructureScan:
-    """结构扫描与容错(打桩 xlrd)."""
-
-    @pytest.fixture()
-    def matrix_book(self, monkeypatch):
-        """用内存矩阵替换 xlrd.open_workbook."""
-        def install(matrix):
-            """把后续 parse_portal_xls 调用指向内存矩阵."""
-
-            class Sheet:
-                """与 xlrd Sheet 同构的内存替身."""
-
-                name, nrows, ncols = "report", len(matrix), max(map(len, matrix))
-
-                @staticmethod
-                def cell_value(row, col):
-                    """按坐标取单元格, 越界返回空串."""
-                    row_data = matrix[row]
-                    return row_data[col] if col < len(row_data) else ""
-
-            class Book:
-                """与 xlrd Book 同构的内存替身."""
-
-                @staticmethod
-                def sheet_by_index(_index):
-                    """返回唯一的 Sheet."""
-                    return Sheet()
-
-            monkeypatch.setattr("shuimu.schedule_import.xlrd.open_workbook",
-                                lambda _path: Book())
-        return install
-
-    def test_no_weekday_header(self, matrix_book):
-        """没有星期表头行时报错."""
-        matrix_book([["第1节", "课"]])
-        with pytest.raises(ValueError):
-            parse_portal_xls("fake.xls")
-
-    def test_header_not_first_row(self, matrix_book):
-        """标题行在前, 表头行靠结构定位."""
-        matrix_book([
-            ["任意标题"],
-            ["", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"],
-            ["第1节", "课A(师；必修；全周；地)"],
-        ])
-        result = parse_portal_xls("fake.xls")
-        assert [s.title for s in result.slots] == ["课A"]
-
-    def test_malformed_entries_skipped(self, matrix_book):
-        """无括注/无周次/空名的条目跳过并记警告."""
-        matrix_book([
-            ["", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"],
-            ["第1节", "没有括注的课", "缺周次(师；必修；一教)", "(师；必修；全周；地)"],
-        ])
-        result = parse_portal_xls("fake.xls")
-        assert result.slots == []
-        assert len(result.warnings) == 3
-
-    def test_session_out_of_range(self, matrix_book):
-        """第 7 节超出范围整行跳过."""
-        matrix_book([
-            ["", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"],
-            ["第7节", "课A(师；必修；全周；地)"],
-        ])
-        result = parse_portal_xls("fake.xls")
-        assert not result.slots and len(result.warnings) == 1
-
-
-def test_slot_shape():
-    """解析产物字段类型与 schedule 模型一致."""
-    result = parse_portal_xls(FIXTURE)
-    slot = result.slots[0]
-    assert isinstance(slot, TimetableSlot)
-    assert isinstance(slot.start, time) and isinstance(slot.end, time)
+    def test_gb18030_fallback(self, tmp_path):
+        """utf-8 解码失败回退 gb18030(页面声明 gb2312)."""
+        content = ("★2026-10-26<tr><td>10:00</td><td>11:40</td><td>上课</td>"
+                   "<td>物理实验</td><td>实验室</td><td></td></tr>")
+        f = tmp_path / "gb.html"
+        f.write_bytes(content.encode("gb18030"))
+        result = parse_calendar_html(str(f))
+        assert [e.title for e in result.events] == ["物理实验"]

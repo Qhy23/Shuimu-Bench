@@ -8,8 +8,6 @@
 import os
 from dataclasses import dataclass, field
 
-import xlrd
-
 from .config import load_config, organize_rules, semester_start_date
 from .organize import build_plan, execute_plan
 from .paths import default_schedule_path, template_schedule_path
@@ -21,7 +19,7 @@ from .schedule import (
     save_schedule,
     toggle_todo as sched_toggle_todo,
 )
-from .schedule_import import parse_portal_xls
+from .schedule_import import parse_calendar_html
 from .storage import Storage
 
 
@@ -180,29 +178,34 @@ class Controller:
             True, f"待办 #{tid} 已标记为{'完成' if todo.done else '未完成'}",
             {"tid": tid, "done": todo.done})
 
-    def import_timetable(self, path: str) -> ActionResult:
-        """从门户导出的课表 .xls 导入, 替换 timetable 段(事件/待办不动)."""
+    def import_courses(self, path: str) -> ActionResult:
+        """从个人校历 html 导入课程(联排课自动合并), 替换 courses 段.
+
+        manual 与 todos 不动.
+        """
         try:
-            parsed = parse_portal_xls(path)
-        except (OSError, ValueError, xlrd.XLRDError) as exc:
+            parsed = parse_calendar_html(path)
+        except (OSError, ValueError) as exc:
             return ActionResult(False, f"导入失败: {exc}")
         data = self.schedule_snapshot()
-        replaced = len(data.timetable)
-        data.timetable = parsed.slots
+        replaced = len(data.courses)
+        data.courses = parsed.events
         try:
             save_schedule(self.schedule_path, data)
         except OSError as exc:
             return ActionResult(False, f"保存失败: {exc}")
         self.storage.log_operation(
-            "import_timetable", params={"path": path},
-            detail={"imported": len(parsed.slots), "replaced": replaced,
-                    "unscheduled": parsed.unscheduled})
-        message = f"已导入课表 {len(parsed.slots)} 条(替换原 {replaced} 条)"
-        if parsed.unscheduled:
-            message += f", 另有 {parsed.unscheduled} 门无时间安排未导入"
+            "import_courses", params={"path": path},
+            detail={"courses": len(parsed.events), "replaced": replaced,
+                    "merged": parsed.merged})
+        message = (f"已导入课程 {len(parsed.events)} 条"
+                   f"(联排合并 {parsed.merged} 处, 替换原 {replaced} 条)")
+        if parsed.warnings:
+            message += "; " + "; ".join(parsed.warnings)
         return ActionResult(True, message,
-                            {"imported": len(parsed.slots),
+                            {"courses": len(parsed.events),
                              "replaced": replaced,
+                             "merged": parsed.merged,
                              "warnings": parsed.warnings})
 
     def course_names(self) -> list:

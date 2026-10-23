@@ -7,7 +7,6 @@ from shuimu.schedule import (
     DayEntry,
     Event,
     ScheduleData,
-    TimetableSlot,
     Todo,
     add_todo,
     ensure_schedule_file,
@@ -23,12 +22,12 @@ from shuimu.schedule import (
 )
 
 
-def _slot(**kwargs):
-    """快速构造合法课表条目."""
-    base = {"weekday": 1, "start": time(8, 0), "end": time(9, 35),
-            "title": "高数", "location": "", "weeks": None}
+def _event(**kwargs):
+    """快速构造事件(默认 2026-10-26 周一 08:00-09:35)."""
+    base = {"date": date(2026, 10, 26), "start": time(8), "end": time(9, 35),
+            "title": "课", "location": ""}
     base.update(kwargs)
-    return TimetableSlot(**base)
+    return Event(**base)
 
 
 def _todo(**kwargs):
@@ -44,7 +43,7 @@ class TestLoadSchedule:
     def test_missing_file_returns_empty(self, tmp_path):
         """文件缺失返回空且无警告."""
         data = load_schedule(str(tmp_path / "nope.yaml"))
-        assert not data.timetable and not data.events and not data.todos
+        assert not data.courses and not data.manual and not data.todos
         assert not data.warnings
 
     def test_broken_yaml_falls_back(self, tmp_path):
@@ -52,7 +51,7 @@ class TestLoadSchedule:
         f = tmp_path / "s.yaml"
         f.write_text("{{{not yaml", encoding="utf-8")
         data = load_schedule(str(f))
-        assert not data.timetable and not data.todos
+        assert not data.courses and not data.todos
         assert len(data.warnings) == 1
 
     def test_non_dict_root_falls_back(self, tmp_path):
@@ -66,56 +65,58 @@ class TestLoadSchedule:
     def test_section_type_error_ignored(self, tmp_path):
         """段类型错(不是列表)该段置空并警告, 其余正常."""
         f = tmp_path / "s.yaml"
-        f.write_text("timetable: \"oops\"\ntodos: []\n", encoding="utf-8")
+        f.write_text("courses: \"oops\"\ntodos: []\n", encoding="utf-8")
         data = load_schedule(str(f))
-        assert not data.timetable and not data.todos
+        assert not data.courses and not data.todos
         assert len(data.warnings) == 1
 
+    def test_legacy_sections_ignored(self, tmp_path):
+        """旧版 timetable/events 段静默忽略, 不报警告."""
+        f = tmp_path / "s.yaml"
+        f.write_text("timetable:\n  - {weekday: 1}\nevents: []\ntodos: []\n",
+                     encoding="utf-8")
+        data = load_schedule(str(f))
+        assert not data.courses and not data.warnings
+
     def test_invalid_entries_skipped_with_warning(self, tmp_path):
-        """单条目非法跳过并带段落与序号."""
+        """courses/manual/todos 单条非法跳过并带段落与序号."""
         f = tmp_path / "s.yaml"
         f.write_text(
-            "timetable:\n"
-            "  - {weekday: 0, start: '08:00', end: '09:00', title: x}\n"
-            "  - {weekday: 2, start: '10:00', end: '11:00', title: ok}\n"
+            "courses:\n"
+            "  - {date: '2026-10-26', start: '25:00', end: '26:00', title: x}\n"
+            "manual:\n"
+            "  - {date: '2026-10-27', start: '10:00', end: '09:00', title: y}\n"
             "todos:\n"
             "  - {title: good}\n"
             "  - {title: '', id: 5}\n",
             encoding="utf-8")
         data = load_schedule(str(f))
-        assert len(data.timetable) == 1 and data.timetable[0].weekday == 2
+        assert not data.courses and not data.manual
         assert len(data.todos) == 1 and data.todos[0].title == "good"
-        assert len(data.warnings) == 2
-        assert "timetable 第 1 条" in data.warnings[0]
-        assert "todos 第 2 条" in data.warnings[1]
-
-    def test_bad_time_and_date_and_end(self, tmp_path):
-        """时间/日期非法, end<=start 均跳过."""
-        f = tmp_path / "s.yaml"
-        f.write_text(
-            "timetable:\n"
-            "  - {weekday: 1, start: '25:00', end: '26:00', title: x}\n"
-            "  - {weekday: 1, start: '10:00', end: '09:00', title: y}\n"
-            "events:\n"
-            "  - {date: '2026-02-30', start: '08:00', title: z}\n",
-            encoding="utf-8")
-        data = load_schedule(str(f))
-        assert not data.timetable and not data.events
         assert len(data.warnings) == 3
+        assert "courses 第 1 条" in data.warnings[0]
+        assert "manual 第 1 条" in data.warnings[1]
+        assert "todos 第 2 条" in data.warnings[2]
 
-    def test_bad_weeks_skipped(self, tmp_path):
-        """weeks 起>止或非正整数跳过."""
+    def test_bad_date_skipped(self, tmp_path):
+        """非法日期跳过."""
         f = tmp_path / "s.yaml"
         f.write_text(
-            "timetable:\n"
-            "  - {weekday: 1, start: '08:00', end: '09:00', title: a, weeks: [5, 2]}\n"
-            "  - {weekday: 1, start: '08:00', end: '09:00', title: b, weeks: 3}\n"
-            "  - {weekday: 1, start: '08:00', end: '09:00', title: c, weeks: [1, 16]}\n",
+            "courses:\n  - {date: '2026-02-30', start: '08:00', end: '09:00', title: z}\n",
             encoding="utf-8")
         data = load_schedule(str(f))
-        assert len(data.timetable) == 1
-        assert data.timetable[0].weeks == (1, 16)
-        assert len(data.warnings) == 2
+        assert not data.courses and len(data.warnings) == 1
+
+    def test_manual_parsed_like_courses(self, tmp_path):
+        """manual 段与 courses 同构解析."""
+        f = tmp_path / "s.yaml"
+        f.write_text(
+            "manual:\n"
+            "  - {date: '2026-10-27', start: '19:00', end: '21:00', title: 讲座, location: 礼堂}\n",
+            encoding="utf-8")
+        data = load_schedule(str(f))
+        assert len(data.manual) == 1
+        assert data.manual[0].location == "礼堂"
 
     def test_todo_ids_filled_and_deduped(self, tmp_path):
         """缺失/非法/重复 id 补成不冲突的正整数."""
@@ -123,9 +124,9 @@ class TestLoadSchedule:
         f.write_text(
             "todos:\n"
             "  - {title: a, id: 2}\n"
-            "  - {title: b}\n"          # 缺 id
-            "  - {title: c, id: 2}\n"    # 重复
-            "  - {title: d, id: -1}\n",  # 非法
+            "  - {title: b}\n"
+            "  - {title: c, id: 2}\n"
+            "  - {title: d, id: -1}\n",
             encoding="utf-8")
         data = load_schedule(str(f))
         ids = [t.tid for t in data.todos]
@@ -134,17 +135,15 @@ class TestLoadSchedule:
         assert len(set(ids)) == 4
 
     def test_unquoted_yaml_dates_accepted(self, tmp_path):
-        """未加引号的日期解析成 date 对象, 时间保持字符串, 两者均可解析."""
+        """未加引号的日期解析成 date 对象, 时间保持字符串, 均可解析."""
         f = tmp_path / "s.yaml"
         f.write_text(
-            "events:\n"
-            "  - {date: 2026-10-27, start: '08:00', title: t}\n"
-            "timetable:\n"
-            "  - {weekday: 1, start: 08:00, end: 09:00, title: u}\n",
+            "courses:\n"
+            "  - {date: 2026-10-27, start: 08:00, end: 09:35, title: t}\n",
             encoding="utf-8")
         data = load_schedule(str(f))
-        assert len(data.events) == 1 and data.events[0].date == date(2026, 10, 27)
-        assert len(data.timetable) == 1  # 本环境 PyYAML 不做六十进制转换
+        assert len(data.courses) == 1
+        assert data.courses[0].date == date(2026, 10, 27)
         assert not data.warnings
 
 
@@ -152,18 +151,19 @@ class TestSaveSchedule:
     """保存与往返."""
 
     def test_round_trip(self, tmp_path):
-        """save 后 load 得到等价数据(忽略 warnings)."""
+        """save 后 load 得到等价数据."""
         data = ScheduleData(
-            timetable=[_slot(weeks=(1, 8), location="三教")],
-            events=[Event(date(2026, 10, 27), time(19), time(21), "讲座", "礼堂")],
+            courses=[_event(location="一教101")],
+            manual=[_event(date=date(2026, 10, 27), start=time(19),
+                          end=time(21), title="讲座", location="礼堂")],
             todos=[_todo(tid=3, title="作业", due=date(2026, 10, 26),
                          course="微积分", done=True)],
         )
         path = str(tmp_path / "s.yaml")
         save_schedule(path, data)
         loaded = load_schedule(path)
-        assert loaded.timetable == data.timetable
-        assert loaded.events == data.events
+        assert loaded.courses == data.courses
+        assert loaded.manual == data.manual
         assert loaded.todos == data.todos
         assert not loaded.warnings
 
@@ -193,7 +193,7 @@ class TestEnsureScheduleFile:
         path = str(tmp_path / "s.yaml")
         assert ensure_schedule_file(path) is True
         data = load_schedule(path)
-        assert not data.timetable and not data.warnings
+        assert not data.courses and not data.warnings
 
 
 class TestWeekHelpers:
@@ -210,7 +210,7 @@ class TestWeekHelpers:
         assert week_start(date(2026, 12, 31)) == date(2026, 12, 28)
 
     def test_semester_week(self):
-        """学期周计算, start 非周一仅产生平移."""
+        """学期周计算."""
         start = date(2026, 9, 14)
         assert semester_week(date(2026, 9, 14), start) == 1
         assert semester_week(date(2026, 9, 20), start) == 1   # 第 1 周周日
@@ -222,52 +222,30 @@ class TestWeekHelpers:
 class TestEntriesForWeek:
     """周历聚合."""
 
-    def test_timetable_and_events_by_column(self):
-        """课表按 weekday 归列, 事件按日期归列, 按 start 排序."""
+    def test_events_by_column_and_sort(self):
+        """事件按日期归列, 按 (start, title) 排序."""
         data = ScheduleData(
-            timetable=[_slot(weekday=2, start=time(19, 20), end=time(20, 55),
-                             title="AI 课")],
-            events=[Event(date(2026, 10, 23), time(14), None, "组会", "实验室")],
+            courses=[_event(date=date(2026, 10, 23), start=time(14),
+                            end=time(15), title="课程")],
+            manual=[_event(date=date(2026, 10, 20), start=time(19),
+                           end=time(20), title="早课"),
+                    _event(date=date(2026, 10, 20), start=time(8),
+                           end=time(9), title="讲座")],
         )
-        monday = date(2026, 10, 19)
-        result = entries_for_week(data, monday, None)
-        assert [e.title for e in result[2]] == ["AI 课"]
-        assert result[2][0].is_event is False
-        assert [e.title for e in result[5]] == ["组会"]  # 10-23 是周五
-        assert result[5][0].is_event is True and result[5][0].end is None
-        assert result[1] == [] and result[7] == []
+        result = entries_for_week(data, date(2026, 10, 19))
+        assert [e.title for e in result[2]] == ["讲座", "早课"]  # 周二
+        assert [e.title for e in result[5]] == ["课程"]          # 周五
+        assert result[2][0].is_manual and not result[5][0].is_manual
+        assert result[1] == []
 
-    def test_sorted_by_start_stable(self):
-        """同列多条目按 (start, title) 排序."""
-        data = ScheduleData(timetable=[
-            _slot(weekday=1, start=time(15), end=time(16), title="b 课"),
-            _slot(weekday=1, start=time(8), end=time(9), title="a 课"),
-            _slot(weekday=1, start=time(8), end=time(9), title="c 课"),
+    def test_out_of_week_ignored(self):
+        """不在本周的事件忽略."""
+        data = ScheduleData(courses=[
+            _event(date=date(2026, 10, 18)),  # 上周日
+            _event(date=date(2026, 11, 2)),   # 下下周
         ])
-        result = entries_for_week(data, date(2026, 10, 19), None)
-        assert [e.title for e in result[1]] == ["a 课", "c 课", "b 课"]
-
-    def test_weeks_filter(self):
-        """周次命中显示, 不命中过滤."""
-        data = ScheduleData(timetable=[
-            _slot(title="前半学期", weeks=(1, 8)),
-            _slot(title="整学期", weeks=None),
-        ])
-        sem = date(2026, 9, 14)
-        week6 = entries_for_week(data, date(2026, 10, 19), sem)
-        assert [e.title for e in week6[1]] == ["前半学期", "整学期"]
-        week10 = entries_for_week(data, date(2026, 11, 16), sem)
-        assert [e.title for e in week10[1]] == ["整学期"]
-
-    def test_weeks_without_semester_start_shows_all(self):
-        """weeks 有值但学期未配置: 不过滤, 只记一次警告."""
-        data = ScheduleData(timetable=[_slot(title="课", weeks=(1, 8))])
-        monday = date(2026, 10, 19)
-        entries_for_week(data, monday, None)
-        entries_for_week(data, monday, None)
-        assert len(data.warnings) == 1
-        result = entries_for_week(data, date(2026, 12, 28), None)
-        assert len(result[1]) == 1  # 仍显示
+        result = entries_for_week(data, date(2026, 10, 19))
+        assert all(entries == [] for entries in result.values())
 
 
 class TestTodoLogic:
@@ -308,4 +286,4 @@ class TestTodoLogic:
 def test_day_entry_defaults():
     """DayEntry 默认值(供 GUI 使用)."""
     entry = DayEntry(time(8), None, "t", "", False)
-    assert entry.end is None and not entry.is_event
+    assert entry.end is None and not entry.is_manual
