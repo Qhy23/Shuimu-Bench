@@ -1,6 +1,7 @@
 """schedule_view.py GUI 测试: 页签结构, 周历渲染, 待办写回, watcher 重载, 课表导入."""
 
 import os
+from copy import deepcopy
 from datetime import date, time, timedelta
 
 import pytest
@@ -8,6 +9,7 @@ from PySide6.QtCore import QDate
 from PySide6.QtGui import QColor
 
 from shuimu import schedule_view
+from shuimu.config import DEFAULTS
 from shuimu.controller import Controller
 from shuimu.schedule import load_schedule, week_start
 from shuimu.schedule_view import ScheduleTab, TodoDialog
@@ -205,3 +207,51 @@ class TestImportCourses:
             staticmethod(lambda *a, **k: schedule_view.QMessageBox.StandardButton.No))
         tab._import_courses()
         assert yaml_path.read_text(encoding="utf-8") == before
+
+
+class TestSemesterRange:
+    """学期周次显示与翻周夹取."""
+
+    @pytest.fixture()
+    def sem_env(self, qtbot, tmp_path, monkeypatch):
+        """配置了学期起点与总周数的隔离环境(第 1 周 = 2026-10-19, 共 4 周)."""
+        tpl_path = tmp_path / "schedule.example.yaml"
+        tpl_path.write_text("todos: []\n", encoding="utf-8")
+        monkeypatch.setattr("shuimu.controller.template_schedule_path",
+                            lambda: str(tpl_path))
+        cfg = deepcopy(DEFAULTS)
+        cfg["schedule"]["semester_start"] = "2026-10-19"
+        cfg["schedule"]["week_count"] = 4
+        storage = Storage(str(tmp_path / "sem.db"))
+        ctl = Controller(storage, config=cfg,
+                         schedule_path=str(tmp_path / "s.yaml"))
+        tab = ScheduleTab(ctl)
+        qtbot.addWidget(tab)
+        yield tab
+        storage.close()
+
+    def test_label_week_number(self, sem_env):
+        """学期内显示第 N 周, 从 1 开始."""
+        sem_env._monday = date(2026, 10, 19)
+        sem_env._render_all()
+        assert "第 1 周" in sem_env.week_label.text()
+        sem_env._monday = date(2026, 11, 2)
+        sem_env._render_all()
+        assert "第 3 周" in sem_env.week_label.text()
+
+    def test_label_vacation_out_of_range(self, sem_env):
+        """学期前与学期后显示假期."""
+        sem_env._monday = date(2026, 10, 12)  # 开学前
+        sem_env._render_all()
+        assert "假期" in sem_env.week_label.text()
+        sem_env._monday = date(2026, 11, 23)  # 第 6 周, 超出 4 周
+        sem_env._render_all()
+        assert "假期" in sem_env.week_label.text()
+
+    def test_shift_clamped_to_semester(self, sem_env):
+        """翻周被夹在第 1 周与第 4 周之间."""
+        sem_env._monday = date(2026, 10, 19)
+        sem_env._shift_week(-1)
+        assert sem_env._monday == date(2026, 10, 19)  # 已在第 1 周
+        sem_env._shift_week(9)
+        assert sem_env._monday == date(2026, 11, 9)   # 夹到第 4 周周一

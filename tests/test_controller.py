@@ -2,10 +2,12 @@
 
 import json
 import os
+from copy import deepcopy
 from datetime import date, time
 
 import pytest
 
+from shuimu.config import DEFAULTS
 from shuimu.controller import Controller, detect_kind
 from shuimu.schedule import Event, save_schedule
 from shuimu.storage import Storage
@@ -186,3 +188,23 @@ class TestScheduleActions:
         no_dates = tmp_path / "plain.html"
         no_dates.write_text("<html></html>", encoding="utf-8")
         assert not ctl.import_courses(str(no_dates)).ok
+
+
+class TestSemesterConfig:
+    """学期配置访问器."""
+
+    def test_week_count_from_config(self, tmp_path, monkeypatch):
+        """week_count 经配置注入, 非法值回退 0."""
+        monkeypatch.setattr("shuimu.controller.template_schedule_path",
+                            lambda: str(tmp_path / "no-tpl.yaml"))
+        cfg = deepcopy(DEFAULTS)
+        cfg["schedule"]["week_count"] = 18
+        storage = Storage(str(tmp_path / "sem.db"))
+        ctl = Controller(storage, config=cfg,
+                         schedule_path=str(tmp_path / "s.yaml"))
+        assert ctl.semester_week_count() == 18
+        cfg["schedule"]["week_count"] = "bad"
+        ctl2 = Controller(storage, config=cfg,
+                          schedule_path=str(tmp_path / "s2.yaml"))
+        assert ctl2.semester_week_count() == 0
+        storage.close()

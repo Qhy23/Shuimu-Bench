@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from . import theme
 from .controller import Controller
 from .schedule import (
+    clamp_to_semester,
     entries_for_week,
     semester_week,
     sorted_todos,
@@ -206,12 +207,17 @@ class ScheduleTab(QWidget):
                 max(0, self.week_grid.now_offset() - 140))
 
     def _set_week_label(self) -> None:
-        """导航行文本: 日期区间, 配置学期起点时附第几周."""
+        """导航行文本: 日期区间, 配置学期起点时附第几周, 学期外显示假期."""
         end = self._monday + timedelta(days=6)
         text = f"{self._monday.strftime('%m/%d')} - {end.strftime('%m/%d')}"
         start = self.controller.semester_start()
         if start:
-            text += f" · 第 {semester_week(self._monday, start)} 周"
+            week = semester_week(self._monday, start)
+            count = self.controller.semester_week_count()
+            if week < 1 or (count and week > count):
+                text += " · 假期"
+            else:
+                text += f" · 第 {week} 周"
         self.week_label.setText(text)
 
     def _render_todos(self, snapshot) -> None:
@@ -244,9 +250,14 @@ class ScheduleTab(QWidget):
     # ---- 交互 ----
 
     def _shift_week(self, delta: int) -> None:
-        """翻周; 日期溢出(极远翻页)忽略本次."""
+        """翻周; 学期周数已配置时夹在学期内, 日期溢出忽略本次."""
+        start = self.controller.semester_start()
         try:
-            self._monday += timedelta(weeks=delta)
+            target = self._monday + timedelta(weeks=delta)
+            if start:
+                target = clamp_to_semester(
+                    target, start, self.controller.semester_week_count())
+            self._monday = target
         except OverflowError:
             return
         self._render_all()

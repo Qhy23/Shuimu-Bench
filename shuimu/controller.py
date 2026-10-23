@@ -8,7 +8,12 @@
 import os
 from dataclasses import dataclass, field
 
-from .config import load_config, organize_rules, semester_start_date
+from .config import (
+    load_config,
+    organize_rules,
+    semester_start_date,
+    semester_week_count,
+)
 from .organize import build_plan, execute_plan
 from .paths import default_schedule_path, template_schedule_path
 from .schedule import (
@@ -52,6 +57,7 @@ class Controller:
         self.organize_rules = organize_rules(self.config)
         self.schedule_path = schedule_path or default_schedule_path()
         self._semester_start = semester_start_date(self.config)
+        self._week_count = semester_week_count(self.config)
         self._schedule_seeded = False
         self.storage.ensure_default_course(self.config["course"]["default_name"])
 
@@ -136,6 +142,10 @@ class Controller:
     def semester_start(self):
         """学期起点(建议第 1 周周一), 未配置返回 None."""
         return self._semester_start
+
+    def semester_week_count(self) -> int:
+        """学期总周数(课程+考试), 未配置返回 0(不限制)."""
+        return self._week_count
 
     def schedule_snapshot(self) -> ScheduleData:
         """当前日程快照. 首次调用或数据文件缺失时(重新)播种."""

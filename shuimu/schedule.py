@@ -257,6 +257,18 @@ def semester_week(day: date, start: date) -> int:
     return (day - start).days // 7 + 1
 
 
+def clamp_to_semester(monday: date, start: date, week_count: int) -> date:
+    """把周一夹在学期范围 [第 1 周周一, 第 week_count 周周一] 内.
+
+    week_count < 1(未配置)时原样返回; start 非周一时对齐到所在周周一.
+    """
+    if week_count < 1:
+        return monday
+    first = week_start(start)
+    last = first + timedelta(days=(week_count - 1) * 7)
+    return min(max(monday, first), last)
+
+
 def entries_for_week(data: ScheduleData, monday: date) -> dict:
     """返回 {weekday(1-7): 按开始时间排序的 DayEntry 列表}.
 

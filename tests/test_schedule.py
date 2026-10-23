@@ -5,6 +5,7 @@ from datetime import date, time
 
 from shuimu.schedule import (
     DayEntry,
+    clamp_to_semester,
     Event,
     ScheduleData,
     Todo,
@@ -287,3 +288,26 @@ def test_day_entry_defaults():
     """DayEntry 默认值(供 GUI 使用)."""
     entry = DayEntry(time(8), None, "t", "", False)
     assert entry.end is None and not entry.is_manual
+
+
+class TestClampToSemester:
+    """学期范围夹取."""
+
+    def test_no_limit_when_unconfigured(self):
+        """week_count 为 0 时不限制."""
+        monday = date(2026, 10, 19)
+        assert clamp_to_semester(monday, date(2026, 9, 14), 0) == monday
+
+    def test_clamps_both_ends(self):
+        """早于第 1 周与晚于第 N 周都夹回边界."""
+        start = date(2026, 9, 14)
+        assert clamp_to_semester(date(2026, 8, 3), start, 4) == start
+        assert clamp_to_semester(date(2027, 1, 4), start, 4) == date(2026, 10, 5)
+
+    def test_start_not_monday_aligned(self):
+        """start 非周一时对齐到所在周周一."""
+        assert clamp_to_semester(date(2026, 8, 3), date(2026, 9, 16), 4) == date(2026, 9, 14)
+
+    def test_inside_unchanged(self):
+        """学期内原样返回."""
+        assert clamp_to_semester(date(2026, 10, 19), date(2026, 9, 14), 18) == date(2026, 10, 19)

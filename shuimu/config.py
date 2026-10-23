@@ -34,7 +34,8 @@ DEFAULTS = {
         },
     },
     "schedule": {
-        "semester_start": "",  # 学期第 1 周的周一(YYYY-MM-DD), 空为不启用周次过滤
+        "semester_start": "",  # 学期第 1 周的周一(YYYY-MM-DD), 空为不启用周次显示
+        "week_count": 0,       # 学期总周数(课程+考试), 0 为不限制
     },
 }
 
@@ -78,6 +79,19 @@ def semester_start_date(cfg: dict):
         return date.fromisoformat(raw)
     except (TypeError, ValueError):
         return None
+
+
+def semester_week_count(cfg: dict) -> int:
+    """提取学期总周数(课程+考试周).
+
+    未配置/非法/非正数返回 0(不限制翻周范围).
+    """
+    raw = (cfg.get("schedule") or {}).get("week_count", 0)
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return count if count > 0 else 0
 
 
 def _candidates(path):

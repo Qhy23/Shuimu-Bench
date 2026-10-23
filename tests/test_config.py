@@ -7,6 +7,7 @@ from shuimu.config import (
     load_config,
     organize_rules,
     semester_start_date,
+    semester_week_count,
 )
 
 
@@ -82,3 +83,23 @@ class TestSemesterStartDate:
         """YAML 未加引号日期解析成的 date 对象一并接受."""
         cfg = {"schedule": {"semester_start": date(2026, 9, 14)}}
         assert semester_start_date(cfg) == date(2026, 9, 14)
+
+
+class TestSemesterWeekCount:
+    """学期总周数解析."""
+
+    def test_default_zero(self):
+        """未配置返回 0(不限制)."""
+        assert semester_week_count(DEFAULTS) == 0
+        assert semester_week_count({}) == 0
+
+    def test_valid(self):
+        """整数与数字字符串都接受."""
+        assert semester_week_count({"schedule": {"week_count": 18}}) == 18
+        assert semester_week_count({"schedule": {"week_count": "18"}}) == 18
+
+    def test_invalid_falls_back_zero(self):
+        """非法/非正数返回 0."""
+        assert semester_week_count({"schedule": {"week_count": "abc"}}) == 0
+        assert semester_week_count({"schedule": {"week_count": -3}}) == 0
+        assert semester_week_count({"schedule": None}) == 0
