@@ -6,7 +6,6 @@ from datetime import date, timedelta
 import pytest
 from PySide6.QtCore import QDate
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QLabel
 
 from shuimu import schedule_view
 from shuimu.controller import Controller
@@ -33,42 +32,37 @@ def sched_env(qtbot, tmp_path, monkeypatch):
     storage.close()
 
 
-def _column_labels(tab, index):
-    """某天列内全部 QLabel 文本(含列头与卡片)."""
-    return [lbl.text() for lbl in tab.day_columns[index][0].findChildren(QLabel)]
+
+
 
 
 class TestStructure:
     """结构与播种."""
 
     def test_seeds_and_structure(self, sched_env):
-        """构造时播种数据文件; 两段 splitter; 7 天列; 模板待办在列."""
+        """构造时播种数据文件; 两段 splitter; 周历网格就绪; 模板待办在列."""
         _ctl, tab, yaml_path = sched_env
         assert yaml_path.exists()
         assert tab.splitter.count() == 2
-        assert len(tab.day_columns) == 7
+        assert tab.week_grid is not None
         assert tab.todo_tree.topLevelItemCount() == 1
 
     def test_today_column_highlighted(self, sched_env):
-        """初始显示本周, 恰有一列标记为今天."""
+        """初始显示本周, 网格标记今天所在列."""
         _ctl, tab, _yaml = sched_env
-        names = [col.objectName() for col, _head in tab.day_columns]
-        assert names.count("daycol-today") == 1
-        assert names.index("daycol-today") == date.today().weekday()
+        assert tab.week_grid.today_column() == date.today().weekday() + 1
 
     def test_week_navigation(self, sched_env):
-        """翻周后无今天列, 回到今天恢复."""
+        """翻周后今天列消失, 回到今天恢复."""
         _ctl, tab, _yaml = sched_env
         today = date.today()
         assert tab._monday == week_start(today)
         tab._shift_week(1)
         assert tab._monday == week_start(today) + timedelta(days=7)
-        assert [c.objectName() for c, _h in tab.day_columns].count(
-            "daycol-today") == 0
+        assert tab.week_grid.today_column() is None
         tab._go_today()
         assert tab._monday == week_start(today)
-        assert [c.objectName() for c, _h in tab.day_columns].count(
-            "daycol-today") == 1
+        assert tab.week_grid.today_column() == today.weekday() + 1
 
 
 class TestTodoDialog:
@@ -147,7 +141,7 @@ class TestWatcher:
             f"  - {{weekday: {weekday}, start: '10:00', end: '11:40', title: 外部编辑课}}\n"
             f"todos: []\n", encoding="utf-8")
         tab._on_file_changed(str(yaml_path))
-        assert "外部编辑课" in _column_labels(tab, date.today().weekday())
+        assert "外部编辑课" in tab.week_grid.entry_titles(weekday)
 
     def test_self_write_suppressed_once(self, sched_env, monkeypatch):
         """自写标志消费一次且不刷新; 之后的外部变化恢复刷新."""

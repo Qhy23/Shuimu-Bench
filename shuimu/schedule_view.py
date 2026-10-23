@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -36,16 +35,15 @@ from PySide6.QtWidgets import (
 from . import theme
 from .controller import Controller
 from .schedule import (
-    DayEntry,
     entries_for_week,
     semester_week,
     sorted_todos,
     todo_status,
     week_start,
 )
+from .week_grid import WeekGridWidget
 
 ROLE_TID = Qt.UserRole + 2
-WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
 
 def _warn(parent, title: str, text: str) -> None:
@@ -134,7 +132,7 @@ class ScheduleTab(QWidget):
     # ---- 界面构建 ----
 
     def _build_week_view(self) -> QWidget:
-        """上段: 翻周导航 + 7 天列(横向滚动)."""
+        """上段: 翻周导航 + 按时间排布的周历网格(横向滚动)."""
         panel = QWidget(self.splitter)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -159,29 +157,11 @@ class ScheduleTab(QWidget):
         nav.addWidget(self.import_btn)
         layout.addLayout(nav)
 
-        self.columns_host = QWidget(panel)
-        columns = QHBoxLayout(self.columns_host)
-        columns.setContentsMargins(0, 0, 0, 0)
-        columns.setSpacing(6)
-        columns.addStretch(1)
-        self.day_columns = []
-        for _index in range(7):  # 0=周一 ... 6=周日
-            col = QFrame(self.columns_host)
-            col.setObjectName("daycol")
-            col.setMinimumWidth(130)
-            col_layout = QVBoxLayout(col)
-            col_layout.setContentsMargins(4, 4, 4, 4)
-            head = QLabel("", col)
-            head.setObjectName("dayhead")
-            head.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            col_layout.addWidget(head)
-            col_layout.addStretch(1)
-            columns.addWidget(col)
-            self.day_columns.append((col, head))
-        scroll = QScrollArea(panel)
-        scroll.setWidget(self.columns_host)
-        scroll.setWidgetResizable(True)
-        layout.addWidget(scroll)
+        self.week_grid = WeekGridWidget(panel)
+        self.week_scroll = QScrollArea(panel)
+        self.week_scroll.setWidget(self.week_grid)
+        self.week_scroll.setWidgetResizable(True)
+        layout.addWidget(self.week_scroll)
         return panel
 
     def _build_todo_view(self) -> QWidget:
@@ -217,46 +197,14 @@ class ScheduleTab(QWidget):
             self.warn_bar.hide()
 
     def _render_week(self, snapshot) -> None:
-        """重建 7 天列: 卡片来自 entries_for_week, 今天列高亮."""
-        today = date.today()
-        is_this_week = week_start(today) == self._monday
+        """渲染当前周: 导航标签与时间网格, 本周时滚动定位到当前时刻附近."""
         self._set_week_label()
         entries = entries_for_week(snapshot, self._monday,
                                    self.controller.semester_start())
-        for index, (col, head) in enumerate(self.day_columns):
-            weekday = index + 1
-            day = self._monday + timedelta(days=index)
-            head.setText(f"{WEEKDAY_NAMES[index]}\n{day.strftime('%m/%d')}")
-            is_today = is_this_week and weekday == today.weekday() + 1
-            col.setObjectName("daycol-today" if is_today else "daycol")
-            col_layout = col.layout()
-            while col_layout.count() > 2:  # 保留列头与末尾弹簧
-                item = col_layout.takeAt(1)
-                if item.widget():
-                    item.widget().deleteLater()
-            for entry in entries[weekday]:
-                col_layout.insertWidget(col_layout.count() - 1,
-                                        self._make_card(entry))
-
-    def _make_card(self, entry: DayEntry) -> QFrame:
-        """一张课表/事件卡片: 时段 + 标题 + 可选地点."""
-        card = QFrame(self.columns_host)
-        card.setObjectName("slotcard")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(6, 4, 6, 4)
-        card_layout.setSpacing(0)
-        end_text = entry.end.strftime("%H:%M") if entry.end else ""
-        time_label = QLabel(f"{entry.start.strftime('%H:%M')}-{end_text}", card)
-        title_label = QLabel(entry.title, card)
-        title_label.setObjectName("cardtitle")
-        title_label.setWordWrap(True)
-        card_layout.addWidget(time_label)
-        card_layout.addWidget(title_label)
-        if entry.location:
-            loc_label = QLabel(entry.location, card)
-            loc_label.setWordWrap(True)
-            card_layout.addWidget(loc_label)
-        return card
+        self.week_grid.set_week(self._monday, entries)
+        if self.week_grid.today_column():
+            self.week_scroll.verticalScrollBar().setValue(
+                max(0, self.week_grid.now_offset() - 140))
 
     def _set_week_label(self) -> None:
         """导航行文本: 日期区间, 配置学期起点时附第几周."""
