@@ -9,9 +9,10 @@
 import os
 from datetime import date, timedelta
 
-from PySide6.QtCore import Qt, QFileSystemWatcher
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtCore import QDate, QFileSystemWatcher, Qt, QTime
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -19,13 +20,18 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
+    QTimeEdit,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -35,6 +41,8 @@ from PySide6.QtWidgets import (
 from . import theme
 from .controller import Controller
 from .schedule import (
+    SESSION_TIMES,
+    Event,
     clamp_to_semester,
     entries_for_week,
     semester_week,
@@ -42,7 +50,213 @@ from .schedule import (
     todo_status,
     week_start,
 )
-from .week_grid import WeekGridWidget
+from .week_grid import WEEKDAY_NAMES, WeekGridWidget
+
+SESSION_LABELS = [f"第{i}节 {s.strftime('%H:%M')}-{e.strftime('%H:%M')}"
+                  for i, (s, e) in sorted(SESSION_TIMES.items())]
+
+
+class ManualEntryDialog(QDialog):
+    """手动添加/修改日程, 双模式(对齐 thu-info-app): 按周数与节次 / 按日期与时间.
+
+    周数模式把所选周次展开为逐次事件(共享系列号, 由 Controller 指派);
+    series_mode 为修改整个系列: 只改标题/地点/起止时间, 日期不可改.
+    """
+
+    def __init__(self, semester_start, week_count, parent=None,
+                 initial=None, series_mode=False):
+        super().__init__(parent)
+        self.semester_start = semester_start
+        self.week_count = week_count if week_count > 0 else 18
+        self.series_mode = series_mode
+        self.setWindowTitle("修改日程" if initial else "添加日程")
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.title_edit = QLineEdit(self)
+        self.title_edit.setPlaceholderText("必填, 如: 组会/自习")
+        form.addRow("标题", self.title_edit)
+        self.location_edit = QLineEdit(self)
+        form.addRow("地点", self.location_edit)
+        layout.addLayout(form)
+
+        self.stack = QStackedWidget(self)
+        self.stack.addWidget(self._build_week_page())
+        self.stack.addWidget(self._build_date_page())
+        layout.addWidget(self.stack)
+
+        if series_mode:
+            self.stack.setCurrentIndex(1)
+            self.date_edit.setEnabled(False)
+            hint = QLabel("修改将应用到该系列全部场次(各场次日期不变)", self)
+            layout.addWidget(hint)
+        else:
+            mode_row = QHBoxLayout()
+            self.mode_group = QButtonGroup(self)
+            self.week_mode_btn = QPushButton("按周数与节次", self)
+            self.date_mode_btn = QPushButton("按日期和时间", self)
+            for btn in (self.week_mode_btn, self.date_mode_btn):
+                btn.setCheckable(True)
+                self.mode_group.addButton(btn)
+            self.week_mode_btn.toggled.connect(
+                lambda on: self.stack.setCurrentIndex(0) if on else None)
+            self.date_mode_btn.toggled.connect(
+                lambda on: self.stack.setCurrentIndex(1) if on else None)
+            if not semester_start:
+                self.week_mode_btn.setEnabled(False)  # 无学期锚点
+                self.week_mode_btn.setToolTip("需在 config.yaml 配置 semester_start")
+            (self.date_mode_btn if initial or not semester_start
+             else self.week_mode_btn).setChecked(True)
+            self.stack.setCurrentIndex(
+                1 if initial or not semester_start else 0)
+            mode_row.addWidget(self.week_mode_btn)
+            mode_row.addWidget(self.date_mode_btn)
+            layout.addLayout(mode_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        if initial:
+            self._prefill(initial)
+
+    # ---- 页面构建 ----
+
+    def _build_week_page(self) -> QWidget:
+        page = QWidget(self)
+        form = QFormLayout(page)
+        self.weekday_box = QComboBox(self)
+        self.weekday_box.addItems(WEEKDAY_NAMES)
+        form.addRow("星期", self.weekday_box)
+        self.session_box = QComboBox(self)
+        self.session_box.addItems(SESSION_LABELS + ["自定义"])
+        self.session_box.currentIndexChanged.connect(self._on_session)
+        form.addRow("节次", self.session_box)
+        self.week_start_edit = QTimeEdit(self)
+        self.week_end_edit = QTimeEdit(self)
+        for edit in (self.week_start_edit, self.week_end_edit):
+            edit.setDisplayFormat("HH:mm")
+        form.addRow("开始", self.week_start_edit)
+        form.addRow("结束", self.week_end_edit)
+        self._on_session(0)
+
+        weeks_panel = QWidget(page)
+        panel_layout = QVBoxLayout(weeks_panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        quick = QHBoxLayout()
+        for label, predicate in [("全选", lambda w: True),
+                                 ("单周", lambda w: w % 2 == 1),
+                                 ("双周", lambda w: w % 2 == 0),
+                                 ("清空", lambda w: False)]:
+            btn = QPushButton(label, weeks_panel)
+            btn.clicked.connect(lambda _c, p=predicate: self._set_weeks(p))
+            quick.addWidget(btn)
+        quick.addStretch(1)
+        panel_layout.addLayout(quick)
+        grid = QGridLayout()
+        grid.setSpacing(2)
+        self.week_buttons = []
+        for week in range(1, self.week_count + 1):
+            chip = QToolButton(weeks_panel)
+            chip.setText(str(week))
+            chip.setCheckable(True)
+            chip.setFixedWidth(34)
+            grid.addWidget(chip, (week - 1) // 8, (week - 1) % 8)
+            self.week_buttons.append(chip)
+        panel_layout.addLayout(grid)
+        form.addRow("周次", weeks_panel)
+        return page
+
+    def _build_date_page(self) -> QWidget:
+        page = QWidget(self)
+        form = QFormLayout(page)
+        self.date_edit = QDateEdit(self)
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_edit.setDate(QDate.currentDate())
+        form.addRow("日期", self.date_edit)
+        self.date_start_edit = QTimeEdit(self)
+        self.date_end_edit = QTimeEdit(self)
+        for edit in (self.date_start_edit, self.date_end_edit):
+            edit.setDisplayFormat("HH:mm")
+        self.date_start_edit.setTime(QTime(19, 20))
+        self.date_end_edit.setTime(QTime(20, 55))
+        form.addRow("开始", self.date_start_edit)
+        form.addRow("结束", self.date_end_edit)
+        return page
+
+    # ---- 行为 ----
+
+    def _on_session(self, index: int) -> None:
+        """选择大节预设时填充起止时间(仍可手动微调)."""
+        if 0 <= index < len(SESSION_TIMES):
+            start, end = SESSION_TIMES[index + 1]
+            self.week_start_edit.setTime(QTime(start.hour, start.minute))
+            self.week_end_edit.setTime(QTime(end.hour, end.minute))
+
+    def _set_weeks(self, predicate) -> None:
+        """按谓词批量设置周次选择."""
+        for week, chip in enumerate(self.week_buttons, 1):
+            chip.setChecked(predicate(week))
+
+    def _checked_weeks(self) -> list:
+        return [week for week, chip in enumerate(self.week_buttons, 1)
+                if chip.isChecked()]
+
+    def _is_date_mode(self) -> bool:
+        return self.series_mode or self.date_mode_btn.isChecked()
+
+    def _prefill(self, initial: dict) -> None:
+        """修改预填: 进入日期模式并回填字段."""
+        self.title_edit.setText(initial["title"])
+        self.location_edit.setText(initial["location"])
+        for edit in (self.week_start_edit, self.date_start_edit):
+            edit.setTime(QTime(initial["start"].hour, initial["start"].minute))
+        for edit in (self.week_end_edit, self.date_end_edit):
+            end = initial["end"]
+            edit.setTime(QTime(end.hour, end.minute))
+        if not self.series_mode:
+            self.date_edit.setDate(
+                QDate(initial["date"].year, initial["date"].month,
+                      initial["date"].day))
+        self.session_box.setCurrentIndex(len(SESSION_LABELS))  # 自定义
+
+    def _accept_if_valid(self) -> None:
+        """校验: 标题非空, 结束晚于开始, 周数模式至少选一周."""
+        if not self.title_edit.text().strip():
+            _warn(self, "无法保存", "标题不能为空")
+            return
+        start_edit, end_edit = ((self.date_start_edit, self.date_end_edit)
+                                if self._is_date_mode()
+                                else (self.week_start_edit, self.week_end_edit))
+        if end_edit.time() <= start_edit.time():
+            _warn(self, "无法保存", "结束时间必须晚于开始时间, 且在同一天内")
+            return
+        if not self._is_date_mode() and not self._checked_weeks():
+            _warn(self, "无法保存", "请至少选择一个周次")
+            return
+        self.accept()
+
+    def build_events(self) -> list:
+        """返回待写入的事件列表(周数模式为展开后的多次, sid 由 Controller 指派)."""
+        title = self.title_edit.text().strip()
+        location = self.location_edit.text().strip()
+        if self._is_date_mode():
+            return [Event(self.date_edit.date().toPython(),
+                          self.date_start_edit.time().toPython(),
+                          self.date_end_edit.time().toPython(),
+                          title, location)]
+        start = self.week_start_edit.time().toPython()
+        end = self.week_end_edit.time().toPython()
+        weekday = self.weekday_box.currentIndex() + 1
+        return [Event(self.semester_start
+                      + timedelta(days=(week - 1) * 7 + weekday - 1),
+                      start, end, title, location)
+                for week in self._checked_weeks()]
+
 
 ROLE_TID = Qt.UserRole + 2
 
@@ -144,21 +358,25 @@ class ScheduleTab(QWidget):
         next_btn.setFixedWidth(32)
         self.today_btn = QPushButton("回到今天", panel)
         self.import_btn = QPushButton("导入课程...", panel)
+        self.add_btn = QPushButton("添加日程...", panel)
         self.week_label = QLabel("", panel)
         self.week_label.setObjectName("dayhead")
         prev_btn.clicked.connect(lambda: self._shift_week(-1))
         next_btn.clicked.connect(lambda: self._shift_week(1))
         self.today_btn.clicked.connect(self._go_today)
         self.import_btn.clicked.connect(self._import_courses)
+        self.add_btn.clicked.connect(self._add_manual)
         nav.addWidget(prev_btn)
         nav.addWidget(self.week_label)
         nav.addWidget(next_btn)
         nav.addStretch(1)
         nav.addWidget(self.today_btn)
         nav.addWidget(self.import_btn)
+        nav.addWidget(self.add_btn)
         layout.addLayout(nav)
 
         self.week_grid = WeekGridWidget(panel)
+        self.week_grid.cardMenuRequested.connect(self._on_card_menu)
         self.week_scroll = QScrollArea(panel)
         self.week_scroll.setWidget(self.week_grid)
         self.week_scroll.setWidgetResizable(True)
@@ -281,6 +499,64 @@ class ScheduleTab(QWidget):
         if tid is None:
             return
         self._mutate(lambda: self.controller.toggle_todo(tid))
+
+    def _add_manual(self) -> None:
+        """手动添加日程: 按周数与节次(展开为系列)或按日期与时间."""
+        dialog = ManualEntryDialog(self.controller.semester_start(),
+                                   self.controller.semester_week_count(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        events = dialog.build_events()
+        self._mutate(lambda: self.controller.add_manual(events))
+
+    def _on_card_menu(self, entry) -> None:
+        """卡片右键菜单: 修改/删除, 系列条目提供整组操作."""
+        origin = entry.origin
+        if origin is None:
+            return
+        section = "manual" if entry.is_manual else "courses"
+        series_count = 0
+        if origin.sid:
+            series_count = sum(1 for e in getattr(self.controller
+                                                  .schedule_snapshot(), section)
+                               if e.sid == origin.sid)
+        menu = QMenu(self)
+        menu.addAction("修改本次...", lambda: self._edit_entry(section, origin, False))
+        menu.addAction("删除本次", lambda: self._remove_entry(section, origin, False))
+        if series_count > 1:
+            menu.addSeparator()
+            menu.addAction(f"修改整个系列({series_count} 场)...",
+                           lambda: self._edit_entry(section, origin, True))
+            menu.addAction(f"删除整个系列({series_count} 场)",
+                           lambda: self._remove_entry(section, origin, True))
+        menu.exec(QCursor.pos())
+
+    def _edit_entry(self, section: str, origin, whole_series: bool) -> None:
+        """修改一次或整个系列: 对话框预填, 写回留痕."""
+        initial = {"title": origin.title, "location": origin.location,
+                   "date": origin.date, "start": origin.start, "end": origin.end}
+        dialog = ManualEntryDialog(self.controller.semester_start(),
+                                   self.controller.semester_week_count(),
+                                   self, initial=initial,
+                                   series_mode=whole_series)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        new = dialog.build_events()[0]
+        self._mutate(lambda: self.controller.update_event(
+            section, origin, new, whole_series))
+
+    def _remove_entry(self, section: str, origin,
+                      whole_series: bool) -> None:
+        """删除一次或整个系列, 带确认."""
+        scope = "整个系列(全部场次)" if whole_series else "本次"
+        answer = QMessageBox.question(
+            self, "删除日程",
+            f"确定删除{scope}?\n{origin.title} {origin.date} "
+            f"{origin.start.strftime('%H:%M')}")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._mutate(lambda: self.controller.remove_event(
+            section, origin, whole_series))
 
     def _import_courses(self) -> None:
         """从个人校历 .html 导入课程: 选文件 -> 确认替换 courses 段 -> 写回."""

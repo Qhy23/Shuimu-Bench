@@ -17,10 +17,12 @@ from .config import (
 from .organize import build_plan, execute_plan
 from .paths import default_schedule_path, template_schedule_path
 from .schedule import (
+    Event,
     ScheduleData,
     add_todo as sched_add_todo,
     ensure_schedule_file,
     load_schedule,
+    next_series_id,
     save_schedule,
     toggle_todo as sched_toggle_todo,
 )
@@ -187,6 +189,98 @@ class Controller:
         return ActionResult(
             True, f"待办 #{tid} 已标记为{'完成' if todo.done else '未完成'}",
             {"tid": tid, "done": todo.done})
+
+    def add_manual(self, events: list) -> ActionResult:
+        """手动添加一批日程(单次或按周数展开的系列), 追加进 manual 段.
+
+        多条事件共享一个新系列号 sid, 供整组删除/修改.
+        """
+        if not events:
+            return ActionResult(False, "没有可添加的日程")
+        data = self.schedule_snapshot()
+        sid = next_series_id(data) if len(events) > 1 else 0
+        for event in events:
+            event.sid = sid
+        data.manual.extend(events)
+        try:
+            save_schedule(self.schedule_path, data)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "add_manual", params={"title": events[0].title},
+            detail={"count": len(events), "sid": sid})
+        scope = f"{len(events)} 条(同系列 #{sid})" if sid else "1 条"
+        return ActionResult(True, f"已添加手动日程 {scope}", {"count": len(events)})
+
+    def update_event(self, section: str, old, new,
+                     whole_series: bool = False) -> ActionResult:
+        """修改一条日程(section 为 courses/manual, 按值定位第一条相等项).
+
+        whole_series 且 old 有系列号时, 标题/地点/起止时间应用到该系列全部
+        场次(各场次日期保持不变).
+        """
+        data = self.schedule_snapshot()
+        entries = getattr(data, section, None)
+        if entries is None:
+            return ActionResult(False, f"未知日程段: {section}")
+        if whole_series and old.sid:
+            updated = 0
+            for i, event in enumerate(entries):
+                if event.sid == old.sid:
+                    entries[i] = Event(event.date, new.start, new.end,
+                                       new.title, new.location, event.sid)
+                    updated += 1
+            if not updated:
+                return ActionResult(False, f"系列不存在: #{old.sid}")
+        else:
+            try:
+                index = entries.index(old)
+            except ValueError:
+                return ActionResult(False, "日程不存在(文件可能已被外部修改)")
+            entries[index] = Event(new.date, new.start, new.end, new.title,
+                                   new.location, old.sid)
+            updated = 1
+        try:
+            save_schedule(self.schedule_path, data)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "update_event",
+            params={"section": section, "title": new.title},
+            detail={"updated": updated, "series": bool(whole_series and old.sid)})
+        scope = f"系列 {updated} 场" if updated > 1 else "1 条"
+        return ActionResult(True, f"已修改{scope}日程", {"updated": updated})
+
+    def remove_event(self, section: str, event,
+                     whole_series: bool = False) -> ActionResult:
+        """删除一条日程; whole_series 且有系列号时删除整个系列."""
+        data = self.schedule_snapshot()
+        entries = getattr(data, section, None)
+        if entries is None:
+            return ActionResult(False, f"未知日程段: {section}")
+        if whole_series and event.sid:
+            remaining = [e for e in entries if e.sid != event.sid]
+            removed = len(entries) - len(remaining)
+            if not removed:
+                return ActionResult(False, f"系列不存在: #{event.sid}")
+            updated_list = remaining
+        else:
+            try:
+                entries.remove(event)
+            except ValueError:
+                return ActionResult(False, "日程不存在(文件可能已被外部修改)")
+            removed = 1
+            updated_list = entries
+        setattr(data, section, updated_list)
+        try:
+            save_schedule(self.schedule_path, data)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "remove_event", params={"section": section, "title": event.title},
+            detail={"removed": removed, "series": bool(whole_series and event.sid)})
+        scope = f"系列 {removed} 场" if removed > 1 else "1 条"
+        return ActionResult(True, f"已删除{scope}日程", {"removed": removed})
 
     def import_courses(self, path: str) -> ActionResult:
         """从个人校历 html 导入课程(联排课自动合并), 替换 courses 段.

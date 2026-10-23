@@ -208,3 +208,74 @@ class TestSemesterConfig:
                           schedule_path=str(tmp_path / "s2.yaml"))
         assert ctl2.semester_week_count() == 0
         storage.close()
+
+
+class TestManualActions:
+    """手动日程增删改."""
+
+    def _event(self, day, start_h=8, title="自习", sid=0):
+        """快速构造手动事件."""
+        return Event(date(2026, 10, day), time(start_h), time(start_h + 2),
+                     title, "图书馆", sid)
+
+    def test_add_manual_series(self, ctl):
+        """多条事件共享新系列号, 单条不加系列."""
+        series = [self._event(26), self._event(27), self._event(28)]
+        result = ctl.add_manual(series)
+        assert result.ok and result.detail["count"] == 3
+        data = ctl.schedule_snapshot()
+        assert [e.sid for e in data.manual] == [1, 1, 1]
+        result = ctl.add_manual([self._event(29, title="单次")])
+        assert result.ok
+        assert ctl.schedule_snapshot().manual[-1].sid == 0
+        assert any(op["action"] == "add_manual"
+                   for op in ctl.storage.list_operations())
+
+    def test_add_manual_empty(self, ctl):
+        """空列表拒绝."""
+        assert not ctl.add_manual([]).ok
+
+    def test_update_event_single(self, ctl):
+        """单次修改替换原条目并保留系列号."""
+        ctl.add_manual([self._event(26), self._event(27)])
+        old = ctl.schedule_snapshot().manual[0]
+        new = Event(date(2026, 10, 26), time(14), time(16), "改期自习", "", 0)
+        result = ctl.update_event("manual", old, new)
+        assert result.ok and result.detail["updated"] == 1
+        entries = ctl.schedule_snapshot().manual
+        assert entries[0].title == "改期自习" and entries[0].sid == old.sid
+        assert entries[1].title == "自习"  # 另一场次不动
+
+    def test_update_event_series(self, ctl):
+        """系列修改应用到全部场次, 日期不变."""
+        ctl.add_manual([self._event(26), self._event(27), self._event(28)])
+        old = ctl.schedule_snapshot().manual[0]
+        new = Event(None, time(19, 20), time(20, 55), "晚间系列", "三教", 0)
+        result = ctl.update_event("manual", old, new, whole_series=True)
+        assert result.ok and result.detail["updated"] == 3
+        entries = ctl.schedule_snapshot().manual
+        assert all(e.title == "晚间系列" for e in entries)
+        assert [e.date.day for e in entries] == [26, 27, 28]  # 日期保持
+        assert entries[0].start == time(19, 20)
+
+    def test_update_event_not_found(self, ctl):
+        """定位不到原条目返回失败."""
+        ghost = self._event(26)
+        assert not ctl.update_event("manual", ghost, ghost).ok
+        assert not ctl.update_event("nowhere", ghost, ghost).ok
+
+    def test_remove_event_single_and_series(self, ctl):
+        """删本次只移一条, 删系列移全部."""
+        ctl.add_manual([self._event(26), self._event(27), self._event(28)])
+        data = ctl.schedule_snapshot()
+        result = ctl.remove_event("manual", data.manual[0])
+        assert result.ok and result.detail["removed"] == 1
+        remaining = ctl.schedule_snapshot().manual
+        assert len(remaining) == 2
+        result = ctl.remove_event("manual", remaining[0], whole_series=True)
+        assert result.ok and result.detail["removed"] == 2
+        assert ctl.schedule_snapshot().manual == []
+
+    def test_remove_event_not_found(self, ctl):
+        ghost = self._event(26)
+        assert not ctl.remove_event("manual", ghost).ok

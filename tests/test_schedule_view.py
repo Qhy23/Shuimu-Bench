@@ -5,14 +5,14 @@ from copy import deepcopy
 from datetime import date, time, timedelta
 
 import pytest
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, QTime
 from PySide6.QtGui import QColor
 
 from shuimu import schedule_view
 from shuimu.config import DEFAULTS
 from shuimu.controller import Controller
-from shuimu.schedule import load_schedule, week_start
-from shuimu.schedule_view import ScheduleTab, TodoDialog
+from shuimu.schedule import Event, load_schedule, week_start
+from shuimu.schedule_view import ManualEntryDialog, ScheduleTab, TodoDialog
 from shuimu.storage import Storage
 from shuimu.theme import DANGER
 
@@ -255,3 +255,163 @@ class TestSemesterRange:
         assert sem_env._monday == date(2026, 10, 19)  # 已在第 1 周
         sem_env._shift_week(9)
         assert sem_env._monday == date(2026, 11, 9)   # 夹到第 4 周周一
+
+
+class TestManualEntryDialog:
+    """手动添加/修改对话框."""
+
+    def _dialog(self, qtbot, series_mode=False, initial=None):
+        dialog = ManualEntryDialog(date(2026, 9, 14), 18,
+                                   series_mode=series_mode, initial=initial)
+        qtbot.addWidget(dialog)
+        return dialog
+
+    def test_date_mode_build(self, qtbot):
+        """日期模式返回单次事件."""
+        dialog = self._dialog(qtbot)
+        dialog.date_mode_btn.setChecked(True)
+        dialog.title_edit.setText("组会")
+        dialog.location_edit.setText("实验室")
+        dialog.date_edit.setDate(QDate(2026, 10, 28))
+        dialog.date_start_edit.setTime(QTime(14, 0))
+        dialog.date_end_edit.setTime(QTime(16, 0))
+        events = dialog.build_events()
+        assert len(events) == 1
+        assert (events[0].date, events[0].start, events[0].end) == (
+            date(2026, 10, 28), time(14), time(16))
+        assert events[0].title == "组会" and events[0].location == "实验室"
+
+    def test_week_mode_expands(self, qtbot):
+        """周数模式按学期起点展开为逐次事件."""
+        dialog = self._dialog(qtbot)
+        dialog.title_edit.setText("答疑")
+        dialog.weekday_box.setCurrentIndex(2)  # 周三
+        dialog.session_box.setCurrentIndex(0)  # 第 1 节 08:00-09:35
+        for week, chip in enumerate(dialog.week_buttons, 1):
+            chip.setChecked(week in (1, 3))    # 第 1 与第 3 周
+        events = dialog.build_events()
+        assert [(e.date, e.start, e.end) for e in events] == [
+            (date(2026, 9, 16), time(8), time(9, 35)),
+            (date(2026, 9, 30), time(8), time(9, 35)),
+        ]
+
+    def test_week_shortcuts(self, qtbot):
+        """单周快捷选择只勾奇数周."""
+        dialog = self._dialog(qtbot)
+        dialog._set_weeks(lambda w: w % 2 == 1)
+        assert dialog._checked_weeks() == [1, 3, 5, 7, 9, 11, 13, 15, 17]
+
+    def test_session_preset_fills_times(self, qtbot):
+        """大节预设填充起止时间."""
+        dialog = self._dialog(qtbot)
+        dialog.session_box.setCurrentIndex(5)  # 第 6 节
+        assert dialog.week_start_edit.time().toPython() == time(19, 20)
+        assert dialog.week_end_edit.time().toPython() == time(21, 45)
+
+    def test_validations(self, qtbot, monkeypatch):
+        """空标题/结束不晚于开始/未选周次均拒绝."""
+        warnings = []
+        monkeypatch.setattr(schedule_view, "_warn",
+                            lambda _p, title, text: warnings.append(title))
+        dialog = self._dialog(qtbot)
+        dialog._accept_if_valid()
+        assert len(warnings) == 1  # 空标题
+        dialog.title_edit.setText("课")
+        dialog.week_end_edit.setTime(QTime(7, 0))  # 早于开始
+        dialog._accept_if_valid()
+        assert len(warnings) == 2
+        dialog.week_end_edit.setTime(QTime(9, 35))
+        dialog._set_weeks(lambda w: False)  # 未选周次
+        dialog._accept_if_valid()
+        assert len(warnings) == 3
+        assert dialog.result() == 0
+
+    def test_prefill_and_series_mode(self, qtbot):
+        """修改预填进日期模式; 系列模式日期不可改."""
+        initial = {"title": "旧题", "location": "旧地",
+                   "date": date(2026, 10, 26), "start": time(10),
+                   "end": time(12)}
+        dialog = self._dialog(qtbot, initial=initial)
+        assert dialog.date_mode_btn.isChecked()
+        assert dialog.date_edit.date().toPython() == date(2026, 10, 26)
+        series = self._dialog(qtbot, series_mode=True, initial=initial)
+        assert not series.date_edit.isEnabled()
+        series.title_edit.setText("新题")
+        event = series.build_events()[0]
+        assert event.title == "新题" and event.start == time(10)
+
+
+class TestCardActions:
+    """卡片右键对应的增删改处理."""
+
+    def test_add_manual_via_tab(self, sched_env, monkeypatch):
+        """_add_manual 经对话框写回 manual 段."""
+        ctl, tab, yaml_path = sched_env
+
+        class FakeDialog:
+            """替身: 直接返回一次晚自习事件."""
+
+            def __init__(self, *args, **kwargs):
+                """忽略预填参数."""
+
+            def exec(self):
+                """视为用户点了确定."""
+                return schedule_view.QDialog.DialogCode.Accepted
+
+            def build_events(self):
+                """返回固定事件."""
+                return [Event(date(2026, 10, 26), time(19), time(21),
+                              "晚自习", "图书馆", 0)]
+
+        monkeypatch.setattr(schedule_view, "ManualEntryDialog", FakeDialog)
+        tab._add_manual()
+        data = load_schedule(str(yaml_path))
+        assert len(data.manual) == 1 and data.manual[0].title == "晚自习"
+        assert any(op["action"] == "add_manual"
+                   for op in ctl.storage.list_operations())
+
+    def test_remove_entry_with_confirm(self, sched_env, monkeypatch):
+        """确认后删除本次."""
+        _ctl, tab, yaml_path = sched_env
+        yaml_path.write_text(
+            "manual:\n"
+            "  - {date: '2026-10-26', start: '19:00', end: '21:00', title: 晚自习}\n"
+            "todos: []\n", encoding="utf-8")
+        tab._render_all()
+        origin = load_schedule(str(yaml_path)).manual[0]
+        monkeypatch.setattr(
+            schedule_view.QMessageBox, "question",
+            staticmethod(lambda *a, **k: schedule_view.QMessageBox.StandardButton.Yes))
+        tab._remove_entry("manual", origin, False)
+        assert not load_schedule(str(yaml_path)).manual
+
+    def test_edit_entry_updates_in_place(self, sched_env, monkeypatch):
+        """修改本次: 预填对话框返回新事件, 写回替换."""
+        _ctl, tab, yaml_path = sched_env
+        yaml_path.write_text(
+            "manual:\n"
+            "  - {date: '2026-10-26', start: '19:00', end: '21:00', title: 晚自习}\n"
+            "todos: []\n", encoding="utf-8")
+        tab._render_all()
+        origin = load_schedule(str(yaml_path)).manual[0]
+
+        class FakeDialog:
+            """替身: 返回改期后的新事件."""
+
+            def __init__(self, *args, **kwargs):
+                """忽略预填参数."""
+
+            def exec(self):
+                """视为用户点了确定."""
+                return schedule_view.QDialog.DialogCode.Accepted
+
+            def build_events(self):
+                """返回固定事件."""
+                return [Event(date(2026, 10, 26), time(14), time(16),
+                              "改期自习", "", 0)]
+
+        monkeypatch.setattr(schedule_view, "ManualEntryDialog", FakeDialog)
+        tab._edit_entry("manual", origin, False)
+        data = load_schedule(str(yaml_path))
+        assert data.manual[0].title == "改期自习"
+        assert data.manual[0].start == time(14)

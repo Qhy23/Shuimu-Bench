@@ -20,16 +20,31 @@ import yaml
 HEADER = ("# 水木工作台日程数据(courses=导入课程, manual=手动事件, todos=待办).\n"
           "# 注意: GUI 保存会重写本文件, 手写注释会丢失.\n")
 
+# 6 大节标准时段(节次 -> 开始, 结束), 清华本科课表惯例
+SESSION_TIMES = {
+    1: (time(8, 0), time(9, 35)),
+    2: (time(9, 50), time(12, 15)),
+    3: (time(13, 30), time(15, 5)),
+    4: (time(15, 20), time(16, 55)),
+    5: (time(17, 5), time(18, 40)),
+    6: (time(19, 20), time(21, 45)),
+}
+
 
 @dataclass
 class Event:
-    """一次有确切日期与起止时间的事件(课程或手动添加)."""
+    """一次有确切日期与起止时间的事件(课程或手动添加).
+
+    sid 为系列号(按周数添加的联排日程共享同一 sid, 供整组增删改),
+    0 表示不属于任何系列.
+    """
 
     date: date
     start: time
     end: time = None
     title: str = ""
     location: str = ""
+    sid: int = 0
 
 
 @dataclass
@@ -52,6 +67,7 @@ class DayEntry:
     title: str = ""
     location: str = ""
     is_manual: bool = False  # True=手动事件, False=导入课程
+    origin: Event = None     # 来源事件引用(右键增删改定位用)
 
 
 @dataclass
@@ -99,8 +115,11 @@ def _parse_event(raw) -> Event:
     location = raw.get("location", "")
     if not isinstance(location, str):
         raise ValueError("location 须为字符串")
+    sid = raw.get("sid", 0)
+    if not isinstance(sid, int) or isinstance(sid, bool) or sid < 0:
+        sid = 0
     return Event(_parse_date(raw.get("date")), start, end,
-                 title.strip(), location)
+                 title.strip(), location, sid)
 
 
 def _parse_todo(raw, fallback_tid: int) -> Todo:
@@ -204,7 +223,8 @@ def save_schedule(path: str, data: ScheduleData) -> None:
              "start": e.start.strftime("%H:%M"),
              **({"end": e.end.strftime("%H:%M")} if e.end else {}),
              "title": e.title,
-             **({"location": e.location} if e.location else {})}
+             **({"location": e.location} if e.location else {}),
+             **({"sid": e.sid} if e.sid else {})}
             for e in entries
         ]
 
@@ -282,7 +302,7 @@ def entries_for_week(data: ScheduleData, monday: date) -> dict:
             if 0 <= offset <= 6:
                 result[offset + 1].append(DayEntry(
                     entry.start, entry.end, entry.title, entry.location,
-                    is_manual))
+                    is_manual, origin=entry))
 
     place(data.manual, True)
     place(data.courses, False)
@@ -314,6 +334,11 @@ def todo_status(todo: Todo, today: date) -> str:
     if todo.due == today:
         return "today"
     return "upcoming"
+
+
+def next_series_id(data: ScheduleData) -> int:
+    """现有最大系列号 + 1, 无系列返回 1."""
+    return max((e.sid for e in data.manual if e.sid), default=0) + 1
 
 
 def next_todo_id(data: ScheduleData) -> int:

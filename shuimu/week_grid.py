@@ -8,7 +8,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
@@ -104,6 +104,8 @@ def layout_day(entries: list, x: float, col_w: float) -> list:
 class WeekGridWidget(QWidget):
     """自绘时间网格 + 绝对定位卡片. 数据经 set_week 全量更新."""
 
+    cardMenuRequested = Signal(object)  # 参数为 DayEntry(含 origin 引用)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._monday = week_start(date.today())
@@ -171,6 +173,9 @@ class WeekGridWidget(QWidget):
             layout.addWidget(location_label)
         card.setToolTip(f"{entry.title}\n{time_label.text()}"
                         + (f"\n{entry.location}" if entry.location else ""))
+        card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        card.customContextMenuRequested.connect(
+            lambda _pos, e=entry: self.cardMenuRequested.emit(e))
         return card
 
     def _relayout(self) -> None:

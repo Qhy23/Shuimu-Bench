@@ -6,6 +6,7 @@ from datetime import date, time
 from shuimu.schedule import (
     DayEntry,
     clamp_to_semester,
+    next_series_id,
     Event,
     ScheduleData,
     Todo,
@@ -311,3 +312,42 @@ class TestClampToSemester:
     def test_inside_unchanged(self):
         """学期内原样返回."""
         assert clamp_to_semester(date(2026, 10, 19), date(2026, 9, 14), 18) == date(2026, 10, 19)
+
+
+class TestSeriesId:
+    """系列号与来源引用."""
+
+    def test_sid_round_trip(self, tmp_path):
+        """sid 读写往返; 无 sid 的条目保持 0 不写出该字段."""
+        data = ScheduleData(manual=[
+            _event(sid=7), _event(date=date(2026, 11, 2), sid=7),
+            _event(date=date(2026, 11, 9)),
+        ])
+        path = str(tmp_path / "s.yaml")
+        save_schedule(path, data)
+        loaded = load_schedule(path)
+        assert [e.sid for e in loaded.manual] == [7, 7, 0]
+        with open(path, encoding="utf-8") as f:
+            body = f.read()
+        assert body.count("sid: 7") == 2
+
+    def test_invalid_sid_reset_to_zero(self, tmp_path):
+        """非法 sid 重置为 0."""
+        f = tmp_path / "s.yaml"
+        f.write_text(
+            "manual:\n  - {date: '2026-10-26', start: '08:00', end: '09:35', title: x, sid: -3}\n",
+            encoding="utf-8")
+        assert load_schedule(str(f)).manual[0].sid == 0
+
+    def test_next_series_id(self):
+        """最大系列号 + 1, 无系列返回 1."""
+        data = ScheduleData(manual=[_event(sid=3), _event(sid=9)])
+        assert next_series_id(data) == 10
+        assert next_series_id(ScheduleData()) == 1
+
+    def test_entries_carry_origin(self):
+        """entries_for_week 的 DayEntry 携带来源事件引用."""
+        origin = _event(title="原事件")
+        result = entries_for_week(ScheduleData(manual=[origin]),
+                                  date(2026, 10, 26))
+        assert result[1][0].origin is origin
