@@ -21,7 +21,6 @@ QPushButton {{
     border: none;
     border-radius: 4px;
     color: {theme.FG_DIM};
-    font-size: 14px;
     padding: 0;
 }}
 QPushButton:hover {{

@@ -11,8 +11,9 @@ import subprocess
 import time
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QBrush, QDesktopServices
+from PySide6.QtGui import QBrush, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QFileSystemModel,
     QHBoxLayout,
@@ -35,6 +36,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
+from .config import font_size_value
 from .controller import KIND_LABEL, Controller
 from .paths import default_workspace_root
 from .schedule_view import ScheduleTab
@@ -127,6 +130,7 @@ class MainWindow(QMainWindow):
         self._build_center()
         self._build_right()
         self.splitter.setSizes(self.ctl.config["app"]["splitter_sizes"])
+        self._install_zoom_shortcuts()
 
         grip = QSizeGrip(self)
         grip.setStyleSheet("background: transparent;")
@@ -135,6 +139,45 @@ class MainWindow(QMainWindow):
         self.reload_courses()
         self.refresh_log()
         self.statusBar().showMessage("就绪")
+
+    # ---- 界面缩放 ----
+
+    def _install_zoom_shortcuts(self) -> None:
+        """注册界面缩放快捷键(Ctrl+= / Ctrl+- / Ctrl+0)."""
+        for seq in ("Ctrl+=", "Ctrl++"):
+            QShortcut(QKeySequence(seq), self, activated=self._zoom_in)
+        QShortcut(QKeySequence("Ctrl+-"), self, activated=self._zoom_out)
+        QShortcut(QKeySequence("Ctrl+0"), self, activated=self._zoom_reset)
+
+    def _zoom_in(self) -> None:
+        """放大一档."""
+        self._zoom(1)
+
+    def _zoom_out(self) -> None:
+        """缩小一档."""
+        self._zoom(-1)
+
+    def _zoom(self, delta: int) -> None:
+        """按步进缩放, 到边界提示且不重刷."""
+        target = theme.clamp_font_px(theme.current_font_px() + delta)
+        if target == theme.current_font_px():
+            edge = "最大" if delta > 0 else "最小"
+            self.statusBar().showMessage(f"已达{edge}字号 {target}px")
+            return
+        self.set_app_font(target)
+
+    def _zoom_reset(self) -> None:
+        """重置到 config 配置的默认字号."""
+        self.set_app_font(font_size_value(self.ctl.config))
+        self.statusBar().showMessage(f"字号已重置为 {theme.current_font_px()}px")
+
+    def set_app_font(self, font_px: int, quiet: bool = False) -> None:
+        """应用全局字号: 刷新 QSS 并联动自绘部件."""
+        theme.apply_theme(QApplication.instance(), font_px)
+        self.schedule_tab.set_font_px(theme.current_font_px())
+        if not quiet:
+            self.statusBar().showMessage(
+                f"字号 {theme.current_font_px()}px (Ctrl+0 重置)")
 
     # ---- 界面构建 ----
 
@@ -222,7 +265,8 @@ class MainWindow(QMainWindow):
         self.log_view = QPlainTextEdit(readOnly=True)
         self.tabs.addTab(self.log_view, "日志")
         self.tabs.addTab(self._build_organize_tab(), "整理")
-        self.tabs.addTab(ScheduleTab(self.ctl, self.tabs), "日程")
+        self.schedule_tab = ScheduleTab(self.ctl, self.tabs)
+        self.tabs.addTab(self.schedule_tab, "日程")
 
     def _build_organize_tab(self) -> QWidget:
         tab = QWidget(self.tabs)

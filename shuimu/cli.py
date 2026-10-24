@@ -296,42 +296,43 @@ def _cmd_rm_event(ctl: Controller, args) -> int:
     return 0 if result.ok else 2
 
 
+_WORKSPACE_COMMANDS = ("courses", "add-course", "del-course", "add",
+                       "resources", "remove", "organize", "log")
+
+
 def run_command(ctl: Controller, args) -> int:
     """执行一条已解析的命令, 返回退出码. 不持有连接, 由调用方管理."""
-    if args.command == "courses":
-        for c in ctl.storage.list_courses():
-            print(f"#{c['id']} {c['name']}")
-
-    elif args.command == "add-course":
-        return _emit(ctl.add_course(args.name))
-
-    elif args.command == "del-course":
-        return _emit(ctl.delete_course(args.course_id))
-
-    elif args.command == "add":
-        return _emit(ctl.add_resource(args.course_id, args.target))
-
-    elif args.command == "resources":
-        _print_resources(ctl.storage, args.course_id)
-
-    elif args.command == "remove":
-        return _emit(ctl.remove_resource(args.resource_id))
-
-    elif args.command == "organize":
-        return _cmd_organize(ctl, args)
-
-    elif args.command == "log":
-        for op in ctl.storage.list_operations(args.limit):
-            print(f"#{op['id']} [{op['status']}] {op['action']}"
-                  f" | {op['path_snapshot'] or '-'} | {op['detail'] or ''}")
-
-    elif args.command:
+    if args.command in _WORKSPACE_COMMANDS:
+        return _run_workspace_command(ctl, args)
+    if args.command:
         return _run_schedule_command(ctl, args)
     return 0
 
 
-_SCHEDULE_COMMANDS = ("schedule", "todos", "add-todo", "toggle-todo",
-                      "import-schedule", "add-event", "edit-event", "rm-event")
+def _run_workspace_command(ctl: Controller, args) -> int:
+    """执行工作区相关子命令."""
+    if args.command == "courses":
+        for course in ctl.storage.list_courses():
+            print(f"#{course['id']} {course['name']}")
+    elif args.command == "add-course":
+        return _emit(ctl.add_course(args.name))
+    elif args.command == "del-course":
+        return _emit(ctl.delete_course(args.course_id))
+    elif args.command == "add":
+        return _emit(ctl.add_resource(args.course_id, args.target))
+    elif args.command == "resources":
+        _print_resources(ctl.storage, args.course_id)
+    elif args.command == "remove":
+        return _emit(ctl.remove_resource(args.resource_id))
+    elif args.command == "organize":
+        return _cmd_organize(ctl, args)
+    else:  # log
+        for op in ctl.storage.list_operations(args.limit):
+            print(f"#{op['id']} [{op['status']}] {op['action']}"
+                  f" | {op['path_snapshot'] or '-'} | {op['detail'] or ''}")
+    return 0
+
+
 
 
 def _cmd_todo(ctl: Controller, args) -> int:

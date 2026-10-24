@@ -11,12 +11,14 @@ from datetime import date
 import yaml
 
 from .paths import project_root, user_data_dir
+from .theme import DEFAULT_FONT_PX, clamp_font_px
 
 DEFAULTS = {
     "app": {
         "title": "水木工作台 ShuimuBench",
         "window_size": [1200, 720],
         "splitter_sizes": [240, 520, 400],
+        "font_size": 13,  # 界面字号(px), 9-20; 运行时 Ctrl+=/- 可调
     },
     "course": {
         "default_name": "未分组",
@@ -79,6 +81,12 @@ def semester_start_date(cfg: dict):
         return date.fromisoformat(raw)
     except (TypeError, ValueError):
         return None
+
+
+def font_size_value(cfg: dict) -> int:
+    """提取界面字号并夹取到 [9, 20]; 缺省 13, 非法回退默认."""
+    raw = (cfg.get("app") or {}).get("font_size", DEFAULT_FONT_PX)
+    return clamp_font_px(raw)
 
 
 def semester_week_count(cfg: dict) -> int:

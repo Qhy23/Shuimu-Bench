@@ -5,6 +5,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from shuimu.app import MainWindow
+from shuimu.config import font_size_value
 from shuimu.paths import default_db_path
 from shuimu.storage import Storage
 from shuimu.theme import apply_theme
@@ -16,6 +17,7 @@ def main() -> int:
     storage = Storage(default_db_path())
     window = MainWindow(storage)
     cfg = window.ctl.config["app"]
+    window.set_app_font(font_size_value(window.ctl.config), quiet=True)
     window.setWindowTitle(cfg["title"])
     window.resize(*cfg["window_size"])
     window.show()

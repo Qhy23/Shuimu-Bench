@@ -6,6 +6,7 @@ app:
   title: "水木工作台 ShuimuBench"
   window_size: [1200, 720]        # 主窗口初始尺寸(宽, 高)
   splitter_sizes: [240, 520, 400] # 三栏初始宽度(左/中/右)
+  font_size: 13                   # 界面字号(px), 9-20, 运行时 Ctrl+=/- 可调
 
 course:
   default_name: "未分组"          # 空工作区时自动创建的默认课程名

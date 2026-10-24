@@ -1,7 +1,9 @@
-"""界面主题: 设计 token 与全局 QSS.
+"""界面主题: 设计 token 与全局 QSS 生成.
 
-集中在这一处定义配色/圆角/间距, main.py 在 QApplication 上应用.
-与未来 QML 迁移解耦: 换框架时只换应用方式, token 直接平移.
+字号以 QSS 为单一来源(build_qss(font_px)); QSS 的字号不回写
+QWidget.font(), 自绘部件须显式 setPixelSize 并经 set_font_px 通道联动.
+缩放度量分两类: 文字邻近的随 k=font_px/DEFAULT_FONT_PX 缩放; 结构性
+chrome(圆角/滚动条宽/边框)保持固定, 放大后显笨重.
 """
 
 # ---- 设计 token ----
@@ -16,11 +18,43 @@ FG_DIM = "#8a8a9e"         # 次要文字
 BORDER = "#3a3a4e"         # 边框
 DANGER = "#e5484d"         # 警示: 逾期/失败
 RADIUS = "8px"
-FONT_SIZE = "13px"
+FONT_FAMILY = '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
 
-QSS = f"""
+DEFAULT_FONT_PX = 13
+MIN_FONT_PX = 9
+MAX_FONT_PX = 20
+FONT_SIZE = f"{DEFAULT_FONT_PX}px"  # 默认字号快照, 兼容旧引用
+
+_state = {"font_px": DEFAULT_FONT_PX}  # 当前字号, apply_theme 单点写入
+
+
+def clamp_font_px(value) -> int:
+    """字号夹取到 [MIN_FONT_PX, MAX_FONT_PX]; 非法值回退默认."""
+    try:
+        px = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_FONT_PX
+    return max(MIN_FONT_PX, min(MAX_FONT_PX, px))
+
+
+def current_font_px() -> int:
+    """当前生效字号."""
+    return _state["font_px"]
+
+
+def build_qss(font_px: int = DEFAULT_FONT_PX) -> str:
+    """按字号生成全局 QSS; 文字邻近 padding 随 k 缩放, chrome 固定."""
+    font_px = clamp_font_px(font_px)
+    k = font_px / DEFAULT_FONT_PX
+
+    def pad(base: int) -> str:
+        """文字邻近内边距按 k 缩放, 下限 2px."""
+        return f"{max(2, round(base * k))}px"
+
+    return f"""
 * {{
-    font-size: {FONT_SIZE};
+    font-family: {FONT_FAMILY};
+    font-size: {font_px}px;
     color: {FG_TEXT};
 }}
 QMainWindow, QWidget {{
@@ -30,11 +64,11 @@ QTreeWidget, QTreeView, QTableWidget, QPlainTextEdit, QLineEdit {{
     background-color: {BG_PANEL};
     border: 1px solid {BORDER};
     border-radius: {RADIUS};
-    padding: 4px;
+    padding: {pad(4)};
     selection-background-color: {PRIMARY};
 }}
 QTreeWidget::item, QTreeView::item {{
-    padding: 4px 2px;
+    padding: {pad(4)} {pad(2)};
     border-radius: 4px;
 }}
 QTreeWidget::item:hover, QTreeView::item:hover {{
@@ -48,13 +82,13 @@ QHeaderView::section {{
     color: {FG_DIM};
     border: none;
     border-bottom: 1px solid {BORDER};
-    padding: 4px 6px;
+    padding: {pad(4)} {pad(6)};
 }}
 QPushButton {{
     background-color: {BG_PANEL};
     border: 1px solid {BORDER};
     border-radius: {RADIUS};
-    padding: 5px 14px;
+    padding: {pad(5)} {pad(14)};
 }}
 QPushButton:hover {{
     background-color: {PRIMARY_LIGHT};
@@ -71,7 +105,7 @@ QTabWidget::pane {{
 QTabBar::tab {{
     background-color: {BG_BASE};
     color: {FG_DIM};
-    padding: 6px 16px;
+    padding: {pad(6)} {pad(16)};
     border-top-left-radius: {RADIUS};
     border-top-right-radius: {RADIUS};
     margin-right: 2px;
@@ -137,7 +171,7 @@ QToolTip {{
     background-color: {BG_PANEL};
     color: {FG_TEXT};
     border: 1px solid {BORDER};
-    padding: 4px 8px;
+    padding: {pad(4)} {pad(8)};
 }}
 QFrame#daycol, QFrame#daycol-today {{
     background: transparent;
@@ -169,6 +203,11 @@ QLabel#warnbar {{
 """
 
 
-def apply_theme(app) -> None:
-    """把主题应用到 QApplication."""
-    app.setStyleSheet(QSS)
+QSS = build_qss()
+
+
+def apply_theme(app, font_px: int = DEFAULT_FONT_PX) -> None:
+    """把主题(含字号)应用到 QApplication."""
+    font_px = clamp_font_px(font_px)
+    _state["font_px"] = font_px
+    app.setStyleSheet(build_qss(font_px))

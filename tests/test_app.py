@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from PySide6.QtCore import Qt
 
 from shuimu import app as shuimu_app
+from shuimu import theme
 from shuimu.app import MainWindow
 from shuimu.storage import Storage
 
@@ -223,3 +224,33 @@ def test_wslview_open_dispatch(monkeypatch):
                         ran.append((cmd, check, timeout)) or Result())
     assert shuimu_app._wslview_open("/x/a.pdf") is True
     assert ran == [(["/usr/bin/wslview", "/x/a.pdf"], False, 15)]
+
+
+class TestZoom:
+    """界面缩放快捷键行为."""
+
+    def test_zoom_in_and_clamp(self, qtbot, tmp_path, qapp):
+        """放大刷新 QSS 与网格, 到 20px 后夹住."""
+        storage = Storage(str(tmp_path / "zoom.db"))
+        window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"))
+        qtbot.addWidget(window)
+        window._zoom_in()
+        assert theme.current_font_px() == 14
+        assert "font-size: 14px" in qapp.styleSheet()
+        assert "字号 14px" in window.statusBar().currentMessage()
+        for _ in range(20):
+            window._zoom_in()
+        assert theme.current_font_px() == 20  # 夹住
+        assert "已达最大字号" in window.statusBar().currentMessage()
+        storage.close()
+
+    def test_zoom_reset(self, qtbot, tmp_path):
+        """Ctrl+0 语义: 重置到 config 默认字号."""
+        storage = Storage(str(tmp_path / "zoom2.db"))
+        window = MainWindow(storage, schedule_path=str(tmp_path / "s2.yaml"))
+        qtbot.addWidget(window)
+        window._zoom_in()
+        window._zoom_in()
+        window._zoom_reset()
+        assert theme.current_font_px() == 13
+        storage.close()

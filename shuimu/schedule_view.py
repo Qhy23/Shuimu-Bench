@@ -457,6 +457,12 @@ class ScheduleTab(QWidget):
             self.todo_tree.addTopLevelItem(item)
         self.todo_tree.blockSignals(False)
 
+    # ---- 界面联动 ----
+
+    def set_font_px(self, font_px: int) -> None:
+        """转发全局字号到周历网格."""
+        self.week_grid.set_font_px(font_px)
+
     # ---- 交互 ----
 
     def _shift_week(self, delta: int) -> None:

@@ -10,6 +10,7 @@ from shuimu.week_grid import (
     HEADER_H,
     HOUR_H,
     PPM,
+    GridMetrics,
     WeekGridWidget,
     layout_day,
 )
@@ -136,3 +137,34 @@ class TestWeekGridWidget:
                        2: [_entry(time(19, 20), time(21, 45), "AI 课")]})
         pixmap = grid.grab()
         assert not pixmap.isNull() and pixmap.width() == 760
+
+
+class TestGridMetricsScaling:
+    """度量参数化与字号联动."""
+
+    def test_layout_with_custom_metrics(self):
+        """自定义度量下几何按新 header/ppm 计算."""
+        m = GridMetrics(header_h=60, ppm=1.0, min_card_h=20)
+        box = layout_day([_entry(time(10), time(11, 30))], 100.0, 200.0, m)[0]
+        assert box.y == 60 + (10 * 60 - 8 * 60) * 1.0
+        assert box.height == 90 * 1.0 - 2
+
+    def test_default_metrics_unchanged(self):
+        """默认参数路径与模块常量一致."""
+        box = layout_day([_entry(time(8), time(9, 35))], 0.0, 100.0)[0]
+        assert box.y == HEADER_H
+        assert box.height == 95 * PPM - 2
+
+    def test_set_font_px_grows_grid(self, qtbot):
+        """放大字号后网格最小尺寸与卡片几何同步放大."""
+        grid = WeekGridWidget()
+        qtbot.addWidget(grid)
+        grid.resize(900, 900)
+        base_h = grid.minimumHeight()
+        grid.set_week(date(2026, 10, 19), {1: [_entry(time(8), time(9, 35))]})
+        card = [c for c in grid.findChildren(QFrame)
+                if c.objectName() == "slotcard"][0]
+        base_card_h = card.height()
+        grid.set_font_px(18)
+        assert grid.minimumHeight() > base_h
+        assert card.height() > base_card_h

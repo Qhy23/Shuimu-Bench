@@ -4,6 +4,7 @@ from datetime import date
 
 from shuimu.config import (
     DEFAULTS,
+    font_size_value,
     load_config,
     organize_rules,
     semester_start_date,
@@ -103,3 +104,22 @@ class TestSemesterWeekCount:
         assert semester_week_count({"schedule": {"week_count": "abc"}}) == 0
         assert semester_week_count({"schedule": {"week_count": -3}}) == 0
         assert semester_week_count({"schedule": None}) == 0
+
+
+class TestFontSizeValue:
+    """界面字号提取."""
+
+    def test_default(self):
+        """缺省 13."""
+        assert font_size_value(DEFAULTS) == 13
+        assert font_size_value({}) == 13
+
+    def test_clamped(self):
+        """越界夹取到 [9, 20]."""
+        assert font_size_value({"app": {"font_size": 4}}) == 9
+        assert font_size_value({"app": {"font_size": 99}}) == 20
+
+    def test_invalid_falls_back(self):
+        """非法回退默认."""
+        assert font_size_value({"app": {"font_size": "big"}}) == 13
+        assert font_size_value({"app": None}) == 13
