@@ -132,3 +132,27 @@ def kind_icon(kind: str, failed: bool = False, size: int = 16) -> QPixmap:
     painter.end()
     return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
                          Qt.TransformationMode.SmoothTransformation)
+
+
+def chevron_icon(direction: str, size: int = 20) -> QIcon:
+    """chevron 箭头图标(左/右/下), FG_TEXT 色, 圆头折线.
+
+    折线比例参照 thu-info-app 的 IconLeft/IconDown(24x24, strokeWidth 1.5).
+    """
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(_pen(theme.FG_TEXT, max(2.0, size * 0.24)))
+    s = size * 2.0
+    if direction == "left":
+        points = [(0.62, 0.26), (0.38, 0.5), (0.62, 0.74)]
+    elif direction == "right":
+        points = [(0.38, 0.26), (0.62, 0.5), (0.38, 0.74)]
+    else:  # down
+        points = [(0.30, 0.40), (0.50, 0.62), (0.70, 0.40)]
+    for (x1, y1), (x2, y2) in zip(points, points[1:]):
+        painter.drawLine(round(s * x1), round(s * y1), round(s * x2), round(s * y2))
+    painter.end()
+    return QIcon(pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation))

@@ -7,12 +7,18 @@ from datetime import date, time, timedelta
 import pytest
 from PySide6.QtCore import QDate, QTime
 from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QPushButton
 
 from shuimu import schedule_view
 from shuimu.config import DEFAULTS
 from shuimu.controller import Controller
 from shuimu.schedule import Event, load_schedule, week_start
-from shuimu.schedule_view import ManualEntryDialog, ScheduleTab, TodoDialog
+from shuimu.schedule_view import (
+    ManualEntryDialog,
+    ScheduleTab,
+    TodoDialog,
+    WeekPickerPopup,
+)
 from shuimu.storage import Storage
 from shuimu.theme import DANGER
 
@@ -234,19 +240,19 @@ class TestSemesterRange:
         """学期内显示第 N 周, 从 1 开始."""
         sem_env._monday = date(2026, 10, 19)
         sem_env._render_all()
-        assert "第 1 周" in sem_env.week_label.text()
+        assert "第 1 周" in sem_env.week_btn.text()
         sem_env._monday = date(2026, 11, 2)
         sem_env._render_all()
-        assert "第 3 周" in sem_env.week_label.text()
+        assert "第 3 周" in sem_env.week_btn.text()
 
     def test_label_vacation_out_of_range(self, sem_env):
         """学期前与学期后显示假期."""
         sem_env._monday = date(2026, 10, 12)  # 开学前
         sem_env._render_all()
-        assert "假期" in sem_env.week_label.text()
+        assert "假期" in sem_env.week_btn.text()
         sem_env._monday = date(2026, 11, 23)  # 第 6 周, 超出 4 周
         sem_env._render_all()
-        assert "假期" in sem_env.week_label.text()
+        assert "假期" in sem_env.week_btn.text()
 
     def test_shift_clamped_to_semester(self, sem_env):
         """翻周被夹在第 1 周与第 4 周之间."""
@@ -415,3 +421,44 @@ class TestCardActions:
         data = load_schedule(str(yaml_path))
         assert data.manual[0].title == "改期自习"
         assert data.manual[0].start == time(14)
+
+
+class TestWeekNavigationControls:
+    """箭头翻周与周次快速跳转."""
+
+    def test_arrow_buttons_have_icons(self, sched_env):
+        """左右按钮为图标按钮(chevron), 无文字."""
+        _ctl, tab, _yaml = sched_env
+        assert tab.prev_btn.text() == "" and tab.next_btn.text() == ""
+        assert not tab.prev_btn.icon().isNull()
+        assert not tab.next_btn.icon().isNull()
+        assert tab.prev_btn.toolTip() == "上一周"
+
+    def test_week_picker_popup(self, qtbot):
+        """面板按钮数正确, 选中周主样式, 点击发出周次信号."""
+        popup = WeekPickerPopup(18, 6, 3)
+        qtbot.addWidget(popup)
+        buttons = popup.findChildren(QPushButton)
+        assert len(buttons) == 18
+        chosen = []
+        popup.weekChosen.connect(chosen.append)
+        current = next(b for b in buttons if b.text() == "6")
+        assert current.property("primary") is True
+        today_btn = next(b for b in buttons if b.text() == "3")
+        assert today_btn.property("today") is True
+        next(b for b in buttons if b.text() == "9").click()
+        assert chosen == [9]
+
+    def test_goto_week(self, sched_env):
+        """_goto_week 跳到指定周周一."""
+        _ctl, tab, _yaml = sched_env
+        start = tab.controller.semester_start()
+        assert start is not None  # 测试配置固定学期
+        tab._goto_week(3)
+        assert tab._monday == start + timedelta(weeks=2)
+
+    def test_week_button_text_has_caret(self, sched_env):
+        """周标签按钮文本含下箭头标记."""
+        _ctl, tab, _yaml = sched_env
+        assert "▾" in tab.week_btn.text()
+        assert "周" in tab.week_btn.text() or "假期" in tab.week_btn.text()

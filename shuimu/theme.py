@@ -6,6 +6,8 @@ QWidget.font(), 自绘部件须显式 setPixelSize 并经 set_font_px 通道联�
 chrome(圆角/滚动条宽/边框)保持固定, 放大后显笨重.
 """
 
+import hashlib
+
 # ---- 设计 token ----
 PRIMARY = "#660874"        # 清华紫
 PRIMARY_LIGHT = "#8c2f9e"  # 悬停态
@@ -40,6 +42,19 @@ MAX_FONT_PX = 20
 FONT_SIZE = f"{DEFAULT_FONT_PX}px"  # 默认字号快照, 兼容旧引用
 
 _state = {"font_px": DEFAULT_FONT_PX}  # 当前字号, apply_theme 单点写入
+
+
+# 课程稳定配色(借鉴 thu-info-app: md5(课程名)前 6 位 % 11 色板,
+# 同名课全学期同色)
+COURSE_PALETTE = ["#00a6f2", "#3cb3c8", "#fc6b50", "#f067bb", "#ef5b75",
+                  "#7d7aea", "#bf73e5", "#ff9900", "#eebe00", "#5b8eff",
+                  "#139161"]
+
+
+def course_color(title: str) -> str:
+    """课程色: md5(标题)前 6 位十六进制对色板长度取模."""
+    digest = hashlib.md5(title.encode("utf-8")).hexdigest()
+    return COURSE_PALETTE[int(digest[:6], 16) % len(COURSE_PALETTE)]
 
 
 def clamp_font_px(value) -> int:
@@ -233,11 +248,32 @@ QFrame#daycol-today {{
 QFrame#slotcard, QFrame#slotcard-manual {{
     background-color: {GRADIENT_CARD};
     border: 1px solid {BORDER};
-    border-left: 3px solid {PRIMARY};
     border-radius: 6px;
 }}
-QFrame#slotcard-manual {{
-    border-left-color: {ACCENT};
+QFrame#cardbar {{
+    border: none;
+    border-radius: 1px;
+}}
+QPushButton#weektitle {{
+    background: transparent;
+    border: none;
+    color: {FG_TEXT};
+    font-weight: 600;
+    font-size: {title_px}px;
+    padding: {pad(2)} {pad(4)};
+}}
+QPushButton#weektitle:hover {{
+    color: {PRIMARY_LIGHT};
+}}
+QWidget#weekpicker {{
+    background-color: {PANEL_ALPHA};
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS};
+}}
+QPushButton[today="true"] {{
+    color: {PRIMARY_LIGHT};
+    font-weight: 600;
+    border-color: {PRIMARY_DARK};
 }}
 QLabel#apptitle {{
     color: {FG_TEXT};

@@ -13,7 +13,7 @@ from datetime import date, datetime, time, timedelta
 
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from . import artwork, theme
 from .schedule import WEEKDAY_NAMES, DayEntry, week_start
@@ -203,7 +203,8 @@ class WeekGridWidget(QWidget):
         self.setMinimumSize(self._m.axis_w + DAY_COUNT * self._m.col_min_w,
                             int(self._m.header_h + DAY_MINUTES * self._m.ppm))
         for card, _entry, _weekday in self._cards:
-            card.layout().setContentsMargins(
+            body = card.layout().itemAt(1).widget()
+            body.layout().setContentsMargins(
                 self._m.card_mh, self._m.card_mv,
                 self._m.card_mh, self._m.card_mv)
         self._relayout()
@@ -232,26 +233,38 @@ class WeekGridWidget(QWidget):
     # ---- 卡片 ----
 
     def _make_card(self, entry: DayEntry) -> QFrame:
-        """一张条目卡片: 时段/标题/地点三行, 悬停提示完整信息."""
+        """一张条目卡片: 左侧稳定配色条 + 时段/标题/地点三行."""
         card = QFrame(self)
         card.setObjectName("slotcard-manual" if entry.is_manual else "slotcard")
-        layout = QVBoxLayout(card)
+        outer = QHBoxLayout(card)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        color = (theme.ACCENT if entry.is_manual
+                 else theme.course_color(entry.title))
+        bar = QFrame(card)
+        bar.setObjectName("cardbar")
+        bar.setFixedWidth(3)
+        bar.setStyleSheet(f"background:{color};")
+        outer.addWidget(bar)
+        body = QWidget(card)
+        layout = QVBoxLayout(body)
         layout.setContentsMargins(self._m.card_mh, self._m.card_mv,
                                   self._m.card_mh, self._m.card_mv)
         layout.setSpacing(0)
         end_text = entry.end.strftime("%H:%M") if entry.end else ""
-        time_label = QLabel(f"{entry.start.strftime('%H:%M')}-{end_text}", card)
+        time_label = QLabel(f"{entry.start.strftime('%H:%M')}-{end_text}", body)
         time_label.setObjectName("cardtime")
-        title_label = QLabel(entry.title, card)
+        title_label = QLabel(entry.title, body)
         title_label.setObjectName("cardtitle")
         title_label.setWordWrap(True)
         layout.addWidget(time_label)
         layout.addWidget(title_label)
         if entry.location:
-            location_label = QLabel(entry.location, card)
+            location_label = QLabel(entry.location, body)
             location_label.setObjectName("cardloc")
             location_label.setWordWrap(True)
             layout.addWidget(location_label)
+        outer.addWidget(body)
         card.setToolTip(f"{entry.title}\n{time_label.text()}"
                         + (f"\n{entry.location}" if entry.location else ""))
         card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -314,6 +327,12 @@ class WeekGridWidget(QWidget):
             painter.drawText(QRectF(x, 0, col_w, self._m.header_h),
                              Qt.AlignmentFlag.AlignCenter,
                              f"{WEEKDAY_NAMES[weekday - 1]} {day.strftime('%m/%d')}")
+            if is_today:
+                underline = QRectF(x + col_w / 2 - col_w * 0.09,
+                                   self._m.header_h - 6, col_w * 0.18, 2)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(theme.PRIMARY))
+                painter.drawRoundedRect(underline, 1, 1)
         right = self._m.axis_w + int(DAY_COUNT * col_w)
         painter.setPen(QColor(theme.BORDER))
         painter.drawLine(right, 0, right, self.height())

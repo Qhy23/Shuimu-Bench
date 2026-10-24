@@ -9,7 +9,7 @@
 import os
 from datetime import date, timedelta
 
-from PySide6.QtCore import QDate, QFileSystemWatcher, Qt, QTime
+from PySide6.QtCore import QDate, QFileSystemWatcher, Qt, QTime, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -47,12 +47,45 @@ from .schedule import (
     clamp_to_semester,
     entries_for_week,
     expand_weekly,
+    semester_week,
     sorted_todos,
     todo_status,
     week_label,
     week_start,
 )
 from .week_grid import WeekGridWidget
+
+class WeekPickerPopup(QWidget):
+    """周次快速跳转面板(借鉴 thu-info-app 的 SemesterWeekPicker).
+
+    数字按钮网格 1..week_count: 选中周主按钮样式(紫渐变底白字),
+    本周(未选中时)紫色加粗.
+    """
+
+    weekChosen = Signal(int)
+
+    def __init__(self, week_count, current_week, today_week, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup
+                         | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("weekpicker")
+        grid = QGridLayout(self)
+        grid.setContentsMargins(10, 10, 10, 10)
+        grid.setSpacing(4)
+        for week in range(1, week_count + 1):
+            btn = QPushButton(str(week), self)
+            btn.setFixedSize(34, 30)
+            if week == current_week:
+                btn.setProperty("primary", True)
+            elif week == today_week:
+                btn.setProperty("today", True)
+            btn.clicked.connect(lambda _c, w=week: self._choose(w))
+            grid.addWidget(btn, (week - 1) // 8, (week - 1) % 8)
+
+    def _choose(self, week: int) -> None:
+        """发出选择信号并关闭."""
+        self.weekChosen.emit(week)
+        self.close()
+
 
 SESSION_LABELS = [f"第{i}节 {s.strftime('%H:%M')}-{e.strftime('%H:%M')}"
                   for i, (s, e) in sorted(SESSION_TIMES.items())]
@@ -352,25 +385,31 @@ class ScheduleTab(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         nav = QHBoxLayout()
-        prev_btn = QPushButton("<", panel)
-        prev_btn.setFixedWidth(32)
-        next_btn = QPushButton(">", panel)
-        next_btn.setFixedWidth(32)
+        self.prev_btn = QPushButton(panel)
+        self.prev_btn.setIcon(artwork.chevron_icon("left"))
+        self.prev_btn.setFixedSize(34, 30)
+        self.prev_btn.setToolTip("上一周")
+        self.next_btn = QPushButton(panel)
+        self.next_btn.setIcon(artwork.chevron_icon("right"))
+        self.next_btn.setFixedSize(34, 30)
+        self.next_btn.setToolTip("下一周")
+        self.week_btn = QPushButton("", panel)
+        self.week_btn.setObjectName("weektitle")
+        self.week_btn.setToolTip("点击跳转到指定周次")
         self.today_btn = QPushButton("回到今天", panel)
         self.import_btn = QPushButton("导入课程...", panel)
         self.add_btn = QPushButton("添加日程...", panel)
         for btn in (self.import_btn, self.add_btn):
             btn.setProperty("primary", True)
-        self.week_label = QLabel("", panel)
-        self.week_label.setObjectName("dayhead")
-        prev_btn.clicked.connect(lambda: self._shift_week(-1))
-        next_btn.clicked.connect(lambda: self._shift_week(1))
+        self.prev_btn.clicked.connect(lambda: self._shift_week(-1))
+        self.next_btn.clicked.connect(lambda: self._shift_week(1))
+        self.week_btn.clicked.connect(self._pick_week)
         self.today_btn.clicked.connect(self._go_today)
         self.import_btn.clicked.connect(self._import_courses)
         self.add_btn.clicked.connect(self._add_manual)
-        nav.addWidget(prev_btn)
-        nav.addWidget(self.week_label)
-        nav.addWidget(next_btn)
+        nav.addWidget(self.prev_btn)
+        nav.addWidget(self.week_btn)
+        nav.addWidget(self.next_btn)
         nav.addStretch(1)
         nav.addWidget(self.today_btn)
         nav.addWidget(self.import_btn)
@@ -443,10 +482,30 @@ class ScheduleTab(QWidget):
                 max(0, self.week_grid.now_offset() - 140))
 
     def _set_week_label(self) -> None:
-        """导航行文本由共享的 week_label 生成(GUI 与 CLI 一致)."""
-        self.week_label.setText(week_label(
+        """导航行文本由共享的 week_label 生成(GUI 与 CLI 一致), 附下箭头."""
+        self.week_btn.setText(week_label(
             self._monday, self.controller.semester_start(),
-            self.controller.semester_week_count()))
+            self.controller.semester_week_count()) + " ▾")
+
+    def _pick_week(self) -> None:
+        """弹出周次快速跳转面板(学期未配置时不动作)."""
+        start = self.controller.semester_start()
+        count = self.controller.semester_week_count()
+        if not start or not count:
+            return
+        current = semester_week(self._monday, start)
+        today = semester_week(date.today(), start)
+        popup = WeekPickerPopup(count, current, today, self)
+        popup.weekChosen.connect(self._goto_week)
+        popup.move(self.week_btn.mapToGlobal(
+            self.week_btn.rect().bottomLeft()))
+        popup.show()
+
+    def _goto_week(self, week_number: int) -> None:
+        """跳到学期第 week_number 周的周一."""
+        start = self.controller.semester_start()
+        self._monday = week_start(start) + timedelta(weeks=week_number - 1)
+        self._render_all()
 
     def _render_todos(self, snapshot) -> None:
         """重建待办树. blockSignals 防止 setCheckState 触发 itemChanged."""

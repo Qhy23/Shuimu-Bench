@@ -77,12 +77,14 @@ class TestGradientTheme:
         qss = theme.build_qss(13)
         assert "qlineargradient" in qss
         assert 'QPushButton[primary="true"]' in qss
-        assert "border-left: 3px solid" in qss  # 周历卡片强调条
+        assert "QFrame#cardbar" in qss  # 周历卡片色条(课程稳定配色)
 
     def test_gradient_tokens_reference_colors(self):
-        """渐变 token 由色板 token 组合而来."""
+        """渐变 token 由色板 token 组合而来; 课程色板稳定取色."""
         assert theme.PRIMARY in theme.GRADIENT_PRIMARY
-        assert theme.ACCENT in theme.build_qss()  # 手动卡片强调色
+        assert len(theme.COURSE_PALETTE) == 11
+        assert theme.course_color("AI 编程进阶") == theme.course_color("AI 编程进阶")
+        assert theme.course_color("AI 编程进阶") in theme.COURSE_PALETTE
 
 
 class TestTypographyHierarchy:
