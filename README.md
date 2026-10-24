@@ -34,7 +34,11 @@ python main.py        # GUI
 python cli.py --help  # CLI(与 GUI 共用同一数据库, 供无头环境与 AI 工具测试)
 ```
 
-CLI 两种用法: `python cli.py <子命令>` 单次执行; 不带子命令 `python cli.py` 进入交互模式(一次启动逐行输入, help 查看命令, exit 退出). 子命令示例: `add-course 高等数学` / `add 1 /path/file.pdf` / `organize <目录> [--yes]` / `log`.
+CLI 与 GUI 共用同一 Controller 业务层, 只是外壳不同. 两种用法: `python cli.py <子命令>` 单次执行; 不带子命令 `python cli.py` 进入交互模式(一次启动逐行输入, help 查看命令, exit 退出).
+
+工作区: `add-course 高等数学` / `add 1 /path/file.pdf` / `resources 1` / `organize <目录> [--yes]` / `log`
+
+日程(与 GUI 同源): `schedule [--week N | --date D]` 列周历(输出带 #N 序号) / `import-schedule 个人校历.html` / `add-todo 标题 [--due D] [--course 课]` / `toggle-todo 1` / `add-event 标题 --date D --start --end` 或 `--weekday 1-7 --session 1-6 --weeks 1-8,11`(按周数展开为系列) / `edit-event #N [--series]` / `rm-event #N [--series]`.
 
 ## 日程面板
 

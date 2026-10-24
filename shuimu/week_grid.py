@@ -13,7 +13,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from . import theme
-from .schedule import DayEntry, week_start
+from .schedule import WEEKDAY_NAMES, DayEntry, week_start
 
 AXIS_W = 44            # 左侧时刻轴宽(px)
 HEADER_H = 30          # 顶部日头条高(px)
@@ -26,8 +26,6 @@ MIN_CARD_MIN = 30      # 卡片最短时长(分钟)
 COL_MIN_W = 96         # 单列最小宽
 DAY_COUNT = 7
 GAP = 2
-
-WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
 
 def _minutes(value: time) -> int:

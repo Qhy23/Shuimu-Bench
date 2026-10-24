@@ -42,15 +42,17 @@ from . import theme
 from .controller import Controller
 from .schedule import (
     SESSION_TIMES,
+    WEEKDAY_NAMES,
     Event,
     clamp_to_semester,
     entries_for_week,
-    semester_week,
+    expand_weekly,
     sorted_todos,
     todo_status,
+    week_label,
     week_start,
 )
-from .week_grid import WEEKDAY_NAMES, WeekGridWidget
+from .week_grid import WeekGridWidget
 
 SESSION_LABELS = [f"第{i}节 {s.strftime('%H:%M')}-{e.strftime('%H:%M')}"
                   for i, (s, e) in sorted(SESSION_TIMES.items())]
@@ -249,13 +251,11 @@ class ManualEntryDialog(QDialog):
                           self.date_start_edit.time().toPython(),
                           self.date_end_edit.time().toPython(),
                           title, location)]
-        start = self.week_start_edit.time().toPython()
-        end = self.week_end_edit.time().toPython()
-        weekday = self.weekday_box.currentIndex() + 1
-        return [Event(self.semester_start
-                      + timedelta(days=(week - 1) * 7 + weekday - 1),
-                      start, end, title, location)
-                for week in self._checked_weeks()]
+        return expand_weekly(
+            self.semester_start, self._checked_weeks(),
+            self.weekday_box.currentIndex() + 1,
+            self.week_start_edit.time().toPython(),
+            self.week_end_edit.time().toPython(), title, location)
 
 
 ROLE_TID = Qt.UserRole + 2
@@ -425,18 +425,10 @@ class ScheduleTab(QWidget):
                 max(0, self.week_grid.now_offset() - 140))
 
     def _set_week_label(self) -> None:
-        """导航行文本: 日期区间, 配置学期起点时附第几周, 学期外显示假期."""
-        end = self._monday + timedelta(days=6)
-        text = f"{self._monday.strftime('%m/%d')} - {end.strftime('%m/%d')}"
-        start = self.controller.semester_start()
-        if start:
-            week = semester_week(self._monday, start)
-            count = self.controller.semester_week_count()
-            if week < 1 or (count and week > count):
-                text += " · 假期"
-            else:
-                text += f" · 第 {week} 周"
-        self.week_label.setText(text)
+        """导航行文本由共享的 week_label 生成(GUI 与 CLI 一致)."""
+        self.week_label.setText(week_label(
+            self._monday, self.controller.semester_start(),
+            self.controller.semester_week_count()))
 
     def _render_todos(self, snapshot) -> None:
         """重建待办树. blockSignals 防止 setCheckState 触发 itemChanged."""

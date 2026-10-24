@@ -1,8 +1,15 @@
 """cli.py 单元测试: 子命令行为与退出码."""
 
+import os
+from copy import deepcopy
+
 import pytest
 
 from shuimu.cli import main
+from shuimu.config import DEFAULTS
+
+CAL_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures",
+                           "portal_calendar_sample.html")
 
 
 @pytest.fixture()
@@ -11,10 +18,32 @@ def db(tmp_path):
     return str(tmp_path / "cli.db")
 
 
-def run(capsys, db, *argv):
+@pytest.fixture()
+def sched(tmp_path, monkeypatch):
+    """独立的日程 YAML 路径(模板指向空文件, 隔离仓库模板)."""
+    tpl = tmp_path / "tpl.yaml"
+    tpl.write_text("todos: []\n", encoding="utf-8")
+    monkeypatch.setattr("shuimu.controller.template_schedule_path",
+                        lambda: str(tpl))
+    return str(tmp_path / "schedule.yaml")
+
+
+def run(capsys, db, *argv, schedule=None):
     """执行 CLI 并返回 (退出码, stdout)."""
-    code = main(["--db", db, *argv])
+    args = ["--db", db]
+    if schedule:
+        args += ["--schedule", schedule]
+    code = main([*args, *argv])
     return code, capsys.readouterr().out
+
+
+@pytest.fixture()
+def semester(monkeypatch):
+    """固定学期配置(第 1 周 = 2026-09-14, 共 18 周)供周数展开测试."""
+    cfg = deepcopy(DEFAULTS)
+    cfg["schedule"]["semester_start"] = "2026-09-14"
+    cfg["schedule"]["week_count"] = 18
+    monkeypatch.setattr("shuimu.controller.load_config", lambda: cfg)
 
 
 class TestCourseCommands:
@@ -130,3 +159,113 @@ class TestOrganizeCommand:
         assert (target / "文档" / "a.pdf").exists()
         _, log = run(capsys, db, "log")
         assert "organize" in log
+
+
+class TestScheduleCommands:
+    """日程子命令(与 GUI 同源动作)."""
+
+    def test_add_todo_and_list(self, capsys, db, sched):
+        """新建待办后列表可见, 逾期标注."""
+        code, out = run(capsys, db, "add-todo", "微积分作业",
+                        "--due", "2026-10-26", "--course", "微积分", schedule=sched)
+        assert code == 0 and "已添加待办" in out
+        code, out = run(capsys, db, "todos", schedule=sched)
+        assert code == 0 and "微积分作业" in out and "微积分" in out
+
+    def test_toggle_todo(self, capsys, db, sched):
+        """翻转完成状态."""
+        run(capsys, db, "add-todo", "任务", schedule=sched)
+        code, out = run(capsys, db, "toggle-todo", "1", schedule=sched)
+        assert code == 0 and "完成" in out
+        code, out = run(capsys, db, "todos", schedule=sched)
+        assert "[x]" in out
+
+    def test_import_schedule(self, capsys, db, sched):
+        """导入个人校历 html, 联排合并提示可见."""
+        code, out = run(capsys, db, "import-schedule", CAL_FIXTURE,
+                        schedule=sched)
+        assert code == 0 and "已导入课程 3 条" in out and "联排合并 1 处" in out
+        code, out = run(capsys, db, "schedule", "--date", "2026-10-26",
+                        schedule=sched)
+        assert "高等数学A(1)" in out and "AI 编程进阶" in out
+        assert "#1" in out  # 全局序号
+
+    @pytest.mark.usefixtures("semester")
+    def test_schedule_week_and_empty(self, capsys, db, sched):
+        """--week 按学期周显示, 空周提示."""
+        run(capsys, db, "add-event", "答疑", "--weekday", "3",
+            "--session", "1", "--weeks", "2", schedule=sched)
+        code, out = run(capsys, db, "schedule", "--week", "2", schedule=sched)
+        assert code == 0 and "第 2 周" in out and "答疑" in out
+        code, out = run(capsys, db, "schedule", "--week", "9", schedule=sched)
+        assert "本周无日程" in out
+
+    def test_add_event_date_mode(self, capsys, db, sched):
+        """按日期模式添加单次日程."""
+        code, out = run(capsys, db, "add-event", "组会",
+                        "--date", "2026-10-28", "--start", "14:00",
+                        "--end", "16:00", "--location", "实验室", schedule=sched)
+        assert code == 0 and "已添加手动日程 1 条" in out
+        code, out = run(capsys, db, "schedule", "--date", "2026-10-28",
+                        schedule=sched)
+        assert "组会" in out and "[手动]" in out
+
+    @pytest.mark.usefixtures("semester")
+    def test_add_event_week_mode_series(self, capsys, db, sched):
+        """按周数模式展开为系列并共享系列号."""
+        code, out = run(capsys, db, "add-event", "答疑", "--weekday", "3",
+                        "--session", "1", "--weeks", "1-3,5", schedule=sched)
+        assert code == 0 and "已添加手动日程 4 条(同系列" in out
+        code, out = run(capsys, db, "schedule", "--week", "1", schedule=sched)
+        assert "系列#" in out
+
+    def test_add_event_bad_args(self, capsys, db, sched):
+        """缺起止/结束早于开始/未选模式均退出码 2."""
+        code, _ = run(capsys, db, "add-event", "x", "--date", "2026-10-28",
+                      schedule=sched)
+        assert code == 2
+        code, _ = run(capsys, db, "add-event", "x", "--date", "2026-10-28",
+                      "--start", "10:00", "--end", "09:00", schedule=sched)
+        assert code == 2
+        code, _ = run(capsys, db, "add-event", "x", "--weekday", "2",
+                      "--start", "10:00", "--end", "11:00", schedule=sched)
+        assert code == 2  # 周数模式缺 --weeks
+
+    @pytest.mark.usefixtures("semester")
+    def test_edit_and_remove_event(self, capsys, db, sched):
+        """按序号修改与删除, --series 作用于整个系列."""
+        run(capsys, db, "add-event", "答疑", "--weekday", "3",
+            "--session", "1", "--weeks", "1-3", schedule=sched)
+        run(capsys, db, "add-event", "单次", "--date", "2026-10-26",
+            "--start", "10:00", "--end", "11:00", schedule=sched)
+        # #1-#3 系列, #4 单次; 改单次标题
+        code, out = run(capsys, db, "edit-event", "4", "--title", "改名",
+                        schedule=sched)
+        assert code == 0 and "已修改1 条" in out
+        code, out = run(capsys, db, "schedule", "--date", "2026-10-26",
+                        schedule=sched)
+        assert "改名" in out
+        # 整个系列改时间
+        code, out = run(capsys, db, "edit-event", "1", "--start",
+                        "19:20", "--end", "20:55", "--series", schedule=sched)
+        assert code == 0 and "系列 3 场" in out
+        # 删除整个系列
+        code, out = run(capsys, db, "rm-event", "1", "--series", schedule=sched)
+        assert code == 0 and "系列 3 场" in out
+        code, out = run(capsys, db, "schedule", "--week", "1", schedule=sched)
+        assert "答疑" not in out
+
+    def test_edit_event_bad_index(self, capsys, db, sched):
+        """序号越界退出码 2."""
+        code, _ = run(capsys, db, "edit-event", "9", "--title", "x",
+                      schedule=sched)
+        assert code == 2
+
+    def test_schedule_week_without_semester(self, capsys, db, sched,
+                                            monkeypatch):
+        """未配置学期起点时 --week 报错."""
+        cfg = deepcopy(DEFAULTS)
+        cfg["schedule"]["semester_start"] = ""
+        monkeypatch.setattr("shuimu.controller.load_config", lambda: cfg)
+        code, _ = run(capsys, db, "schedule", "--week", "3", schedule=sched)
+        assert code == 2

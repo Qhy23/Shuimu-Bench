@@ -20,6 +20,8 @@ import yaml
 HEADER = ("# 水木工作台日程数据(courses=导入课程, manual=手动事件, todos=待办).\n"
           "# 注意: GUI 保存会重写本文件, 手写注释会丢失.\n")
 
+WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
 # 6 大节标准时段(节次 -> 开始, 结束), 清华本科课表惯例
 SESSION_TIMES = {
     1: (time(8, 0), time(9, 35)),
@@ -275,6 +277,55 @@ def week_start(day: date) -> date:
 def semester_week(day: date, start: date) -> int:
     """学期周次 = (day - start) // 7 + 1. 负数原样返回."""
     return (day - start).days // 7 + 1
+
+
+def parse_week_list(text: str) -> list:
+    """解析周次参数(如 "1-8,11"), 返回升序去重列表; 非法抛 ValueError."""
+    weeks = set()
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            begin_raw, end_raw = part.split("-", 1)
+            begin, end = int(begin_raw), int(end_raw)
+            if begin < 1 or end < begin:
+                raise ValueError(f"周次区间非法: {part}")
+            weeks.update(range(begin, end + 1))
+        else:
+            week = int(part)
+            if week < 1:
+                raise ValueError(f"周次须为正整数: {part}")
+            weeks.add(week)
+    if not weeks:
+        raise ValueError("周次列表为空")
+    return sorted(weeks)
+
+
+def expand_weekly(semester_start, weeks, weekday, start, end,
+                  title, location="") -> list:
+    """按周数展开为逐次事件(GUI 添加对话框与 CLI add-event 共用).
+
+    第 w 周的周 weekday = semester_start + (w-1)*7 + (weekday-1) 天.
+    """
+    return [Event(semester_start + timedelta(days=(week - 1) * 7 + weekday - 1),
+                  start, end, title, location) for week in weeks]
+
+
+def week_label(monday, start, week_count: int) -> str:
+    """周标签: "MM/DD - MM/DD"; 配置学期起点时附 "第 N 周", 学期外附 "假期".
+
+    GUI 导航栏与 CLI schedule 输出共用.
+    """
+    end = monday + timedelta(days=6)
+    text = f"{monday.strftime('%m/%d')} - {end.strftime('%m/%d')}"
+    if start:
+        week = semester_week(monday, start)
+        if week < 1 or (week_count and week > week_count):
+            text += " · 假期"
+        else:
+            text += f" · 第 {week} 周"
+    return text
 
 
 def clamp_to_semester(monday: date, start: date, week_count: int) -> date:

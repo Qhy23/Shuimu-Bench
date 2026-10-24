@@ -277,5 +277,6 @@ class TestManualActions:
         assert ctl.schedule_snapshot().manual == []
 
     def test_remove_event_not_found(self, ctl):
+        """定位不到条目返回失败."""
         ghost = self._event(26)
         assert not ctl.remove_event("manual", ghost).ok
