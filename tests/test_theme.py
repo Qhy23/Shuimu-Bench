@@ -9,7 +9,8 @@ class TestTokens:
     def test_colors_are_hex(self):
         """配色均为合法 hex 颜色."""
         for name in ("PRIMARY", "PRIMARY_LIGHT", "PRIMARY_DARK", "BG_BASE",
-                     "BG_PANEL", "BG_HOVER", "FG_TEXT", "FG_DIM", "BORDER"):
+                     "BG_PANEL", "BG_HOVER", "FG_TEXT", "FG_DIM", "BORDER",
+                     "DANGER", "ACCENT"):
             value = getattr(theme, name)
             assert value.startswith("#") and len(value) == 7, name
 
@@ -66,3 +67,19 @@ class TestScaling:
         assert "font-size: 16px" in qapp.styleSheet()
         theme.apply_theme(qapp)  # 恢复默认, 避免影响其他测试
         assert theme.current_font_px() == 13
+
+
+class TestGradientTheme:
+    """渐变轻质感主题."""
+
+    def test_qss_contains_gradients(self):
+        """QSS 含渐变与主按钮层级."""
+        qss = theme.build_qss(13)
+        assert "qlineargradient" in qss
+        assert 'QPushButton[primary="true"]' in qss
+        assert "border-left: 3px solid" in qss  # 周历卡片强调条
+
+    def test_gradient_tokens_reference_colors(self):
+        """渐变 token 由色板 token 组合而来."""
+        assert theme.PRIMARY in theme.GRADIENT_PRIMARY
+        assert theme.ACCENT in theme.build_qss()  # 手动卡片强调色

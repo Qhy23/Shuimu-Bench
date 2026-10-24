@@ -19,6 +19,19 @@ BORDER = "#3a3a4e"         # 边框
 DANGER = "#e5484d"         # 警示: 逾期/失败
 RADIUS = "8px"
 FONT_FAMILY = '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
+ACCENT = "#3fc1a9"        # 手动日程强调色(青绿)
+
+# 渐变 token(QSS qlineargradient 串): 半透明为 alpha 叠色模拟, Qt Widgets
+# 无背景模糊(backdrop blur)
+GRADIENT_PRIMARY = ("qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+                    f" stop:0 {PRIMARY}, stop:1 {PRIMARY_LIGHT})")
+GRADIENT_PRIMARY_HOVER = ("qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+                          f" stop:0 {PRIMARY_LIGHT}, stop:1 #a44db5)")
+GRADIENT_TITLEBAR = ("qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                     f" stop:0 {PRIMARY_DARK}, stop:1 {PRIMARY})")
+GRADIENT_CARD = ("qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                 f" stop:0 {BG_PANEL}, stop:1 #2b2b3e)")
+PANEL_ALPHA = "rgba(38, 38, 55, 205)"
 
 DEFAULT_FONT_PX = 13
 MIN_FONT_PX = 9
@@ -71,6 +84,21 @@ QTreeWidget::item, QTreeView::item {{
     padding: {pad(4)} {pad(2)};
     border-radius: 4px;
 }}
+QLineEdit:focus, QTreeWidget:focus, QTreeView:focus, QTableWidget:focus,
+QPlainTextEdit:focus, QComboBox:focus, QDateEdit:focus, QTimeEdit:focus {{
+    border: 1px solid {PRIMARY_LIGHT};
+}}
+QComboBox, QDateEdit, QTimeEdit, QSpinBox {{
+    background-color: {BG_PANEL};
+    border: 1px solid {BORDER};
+    border-radius: {RADIUS};
+    padding: {pad(3)} {pad(6)};
+}}
+QComboBox QAbstractItemView {{
+    background-color: {BG_PANEL};
+    border: 1px solid {BORDER};
+    selection-background-color: {PRIMARY};
+}}
 QTreeWidget::item:hover, QTreeView::item:hover {{
     background-color: {BG_HOVER};
 }}
@@ -85,19 +113,32 @@ QHeaderView::section {{
     padding: {pad(4)} {pad(6)};
 }}
 QPushButton {{
-    background-color: {BG_PANEL};
+    background-color: transparent;
     border: 1px solid {BORDER};
     border-radius: {RADIUS};
     padding: {pad(5)} {pad(14)};
 }}
 QPushButton:hover {{
-    background-color: {PRIMARY_LIGHT};
     border-color: {PRIMARY_LIGHT};
+    color: {FG_TEXT};
 }}
 QPushButton:pressed {{
+    background-color: {BG_HOVER};
+}}
+QPushButton[primary="true"] {{
+    background-color: {GRADIENT_PRIMARY};
+    border: none;
+    color: {FG_TEXT};
+    font-weight: 600;
+}}
+QPushButton[primary="true"]:hover {{
+    background-color: {GRADIENT_PRIMARY_HOVER};
+}}
+QPushButton[primary="true"]:pressed {{
     background-color: {PRIMARY_DARK};
 }}
 QTabWidget::pane {{
+    background-color: {PANEL_ALPHA};
     border: 1px solid {BORDER};
     border-radius: {RADIUS};
     top: -1px;
@@ -182,10 +223,14 @@ QFrame#daycol-today {{
     background-color: {BG_HOVER};
     border: 1px solid {PRIMARY};
 }}
-QFrame#slotcard {{
-    background-color: {BG_PANEL};
+QFrame#slotcard, QFrame#slotcard-manual {{
+    background-color: {GRADIENT_CARD};
     border: 1px solid {BORDER};
+    border-left: 3px solid {PRIMARY};
     border-radius: 6px;
+}}
+QFrame#slotcard-manual {{
+    border-left-color: {ACCENT};
 }}
 QLabel#dayhead {{
     color: {FG_DIM};

@@ -203,7 +203,7 @@ class WeekGridWidget(QWidget):
     def _make_card(self, entry: DayEntry) -> QFrame:
         """一张条目卡片: 时段/标题/地点三行, 悬停提示完整信息."""
         card = QFrame(self)
-        card.setObjectName("slotcard")
+        card.setObjectName("slotcard-manual" if entry.is_manual else "slotcard")
         layout = QVBoxLayout(card)
         layout.setContentsMargins(self._m.card_mh, self._m.card_mv,
                                   self._m.card_mh, self._m.card_mv)

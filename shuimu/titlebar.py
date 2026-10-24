@@ -46,7 +46,7 @@ class TitleBar(QWidget):
         self.setFixedHeight(self.HEIGHT)
         self.setStyleSheet(
             _BUTTON_STYLE
-            + f"QWidget{{background-color:{theme.BG_PANEL};"
+            + f"QWidget{{background-color:{theme.GRADIENT_TITLEBAR};"
               f"border-top-left-radius:{theme.RADIUS};"
               f"border-top-right-radius:{theme.RADIUS};}}")
 

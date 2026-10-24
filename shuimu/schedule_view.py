@@ -359,6 +359,8 @@ class ScheduleTab(QWidget):
         self.today_btn = QPushButton("回到今天", panel)
         self.import_btn = QPushButton("导入课程...", panel)
         self.add_btn = QPushButton("添加日程...", panel)
+        for btn in (self.import_btn, self.add_btn):
+            btn.setProperty("primary", True)
         self.week_label = QLabel("", panel)
         self.week_label.setObjectName("dayhead")
         prev_btn.clicked.connect(lambda: self._shift_week(-1))
@@ -390,6 +392,7 @@ class ScheduleTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         row = QHBoxLayout()
         add_btn = QPushButton("新建待办", panel)
+        add_btn.setProperty("primary", True)
         add_btn.clicked.connect(self._add_todo)
         row.addWidget(add_btn)
         row.addStretch(1)
