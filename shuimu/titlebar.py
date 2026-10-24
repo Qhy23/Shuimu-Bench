@@ -54,12 +54,12 @@ class TitleBar(QWidget):
         layout.setContentsMargins(10, 0, 4, 0)
         layout.setSpacing(2)
 
-        logo = QLabel(self)
-        logo.setPixmap(artwork.bench_icon(self.HEIGHT - 14))
-        logo.setStyleSheet("background:transparent;")
+        self.logo = QLabel(self)
+        self.logo.setPixmap(artwork.bench_icon(self._logo_size_px()))
+        logo = self.logo
         layout.addWidget(logo)
         label = QLabel(title, self)
-        label.setStyleSheet(f"color:{theme.FG_TEXT}; background:transparent;")
+        label.setObjectName("apptitle")
         layout.addWidget(label)
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Expanding,
                                    QSizePolicy.Minimum))
@@ -76,6 +76,14 @@ class TitleBar(QWidget):
         for btn in (self.btn_min, self.btn_max, self.btn_close):
             btn.setFixedSize(40, self.HEIGHT - 8)
             layout.addWidget(btn)
+
+    def _logo_size_px(self) -> int:
+        """logo 边长随全局字号(夹取 16-34)."""
+        return int(max(16, min(34, round(theme.current_font_px() * 1.7))))
+
+    def set_font_px(self, _font_px: int) -> None:
+        """随全局字号更新 logo 尺寸(尺寸读 theme 当前值, 参数保持接口一致)."""
+        self.logo.setPixmap(artwork.bench_icon(self._logo_size_px()))
 
     def _make_button(self, text: str, slot, object_name: str = "") -> QPushButton:
         """创建标题栏按钮."""

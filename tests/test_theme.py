@@ -83,3 +83,22 @@ class TestGradientTheme:
         """渐变 token 由色板 token 组合而来."""
         assert theme.PRIMARY in theme.GRADIENT_PRIMARY
         assert theme.ACCENT in theme.build_qss()  # 手动卡片强调色
+
+
+class TestTypographyHierarchy:
+    """文字三级层次(对齐 thu-info-app 阶梯)."""
+
+    def test_hierarchy_sizes_in_qss(self):
+        """title/body/caption 三级字号与等宽字体进入 QSS."""
+        qss = theme.build_qss(16)
+        assert "font-size: 22px" in qss  # title = round(16*1.35)
+        assert "font-size: 16px" in qss  # body
+        assert "font-size: 14px" in qss  # caption = round(16*0.85)
+        assert "JetBrainsMono NFM" in qss
+        assert "QLabel#apptitle" in qss
+        assert "QLabel#cardtime" in qss
+
+    def test_hierarchy_scales(self):
+        """分级随缩放联动."""
+        assert "font-size: 18px" in theme.build_qss(13)   # title 13*1.35
+        assert "font-size: 11px" in theme.build_qss(13)   # caption 0.85

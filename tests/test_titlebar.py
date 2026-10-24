@@ -2,6 +2,7 @@
 
 from PySide6.QtWidgets import QLabel, QMainWindow
 
+from shuimu import theme
 from shuimu.titlebar import TitleBar
 
 
@@ -24,3 +25,17 @@ def test_title_in_label(qtbot):
     title_bar = TitleBar(win, "水木工作台")
     labels = title_bar.findChildren(QLabel)
     assert any(lbl.text() == "水木工作台" for lbl in labels)
+
+
+def test_titlebar_logo_scales_with_font(qtbot):
+    """logo 尺寸随全局字号更新."""
+    win = QMainWindow()
+    qtbot.addWidget(win)
+    theme.apply_theme(win, 13)
+    title_bar = TitleBar(win, "标题")
+    small = title_bar.logo.pixmap().width()
+    theme.apply_theme(win, 20)  # 真实链路: 先全局后联动
+    title_bar.set_font_px(20)
+    big = title_bar.logo.pixmap().width()
+    assert 16 <= small < big
+    theme.apply_theme(win, 13)

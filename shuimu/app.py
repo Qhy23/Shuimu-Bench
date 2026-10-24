@@ -146,7 +146,7 @@ class MainWindow(QMainWindow):
         """关于对话框: logo + 版本 + 课程信息."""
         box = QMessageBox(self)
         box.setWindowTitle("关于")
-        box.setIconPixmap(artwork.bench_icon(64))
+        box.setIconPixmap(artwork.bench_icon(theme.current_font_px() * 5))
         box.setText(f"水木工作台 ShuimuBench v{APP_VERSION}")
         box.setInformativeText(
             "本地优先的课程学习工作台\n"
@@ -188,6 +188,7 @@ class MainWindow(QMainWindow):
         """应用全局字号: 刷新 QSS 并联动自绘部件."""
         theme.apply_theme(QApplication.instance(), font_px)
         self.schedule_tab.set_font_px(theme.current_font_px())
+        self.title_bar.set_font_px(theme.current_font_px())
         if not quiet:
             self.statusBar().showMessage(
                 f"字号 {theme.current_font_px()}px (Ctrl+0 重置)")

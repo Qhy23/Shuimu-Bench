@@ -241,6 +241,7 @@ class WeekGridWidget(QWidget):
         layout.setSpacing(0)
         end_text = entry.end.strftime("%H:%M") if entry.end else ""
         time_label = QLabel(f"{entry.start.strftime('%H:%M')}-{end_text}", card)
+        time_label.setObjectName("cardtime")
         title_label = QLabel(entry.title, card)
         title_label.setObjectName("cardtitle")
         title_label.setWordWrap(True)
@@ -248,6 +249,7 @@ class WeekGridWidget(QWidget):
         layout.addWidget(title_label)
         if entry.location:
             location_label = QLabel(entry.location, card)
+            location_label.setObjectName("cardloc")
             location_label.setWordWrap(True)
             layout.addWidget(location_label)
         card.setToolTip(f"{entry.title}\n{time_label.text()}"
@@ -281,6 +283,8 @@ class WeekGridWidget(QWidget):
     def _draw_axis(self, painter) -> None:
         """左侧小时刻度文字与横向网格线."""
         axis_font = QFont(self.font())
+        axis_font.setFamilies(["JetBrainsMono NFM", "DejaVu Sans Mono",
+                               "monospace"])
         axis_font.setPixelSize(self._m.axis_px)
         painter.setFont(axis_font)
         hour_step = self._m.ppm * 60

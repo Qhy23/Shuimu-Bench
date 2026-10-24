@@ -19,6 +19,7 @@ BORDER = "#3a3a4e"         # 边框
 DANGER = "#e5484d"         # 警示: 逾期/失败
 RADIUS = "8px"
 FONT_FAMILY = '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
+MONO_FAMILY = '"JetBrainsMono NFM", "DejaVu Sans Mono", monospace'
 ACCENT = "#3fc1a9"        # 手动日程强调色(青绿)
 
 # 渐变 token(QSS qlineargradient 串): 半透明为 alpha 叠色模拟, Qt Widgets
@@ -63,6 +64,10 @@ def build_qss(font_px: int = DEFAULT_FONT_PX) -> str:
     def pad(base: int) -> str:
         """文字邻近内边距按 k 缩放, 下限 2px."""
         return f"{max(2, round(base * k))}px"
+
+    # 文字三级(对齐 thu-info-app 的 title/body/caption 阶梯)
+    title_px = round(font_px * 1.35)
+    caption_px = max(9, round(font_px * 0.85))
 
     return f"""
 * {{
@@ -111,6 +116,7 @@ QHeaderView::section {{
     border: none;
     border-bottom: 1px solid {BORDER};
     padding: {pad(4)} {pad(6)};
+    font-size: {caption_px}px;
 }}
 QPushButton {{
     background-color: transparent;
@@ -175,6 +181,7 @@ QStatusBar {{
     background-color: {BG_BASE};
     color: {FG_DIM};
     border-top: 1px solid {BORDER};
+    font-size: {caption_px}px;
 }}
 QScrollBar:vertical {{
     background: transparent;
@@ -232,14 +239,32 @@ QFrame#slotcard, QFrame#slotcard-manual {{
 QFrame#slotcard-manual {{
     border-left-color: {ACCENT};
 }}
+QLabel#apptitle {{
+    color: {FG_TEXT};
+    background: transparent;
+    font-weight: 600;
+    font-size: {title_px}px;
+}}
 QLabel#dayhead {{
     color: {FG_DIM};
     background: transparent;
     font-weight: 600;
+    font-size: {title_px}px;
 }}
 QLabel#cardtitle {{
     color: {FG_TEXT};
     background: transparent;
+}}
+QLabel#cardtime {{
+    color: {FG_DIM};
+    background: transparent;
+    font-family: {MONO_FAMILY};
+    font-size: {caption_px}px;
+}}
+QLabel#cardloc {{
+    color: {FG_DIM};
+    background: transparent;
+    font-size: {caption_px}px;
 }}
 QLabel#warnbar {{
     color: {DANGER};
