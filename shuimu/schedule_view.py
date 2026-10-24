@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import artwork, theme
 from .controller import Controller
 from .schedule import (
     SESSION_TIMES,
@@ -402,6 +402,21 @@ class ScheduleTab(QWidget):
         self.todo_tree.setRootIsDecorated(False)
         self.todo_tree.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.todo_tree)
+
+        self.todo_empty = QWidget(self.todo_tree)
+        self.todo_empty.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        empty_layout = QVBoxLayout(self.todo_empty)
+        empty_layout.setContentsMargins(0, 0, 0, 0)
+        picture = QLabel(self.todo_empty)
+        picture.setPixmap(artwork.faint_bench(90))
+        picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        caption = QLabel("没有待办, 享受清闲", self.todo_empty)
+        caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addStretch(1)
+        empty_layout.addWidget(picture)
+        empty_layout.addWidget(caption)
+        empty_layout.addStretch(1)
         return panel
 
     # ---- 渲染 ----
@@ -438,6 +453,7 @@ class ScheduleTab(QWidget):
         today = date.today()
         self.todo_tree.blockSignals(True)
         self.todo_tree.clear()
+        self.todo_empty.setParent(self.todo_tree)
         for todo in sorted_todos(snapshot.todos):
             status = todo_status(todo, today)
             item = QTreeWidgetItem([todo.title, "", todo.course])
@@ -459,6 +475,9 @@ class ScheduleTab(QWidget):
                 item.setForeground(0, QBrush(QColor(theme.FG_DIM)))
             self.todo_tree.addTopLevelItem(item)
         self.todo_tree.blockSignals(False)
+        self.todo_empty.resize(self.todo_tree.viewport().size())
+        self.todo_empty.setVisible(self.todo_tree.topLevelItemCount() == 0)
+        self.todo_empty.raise_()
 
     # ---- 界面联动 ----
 

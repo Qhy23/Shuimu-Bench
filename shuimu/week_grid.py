@@ -15,7 +15,7 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
-from . import theme
+from . import artwork, theme
 from .schedule import WEEKDAY_NAMES, DayEntry, week_start
 
 AXIS_W = 44            # 左侧时刻轴宽(px)
@@ -147,8 +147,35 @@ class WeekGridWidget(QWidget):
         self._m = _metrics_for(theme.current_font_px())
         self.setMinimumSize(self._m.axis_w + DAY_COUNT * self._m.col_min_w,
                             int(self._m.header_h + DAY_MINUTES * self._m.ppm))
+        self._empty = self._build_empty_hint()
 
     # ---- 数据接口 ----
+
+    def _build_empty_hint(self) -> QWidget:
+        """空周占位: 半透明长椅 + 提示文字, 居中覆盖在网格上."""
+        holder = QWidget(self)
+        holder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout = QVBoxLayout(holder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        picture = QLabel(holder)
+        picture.setPixmap(artwork.faint_bench(110))
+        picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        caption = QLabel("这一周没有日程", holder)
+        caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addStretch(1)
+        layout.addWidget(picture)
+        layout.addWidget(caption)
+        layout.addStretch(1)
+        holder.hide()
+        return holder
+
+    def _place_empty_hint(self) -> None:
+        """空周占位居中."""
+        size = self._empty.sizeHint()
+        self._empty.setGeometry(
+            (self.width() - size.width()) // 2,
+            (self.height() + self._m.header_h - size.height()) // 2,
+            size.width(), size.height())
 
     def set_week(self, monday: date, days: dict) -> None:
         """设置显示周与各天条目, 重建卡片."""
@@ -163,6 +190,10 @@ class WeekGridWidget(QWidget):
                 self._cards.append((card, entry, weekday))
         for card, _entry, _weekday in self._cards:
             card.show()
+        self._empty.setVisible(
+            not any(entries for entries in self._days.values()))
+        self._place_empty_hint()
+        self._empty.raise_()
         self._relayout()
         self.update()
 
@@ -241,8 +272,9 @@ class WeekGridWidget(QWidget):
                         break
 
     def resizeEvent(self, _event) -> None:
-        """尺寸变化时重排卡片."""
+        """尺寸变化时重排卡片与空态占位."""
         self._relayout()
+        self._place_empty_hint()
 
     # ---- 自绘 ----
 

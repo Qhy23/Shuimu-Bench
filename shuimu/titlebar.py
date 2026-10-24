@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import artwork, theme
 
 _BUTTON_STYLE = f"""
 QPushButton {{
@@ -39,7 +39,7 @@ class TitleBar(QWidget):
 
     HEIGHT = 36
 
-    def __init__(self, window, title: str):
+    def __init__(self, window, title: str, on_about=None):
         super().__init__(window)
         self._window = window
         self._drag_pos = None
@@ -54,11 +54,20 @@ class TitleBar(QWidget):
         layout.setContentsMargins(10, 0, 4, 0)
         layout.setSpacing(2)
 
+        logo = QLabel(self)
+        logo.setPixmap(artwork.bench_icon(self.HEIGHT - 14))
+        logo.setStyleSheet("background:transparent;")
+        layout.addWidget(logo)
         label = QLabel(title, self)
         label.setStyleSheet(f"color:{theme.FG_TEXT}; background:transparent;")
         layout.addWidget(label)
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Expanding,
                                    QSizePolicy.Minimum))
+
+        if on_about is not None:
+            about_btn = self._make_button("?", on_about)
+            about_btn.setFixedSize(32, self.HEIGHT - 8)
+            layout.addWidget(about_btn)
 
         self.btn_min = self._make_button("—", self._window.showMinimized)
         self.btn_max = self._make_button("▢", self._toggle_max_restore)

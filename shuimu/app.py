@@ -11,7 +11,7 @@ import subprocess
 import time
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QBrush, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import QBrush, QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import APP_VERSION, artwork, theme
 from .config import font_size_value
 from .controller import KIND_LABEL, Controller
 from .paths import default_workspace_root
@@ -120,7 +120,9 @@ class MainWindow(QMainWindow):
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
-        self.title_bar = TitleBar(self, self.ctl.config["app"]["title"])
+        self.title_bar = TitleBar(self, self.ctl.config["app"]["title"],
+                                  on_about=self._show_about)
+        self.setWindowIcon(QIcon(artwork.bench_icon(256)))
         container_layout.addWidget(self.title_bar)
 
         self.splitter = QSplitter(container)
@@ -139,6 +141,17 @@ class MainWindow(QMainWindow):
         self.reload_courses()
         self.refresh_log()
         self.statusBar().showMessage("就绪")
+
+    def _show_about(self) -> None:
+        """关于对话框: logo + 版本 + 课程信息."""
+        box = QMessageBox(self)
+        box.setWindowTitle("关于")
+        box.setIconPixmap(artwork.bench_icon(64))
+        box.setText(f"水木工作台 ShuimuBench v{APP_VERSION}")
+        box.setInformativeText(
+            "本地优先的课程学习工作台\n"
+            "清华大学《AI 编程进阶: 方法与实践》课程项目")
+        box.exec()
 
     # ---- 界面缩放 ----
 
@@ -299,6 +312,7 @@ class MainWindow(QMainWindow):
         for course in self.storage.list_courses():
             node = QTreeWidgetItem(self.course_tree, [course["name"]])
             node.setData(0, ROLE_COURSE_ID, course["id"])
+            node.setIcon(0, QIcon(artwork.kind_icon("course")))
             for res in self.storage.list_resources(course["id"]):
                 exists, changed = Storage.check_resource(res)
                 label = "[" + KIND_LABEL[res["kind"]] + "] " + res["display_name"]
@@ -308,6 +322,8 @@ class MainWindow(QMainWindow):
                     label += " (已变更)"
                 item = QTreeWidgetItem(node, [label])
                 item.setData(0, ROLE_RESOURCE_ID, res["id"])
+                item.setIcon(0, QIcon(artwork.kind_icon(res["kind"],
+                                                        failed=not exists)))
                 if not exists:
                     item.setForeground(0, QBrush(Qt.GlobalColor.gray))
             node.setExpanded(True)
