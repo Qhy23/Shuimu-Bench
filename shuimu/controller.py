@@ -105,6 +105,14 @@ class Controller:
                                    path_snapshot=res["path_or_url"])
         return ActionResult(True, f"已移除 #{resource_id}")
 
+    def search_resources(self, keyword: str) -> ActionResult:
+        """跨课程搜索资源(只读, 不留痕). detail["rows"] 为匹配行, 含 course_name."""
+        keyword = keyword.strip()
+        if not keyword:
+            return ActionResult(False, "关键词不能为空")
+        rows = self.storage.search_resources(keyword)
+        return ActionResult(True, f"找到 {len(rows)} 条匹配", {"rows": rows})
+
     def preview_organize(self, directory: str) -> ActionResult:
         """生成整理计划(不落盘). detail["plan"] 为 MoveItem 列表.
 

@@ -91,6 +91,78 @@ class TestResourceCommands:
         assert f.exists()  # 磁盘文件不动
 
 
+class TestSearchCommand:
+    """search 子命令."""
+
+    def test_search_by_name_and_path(self, capsys, db, tmp_path):
+        """按显示名与路径子串命中, 输出含课程名/类型/完整路径(含空格)."""
+        run(capsys, db, "add-course", "高等数学")
+        f1 = tmp_path / "machine_learning.pdf"
+        f1.write_text("x")
+        run(capsys, db, "add", "2", str(f1))
+        d = tmp_path / "课件 2026"
+        d.mkdir()
+        f2 = d / "lecture notes.pdf"
+        f2.write_text("x")
+        run(capsys, db, "add", "1", str(f2))  # #1 为默认"未分组"
+        code, out = run(capsys, db, "search", "learning")
+        assert code == 0 and "[文件]" in out and "高等数学" in out
+        code, out = run(capsys, db, "search", "课件 2026")
+        assert code == 0 and "lecture notes.pdf" in out and "未分组" in out
+        assert str(f2) in out  # 路径含空格完整显示
+
+    def test_search_case_insensitive(self, capsys, db, tmp_path):
+        """英文关键词大小写不敏感."""
+        f = tmp_path / "Report.PDF"
+        f.write_text("x")
+        run(capsys, db, "add", "1", str(f))
+        code, out = run(capsys, db, "search", "report.pdf")
+        assert code == 0 and "Report.PDF" in out
+
+    def test_search_wildcards_literal(self, capsys, db, tmp_path):
+        """% 与 _ 按字面匹配, 不当通配符."""
+        for name in ("100%_done.txt", "100x_done.txt",
+                     "my notes.txt", "my_notes.txt"):
+            f = tmp_path / name
+            f.write_text("x")
+            run(capsys, db, "add", "1", str(f))
+        code, out = run(capsys, db, "search", "100%")
+        assert code == 0 and "100%_done.txt" in out
+        assert "100x_done.txt" not in out
+        code, out = run(capsys, db, "search", "my_notes")
+        assert code == 0 and "my_notes.txt" in out
+        assert "my notes.txt" not in out
+
+    def test_search_link_and_stale(self, capsys, db, tmp_path):
+        """链接与失效资源可被搜到, 状态分别为 ok 与失效."""
+        run(capsys, db, "add", "1", "https://learn.tsinghua.edu.cn/wiki")
+        f = tmp_path / "stale.txt"
+        f.write_text("x")
+        run(capsys, db, "add", "1", str(f))
+        f.unlink()
+        code, out = run(capsys, db, "search", "tsinghua")
+        assert code == 0 and "[链接]" in out and "learn.tsinghua.edu.cn" in out
+        code, out = run(capsys, db, "search", "stale")
+        assert code == 0 and "失效" in out and str(f) in out
+
+    def test_search_no_results(self, capsys, db):
+        """无结果给友好提示, 退出码 0."""
+        code, out = run(capsys, db, "search", "不存在的关键词")
+        assert code == 0 and "没有匹配" in out
+
+    def test_search_empty_keyword_rejected(self, capsys, db):
+        """空关键词报错到 stderr, 退出码 2."""
+        code = main(["--db", db, "search", ""])
+        captured = capsys.readouterr()
+        assert code == 2 and "关键词不能为空" in captured.err
+
+    def test_search_missing_keyword_rejected(self, db):
+        """缺关键词参数走 argparse 报错, 退出码 2(非 traceback)."""
+        with pytest.raises(SystemExit) as exc:
+            main(["--db", db, "search"])
+        assert exc.value.code == 2
+
+
 class TestDeleteCourseCommand:
     """del-course 子命令."""
 

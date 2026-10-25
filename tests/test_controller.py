@@ -96,6 +96,41 @@ class TestResourceActions:
         assert f.exists()
 
 
+class TestSearchActions:
+    """跨课程搜索动作(只读)."""
+
+    def test_search_rows_with_course_name(self, ctl, tmp_path):
+        """命中行带课程名, 消息含数量."""
+        cid = ctl.add_course("物理").detail["course_id"]
+        default = ctl.storage.list_courses()[0]["id"]
+        f1 = tmp_path / "lecture.txt"
+        f1.write_text("x")
+        d = tmp_path / "实验数据"
+        d.mkdir()
+        f2 = d / "raw.csv"
+        f2.write_text("x")
+        ctl.add_resource(cid, str(f1))
+        ctl.add_resource(default, str(f2))
+        result = ctl.search_resources("实验")
+        assert result.ok and "找到 1 条匹配" in result.message
+        rows = result.detail["rows"]
+        assert len(rows) == 1 and rows[0]["course_name"] == "未分组"
+
+    def test_search_read_only(self, ctl, tmp_path):
+        """搜索不新增操作留痕."""
+        cid = ctl.storage.list_courses()[0]["id"]
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        ctl.add_resource(cid, str(f))
+        before = len(ctl.storage.list_operations())
+        assert ctl.search_resources("a.txt").ok
+        assert len(ctl.storage.list_operations()) == before
+
+    def test_search_blank_keyword(self, ctl):
+        """空白关键词返回失败."""
+        assert not ctl.search_resources("   ").ok
+
+
 class TestOrganizeActions:
     """整理动作."""
 

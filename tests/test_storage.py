@@ -107,6 +107,62 @@ class TestResource:
         assert exists
 
 
+class TestSearchResources:
+    """跨课程关键词搜索."""
+
+    def test_match_name_or_path(self, storage, course_id, tmp_path):
+        """显示名或路径任一含关键词即命中, 结果带课程名."""
+        other = storage.add_course("人工智能")
+        f1 = tmp_path / "machine_learning.pdf"
+        f1.write_text("x")
+        deep = tmp_path / "deep"
+        deep.mkdir()
+        f2 = deep / "notes.txt"
+        f2.write_text("x")
+        storage.add_resource(course_id, "file", str(f1))
+        storage.add_resource(other, "file", str(f2))
+        rows = storage.search_resources("learning")
+        assert [r["display_name"] for r in rows] == ["machine_learning.pdf"]
+        rows = storage.search_resources("deep")
+        assert [r["display_name"] for r in rows] == ["notes.txt"]  # 仅路径命中
+        assert rows[0]["course_name"] == "人工智能"
+
+    def test_case_insensitive(self, storage, course_id, tmp_path):
+        """英文匹配不区分大小写."""
+        f = tmp_path / "Report.PDF"
+        f.write_text("x")
+        storage.add_resource(course_id, "file", str(f))
+        assert len(storage.search_resources("report")) == 1
+        assert len(storage.search_resources("PDF")) == 1
+
+    def test_like_wildcards_literal(self, storage, course_id, tmp_path):
+        """% 与 _ 按字面匹配, 不当通配符."""
+        for name in ("100%_done.txt", "100x_done.txt",
+                     "my notes.txt", "my_notes.txt"):
+            f = tmp_path / name
+            f.write_text("x")
+            storage.add_resource(course_id, "file", str(f))
+        rows = storage.search_resources("100%")
+        assert [r["display_name"] for r in rows] == ["100%_done.txt"]
+        rows = storage.search_resources("my_notes")
+        assert [r["display_name"] for r in rows] == ["my_notes.txt"]
+
+    def test_missing_and_link_searchable(self, storage, course_id, tmp_path):
+        """失效资源与链接均可被搜到."""
+        f = tmp_path / "gone.txt"
+        f.write_text("x")
+        rid = storage.add_resource(course_id, "file", str(f))
+        storage.add_resource(course_id, "link", "https://learn.tsinghua.edu.cn")
+        f.unlink()
+        rows = storage.search_resources("gone")
+        assert [r["id"] for r in rows] == [rid]
+        assert len(storage.search_resources("tsinghua")) == 1
+
+    def test_no_match(self, storage):
+        """无命中返回空列表."""
+        assert storage.search_resources("不存在的关键词") == []
+
+
 class TestDeleteCourse:
     """删除课程: 级联移除资源索引, 磁盘文件不动."""
 

@@ -139,6 +139,25 @@ class Storage:
             "SELECT * FROM resources WHERE course_id = ? ORDER BY added_at", (course_id,)
         ).fetchall()
 
+    def search_resources(self, keyword: str) -> list:
+        """跨课程按子串搜索资源, display_name 或 path_or_url 任一命中即匹配.
+
+        大小写不敏感(仅 ASCII 字母); 关键词中的 % 与 _ 按字面处理
+        (LIKE ... ESCAPE 转义), 失效资源照常返回. 结果行含课程名
+        (course_name 列), 按加入时间与 id 排序.
+        """
+        esc = (keyword.replace("\\", "\\\\")
+               .replace("%", "\\%").replace("_", "\\_"))
+        pattern = f"%{esc}%"
+        return self._conn.execute(
+            "SELECT r.*, c.name AS course_name"
+            " FROM resources r JOIN courses c ON c.id = r.course_id"
+            " WHERE r.display_name LIKE ? ESCAPE '\\'"
+            " OR r.path_or_url LIKE ? ESCAPE '\\'"
+            " ORDER BY r.added_at, r.id",
+            (pattern, pattern),
+        ).fetchall()
+
     @staticmethod
     def check_resource(row: sqlite3.Row) -> tuple:
         """懒校验: 返回 (是否存在, 内容是否变更). 链接恒为 (True, False)."""

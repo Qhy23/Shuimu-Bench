@@ -8,6 +8,7 @@
   python cli.py add-course 高等数学
   python cli.py add 1 /path/to/file.pdf
   python cli.py resources 1
+  python cli.py search 关键词
   python cli.py organize ./downloads --yes
   python cli.py schedule --week 6
   python cli.py add-todo 微积分作业 --due 2026-10-26
@@ -64,6 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_rm = sub.add_parser("remove", help="按 id 从索引移除资源(不动磁盘)")
     p_rm.add_argument("resource_id", type=int)
+
+    p_search = sub.add_parser("search", help="跨课程搜索资源(子串, 大小写不敏感)")
+    p_search.add_argument("keyword", help="子串关键词, 匹配显示名或路径/URL")
 
     p_org = sub.add_parser("organize", help="整理目录: 默认只预览, --yes 才执行")
     p_org.add_argument("directory")
@@ -124,6 +128,12 @@ def _build_schedule_subcommands(sub) -> None:
     p_rm.add_argument("--series", action="store_true", help="删除整个系列")
 
 
+def _resource_status(row) -> str:
+    """资源状态标签: 失效/已变更/ok."""
+    exists, changed = Storage.check_resource(row)
+    return "失效" if not exists else ("已变更" if changed else "ok")
+
+
 def _print_resources(storage: Storage, course_id=None) -> None:
     """打印资源列表; course_id 为 None 时遍历全部课程."""
     courses = storage.list_courses()
@@ -132,10 +142,26 @@ def _print_resources(storage: Storage, course_id=None) -> None:
     for cid in ids:
         print(f"== 课程 {cid} {names.get(cid, '(未知)')} ==")
         for res in storage.list_resources(cid):
-            exists, changed = Storage.check_resource(res)
-            status = "失效" if not exists else ("已变更" if changed else "ok")
             print(f"  #{res['id']} [{KIND_LABEL[res['kind']]}] {res['display_name']}"
-                  f" | {status} | {res['path_or_url']}")
+                  f" | {_resource_status(res)} | {res['path_or_url']}")
+
+
+def _cmd_search(ctl: Controller, args) -> int:
+    """search 子命令: 跨课程按关键词找资源, 每行含课程名/类型/名称/状态/路径."""
+    result = ctl.search_resources(args.keyword)
+    if not result.ok:
+        return _emit(result)
+    rows = result.detail["rows"]
+    keyword = args.keyword.strip()
+    if not rows:
+        print(f"没有匹配 \"{keyword}\" 的资源")
+        return 0
+    print(f"{result.message} \"{keyword}\":")
+    for row in rows:
+        print(f"  #{row['id']} [{KIND_LABEL[row['kind']]}] {row['display_name']}"
+              f" | 课程: {row['course_name']} | {_resource_status(row)}"
+              f" | {row['path_or_url']}")
+    return 0
 
 
 def _emit(result) -> int:
@@ -297,7 +323,7 @@ def _cmd_rm_event(ctl: Controller, args) -> int:
 
 
 _WORKSPACE_COMMANDS = ("courses", "add-course", "del-course", "add",
-                       "resources", "remove", "organize", "log")
+                       "resources", "remove", "search", "organize", "log")
 
 
 def run_command(ctl: Controller, args) -> int:
@@ -324,6 +350,8 @@ def _run_workspace_command(ctl: Controller, args) -> int:
         _print_resources(ctl.storage, args.course_id)
     elif args.command == "remove":
         return _emit(ctl.remove_resource(args.resource_id))
+    elif args.command == "search":
+        return _cmd_search(ctl, args)
     elif args.command == "organize":
         return _cmd_organize(ctl, args)
     else:  # log
