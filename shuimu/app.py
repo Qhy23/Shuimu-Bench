@@ -48,6 +48,11 @@ ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1
 
 
+def tree_icon_size() -> int:
+    """课程树节点图标边长, 随全局字号."""
+    return max(12, round(theme.current_font_px() * 1.25))
+
+
 def _button(text: str, slot) -> QPushButton:
     """创建按钮并连接点击回调."""
     btn: QPushButton = QPushButton(text)
@@ -189,6 +194,7 @@ class MainWindow(QMainWindow):
         theme.apply_theme(QApplication.instance(), font_px)
         self.schedule_tab.set_font_px(theme.current_font_px())
         self.title_bar.set_font_px(theme.current_font_px())
+        self.reload_courses()  # 树节点图标随字号重建
         if not quiet:
             self.statusBar().showMessage(
                 f"字号 {theme.current_font_px()}px (Ctrl+0 重置)")
@@ -313,7 +319,8 @@ class MainWindow(QMainWindow):
         for course in self.storage.list_courses():
             node = QTreeWidgetItem(self.course_tree, [course["name"]])
             node.setData(0, ROLE_COURSE_ID, course["id"])
-            node.setIcon(0, QIcon(artwork.kind_icon("course")))
+            node.setIcon(0, QIcon(artwork.kind_icon(
+                "course", size=tree_icon_size())))
             for res in self.storage.list_resources(course["id"]):
                 exists, changed = Storage.check_resource(res)
                 label = "[" + KIND_LABEL[res["kind"]] + "] " + res["display_name"]
@@ -323,8 +330,9 @@ class MainWindow(QMainWindow):
                     label += " (已变更)"
                 item = QTreeWidgetItem(node, [label])
                 item.setData(0, ROLE_RESOURCE_ID, res["id"])
-                item.setIcon(0, QIcon(artwork.kind_icon(res["kind"],
-                                                        failed=not exists)))
+                item.setIcon(0, QIcon(artwork.kind_icon(
+                    res["kind"], failed=not exists,
+                    size=tree_icon_size())))
                 if not exists:
                     item.setForeground(0, QBrush(Qt.GlobalColor.gray))
             node.setExpanded(True)

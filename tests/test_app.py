@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 
 from shuimu import app as shuimu_app
 from shuimu import theme
-from shuimu.app import MainWindow
+from shuimu.app import MainWindow, tree_icon_size
 from shuimu.storage import Storage
 
 
@@ -254,3 +254,23 @@ class TestZoom:
         window._zoom_reset()
         assert theme.current_font_px() == 13
         storage.close()
+
+
+def test_tree_icons_scale_with_font(qtbot, tmp_path):
+    """课程树节点图标随全局字号放大."""
+    default_size = tree_icon_size()
+    assert default_size == 16  # 默认 13px 字号
+    storage = Storage(str(tmp_path / "icons.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"))
+    qtbot.addWidget(window)
+    course_id = storage.list_courses()[0]["id"]
+    window.ctl.add_resource(course_id, "https://example.com/")
+    window.reload_courses()
+    node = window.course_tree.topLevelItem(0)
+    small = max(s.width() for s in node.child(0).icon(0).availableSizes())
+    assert small == default_size
+    window.set_app_font(20)
+    big = max(s.width() for s in
+              window.course_tree.topLevelItem(0).child(0).icon(0).availableSizes())
+    assert big == tree_icon_size() and big > small
+    storage.close()

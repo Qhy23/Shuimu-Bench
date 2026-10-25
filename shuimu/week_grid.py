@@ -241,11 +241,11 @@ class WeekGridWidget(QWidget):
         outer.setSpacing(0)
         color = (theme.ACCENT if entry.is_manual
                  else theme.course_color(entry.title))
-        bar = QFrame(card)
-        bar.setObjectName("cardbar")
-        bar.setFixedWidth(3)
-        bar.setStyleSheet(f"background:{color};")
-        outer.addWidget(bar)
+        color_bar = QFrame(card)
+        color_bar.setObjectName("cardbar")
+        color_bar.setFixedWidth(3)
+        color_bar.setStyleSheet(f"background:{color};")
+        outer.addWidget(color_bar)
         body = QWidget(card)
         layout = QVBoxLayout(body)
         layout.setContentsMargins(self._m.card_mh, self._m.card_mv,

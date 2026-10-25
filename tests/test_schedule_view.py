@@ -7,9 +7,9 @@ from datetime import date, time, timedelta
 import pytest
 from PySide6.QtCore import QDate, QTime
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QPushButton, QWidget
 
-from shuimu import schedule_view
+from shuimu import schedule_view, theme
 from shuimu.config import DEFAULTS
 from shuimu.controller import Controller
 from shuimu.schedule import Event, load_schedule, week_start
@@ -462,3 +462,22 @@ class TestWeekNavigationControls:
         _ctl, tab, _yaml = sched_env
         assert "▾" in tab.week_btn.text()
         assert "周" in tab.week_btn.text() or "假期" in tab.week_btn.text()
+
+
+class TestZoomDetails:
+    """缩放细节: 面板按钮与树图标随字号."""
+
+    def test_picker_buttons_grow_with_font(self, qtbot):
+        """20px 字号下面板按钮放大, 数字有容身之处."""
+        host = QWidget()
+        qtbot.addWidget(host)
+        theme.apply_theme(host, 13)  # 隔离此前测试遗留的字号
+        popup_small = WeekPickerPopup(4, 1, 1)
+        qtbot.addWidget(popup_small)
+        small = popup_small.findChildren(QPushButton)[0].width()
+        theme.apply_theme(host, 20)
+        popup_big = WeekPickerPopup(4, 1, 1)
+        qtbot.addWidget(popup_big)
+        big = popup_big.findChildren(QPushButton)[0].width()
+        assert big > small >= 34
+        theme.apply_theme(host, 13)

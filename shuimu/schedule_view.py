@@ -10,7 +10,7 @@ import os
 from datetime import date, timedelta
 
 from PySide6.QtCore import QDate, QFileSystemWatcher, Qt, QTime, Signal
-from PySide6.QtGui import QBrush, QColor, QCursor, QFont
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -71,15 +71,31 @@ class WeekPickerPopup(QWidget):
         grid = QGridLayout(self)
         grid.setContentsMargins(10, 10, 10, 10)
         grid.setSpacing(4)
+        buttons = []
         for week in range(1, week_count + 1):
             btn = QPushButton(str(week), self)
-            btn.setFixedSize(34, 30)
             if week == current_week:
                 btn.setProperty("primary", True)
             elif week == today_week:
                 btn.setProperty("today", True)
             btn.clicked.connect(lambda _c, w=week: self._choose(w))
             grid.addWidget(btn, (week - 1) // 8, (week - 1) % 8)
+            buttons.append(btn)
+        # 统一尺寸按字号显式计算(QSS sizeHint 不含样式内边距, 不可靠):
+        # 数字宽高 + weekpicker 按钮内边距(与 QSS 公式一致) + 余量; 下限 34x30
+        font_px = theme.current_font_px()
+        k = font_px / theme.DEFAULT_FONT_PX
+        pad_h = max(2, round(6 * k))
+        pad_v = max(2, round(2 * k))
+        metrics_font = QFont(self.font())
+        metrics_font.setPixelSize(font_px)
+        metrics = QFontMetrics(metrics_font)
+        digits = max(metrics.horizontalAdvance(str(week))
+                     for week in range(1, week_count + 1))
+        btn_w = max(34, digits + 2 * pad_h + 10)
+        btn_h = max(30, metrics.height() + 2 * pad_v + 10)
+        for btn in buttons:
+            btn.setFixedSize(btn_w, btn_h)
 
     def _choose(self, week: int) -> None:
         """发出选择信号并关闭."""

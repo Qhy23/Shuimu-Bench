@@ -270,6 +270,9 @@ QWidget#weekpicker {{
     border: 1px solid {BORDER};
     border-radius: {RADIUS};
 }}
+QWidget#weekpicker QPushButton {{
+    padding: {pad(2)} {pad(6)};
+}}
 QPushButton[today="true"] {{
     color: {PRIMARY_LIGHT};
     font-weight: 600;
