@@ -4,11 +4,11 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from shuimu.app import MainWindow
-from shuimu.config import font_size_value
-from shuimu.paths import default_db_path
-from shuimu.storage import Storage
-from shuimu.theme import apply_theme
+from shuimu.core.config import font_size_value
+from shuimu.core.paths import default_db_path
+from shuimu.core.storage import Storage
+from shuimu.gui.main_window import MainWindow
+from shuimu.gui.theme import apply_theme
 
 def main() -> int:
     """初始化存储与主窗口, 进入事件循环."""

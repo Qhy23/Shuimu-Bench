@@ -39,8 +39,8 @@ from PySide6.QtWidgets import (
 )
 
 from . import artwork, theme
-from .controller import Controller
-from .schedule import (
+from ..core.controller import Controller
+from ..core.schedule import (
     SESSION_TIMES,
     WEEKDAY_NAMES,
     Event,
@@ -701,15 +701,21 @@ class ScheduleTab(QWidget):
 
     def _on_file_changed(self, path: str) -> None:
         """文件内容变化: 自写被抑制一次, 其余直接重载."""
-        if self._self_write:
-            self._self_write = False
-        else:
-            self._render_all()
-        if path not in self._watcher.files():
-            self._watcher.addPath(path)  # 原子替换后旧监听失效, 重挂
+        try:
+            if self._self_write:
+                self._self_write = False
+            else:
+                self._render_all()
+            if path not in self._watcher.files():
+                self._watcher.addPath(path)  # 原子替换后旧监听失效, 重挂
+        except RuntimeError:
+            pass  # 控件销毁途中子对象已释放, 丢弃晚到事件
 
     def _on_dir_changed(self, _path: str) -> None:
         """目录变化(文件被删/替换): 清抑制标志, 重挂监听并重载(缺失会重播种)."""
-        self._self_write = False
-        self._watch_files()
-        self._render_all()
+        try:
+            self._self_write = False
+            self._watch_files()
+            self._render_all()
+        except RuntimeError:
+            pass  # 同上: 销毁竞态下的事件丢弃

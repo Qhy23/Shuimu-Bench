@@ -5,8 +5,9 @@ import sys
 
 
 def project_root() -> str:
-    """项目根目录(本包的上一级)."""
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """项目根目录(本模块位于 shuimu/core/ 下, 上溯三级)."""
+    return os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
 
 
 def default_db_path() -> str:

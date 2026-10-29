@@ -6,9 +6,9 @@ from copy import deepcopy
 import pytest
 
 from shuimu.cli import main
-from shuimu.config import DEFAULTS
+from shuimu.core.config import DEFAULTS
 
-CAL_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures",
+CAL_FIXTURE = os.path.join(os.path.dirname(__file__), "..", "fixtures",
                            "portal_calendar_sample.html")
 
 
@@ -23,7 +23,7 @@ def sched(tmp_path, monkeypatch):
     """独立的日程 YAML 路径(模板指向空文件, 隔离仓库模板)."""
     tpl = tmp_path / "tpl.yaml"
     tpl.write_text("todos: []\n", encoding="utf-8")
-    monkeypatch.setattr("shuimu.controller.template_schedule_path",
+    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
                         lambda: str(tpl))
     return str(tmp_path / "schedule.yaml")
 
@@ -43,7 +43,7 @@ def semester(monkeypatch):
     cfg = deepcopy(DEFAULTS)
     cfg["schedule"]["semester_start"] = "2026-09-14"
     cfg["schedule"]["week_count"] = 18
-    monkeypatch.setattr("shuimu.controller.load_config", lambda: cfg)
+    monkeypatch.setattr("shuimu.core.controller.load_config", lambda: cfg)
 
 
 class TestCourseCommands:
@@ -338,6 +338,6 @@ class TestScheduleCommands:
         """未配置学期起点时 --week 报错."""
         cfg = deepcopy(DEFAULTS)
         cfg["schedule"]["semester_start"] = ""
-        monkeypatch.setattr("shuimu.controller.load_config", lambda: cfg)
+        monkeypatch.setattr("shuimu.core.controller.load_config", lambda: cfg)
         code, _ = run(capsys, db, "schedule", "--week", "3", schedule=sched)
         assert code == 2

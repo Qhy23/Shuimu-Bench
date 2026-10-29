@@ -1,6 +1,6 @@
 """theme.py 单元测试: 设计 token 与样式表应用."""
 
-from shuimu import theme
+from shuimu.gui import theme
 
 
 class TestTokens:

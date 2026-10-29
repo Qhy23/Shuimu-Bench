@@ -16,7 +16,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from . import artwork, theme
-from .schedule import WEEKDAY_NAMES, DayEntry, week_start
+from ..core.schedule import WEEKDAY_NAMES, DayEntry, week_start
 
 AXIS_W = 44            # 左侧时刻轴宽(px)
 HEADER_H = 30          # 顶部日头条高(px)

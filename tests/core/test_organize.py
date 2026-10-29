@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from shuimu import organize
+from shuimu.core import organize
 
 
 @pytest.fixture()

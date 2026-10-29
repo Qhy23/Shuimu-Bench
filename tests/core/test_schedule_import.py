@@ -5,10 +5,10 @@ from datetime import date, time
 
 import pytest
 
-from shuimu.schedule import Event
-from shuimu.schedule_import import merge_adjacent, parse_calendar_html
+from shuimu.core.schedule import Event
+from shuimu.core.schedule_import import merge_adjacent, parse_calendar_html
 
-CALENDAR_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures",
+CALENDAR_FIXTURE = os.path.join(os.path.dirname(__file__), "..", "fixtures",
                                 "portal_calendar_sample.html")
 
 DAY = date(2026, 10, 26)

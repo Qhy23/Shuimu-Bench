@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from shuimu.storage import Storage
+from shuimu.core.storage import Storage
 
 
 @pytest.fixture()

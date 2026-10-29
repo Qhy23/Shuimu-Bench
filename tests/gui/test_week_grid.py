@@ -4,8 +4,8 @@ from datetime import date, time, timedelta
 
 from PySide6.QtWidgets import QFrame
 
-from shuimu.schedule import DayEntry
-from shuimu.week_grid import (
+from shuimu.core.schedule import DayEntry
+from shuimu.gui.week_grid import (
     DAY_MINUTES,
     HEADER_H,
     HOUR_H,

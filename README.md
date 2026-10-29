@@ -8,21 +8,37 @@
 - [x] 课程工作区(SQLite 索引: 文件/文件夹引用 + 网页链接, 失效标灰, 变更提示)
 - [x] 操作留痕(operations 表, 日志页实时展示)
 - [x] 目录整理(按类型归类, 预览后执行, 冲突自动加后缀)
+- [x] 跨课程资源搜索(CLI search 子命令, 子串大小写不敏感)
 - [x] 本地日程面板(周历课表/事件 + 待办, YAML 数据, 外部编辑自动重载)
 - [ ] 插件框架与内置插件(作业提交自查, 文档批处理)
 
 ## 项目结构
 
 ```
-main.py              # 入口
+main.py                # GUI 入口
+cli.py                 # CLI 入口(shim)
 shuimu/
-  storage.py         # SQLite 存储: 课程/资源索引/操作留痕
-  organize.py        # 目录整理: 归类计划与执行(纯逻辑)
-  schedule.py        # 日程纯逻辑: YAML 读写/周计算/待办排序
-  app.py             # 三栏主窗口 UI
-  schedule_view.py   # 日程页签: 周历与待办视图
-tests/               # pytest 单元测试 + GUI 冒烟测试
+  core/                # 后端纯逻辑, 不依赖 Qt
+    paths.py           # 路径分发(dev/frozen)
+    config.py          # 配置加载与默认值(含字号常量)
+    storage.py         # SQLite 存储: 课程/资源索引/操作留痕
+    organize.py        # 目录整理: 归类计划与执行
+    schedule.py        # 日程纯逻辑: YAML 读写/周计算/待办排序
+    schedule_import.py # 个人校历 .html 解析
+    controller.py      # 业务动作层(GUI 与 CLI 共用)
+  gui/                 # PySide6 界面
+    theme.py           # 主题 token 与全局 QSS
+    artwork.py         # 自绘 logo 与图标
+    titlebar.py        # 无边框标题栏
+    week_grid.py       # 自绘周时间网格
+    schedule_view.py   # 日程页签: 周历与待办视图
+    main_window.py     # 三栏主窗口
+  cli/
+    main.py            # argparse 子命令 + REPL
+tests/                 # 镜像分组: core/ gui/ cli/
 ```
+
+依赖方向: gui -> core, cli -> core, 单向; core 仅依赖标准库与 yaml.
 
 ## 运行
 

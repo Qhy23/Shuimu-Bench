@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from shuimu.config import (
+from shuimu.core.config import (
     DEFAULTS,
     DEFAULT_FONT_PX,
     clamp_font_px,

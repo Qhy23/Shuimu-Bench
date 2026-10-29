@@ -5,12 +5,12 @@ from datetime import date, time
 import pytest
 from PySide6.QtWidgets import QLabel, QWidget
 
-from shuimu import artwork
-from shuimu.controller import Controller
-from shuimu.schedule import DayEntry
-from shuimu.schedule_view import ScheduleTab
-from shuimu.storage import Storage
-from shuimu.week_grid import WeekGridWidget
+from shuimu.gui import artwork
+from shuimu.core.controller import Controller
+from shuimu.core.schedule import DayEntry
+from shuimu.gui.schedule_view import ScheduleTab
+from shuimu.core.storage import Storage
+from shuimu.gui.week_grid import WeekGridWidget
 
 
 class TestBenchIcon:
@@ -67,7 +67,7 @@ class TestEmptyStates:
         """待办为空时树上有占位提示部件."""
         tpl = tmp_path / "tpl.yaml"
         tpl.write_text("todos: []\n", encoding="utf-8")
-        monkeypatch.setattr("shuimu.controller.template_schedule_path",
+        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
                             lambda: str(tpl))
         storage = Storage(str(tmp_path / "t.db"))
         ctl = Controller(storage, schedule_path=str(tmp_path / "s.yaml"))

@@ -5,7 +5,7 @@ import sys
 
 import yaml
 
-from shuimu.paths import (
+from shuimu.core.paths import (
     default_db_path,
     default_schedule_path,
     default_workspace_root,

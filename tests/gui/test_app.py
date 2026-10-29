@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
 
-from shuimu import app as shuimu_app
-from shuimu import theme
-from shuimu.app import MainWindow, tree_icon_size
-from shuimu.storage import Storage
+from shuimu.gui import main_window as shuimu_app
+from shuimu.gui import theme
+from shuimu.gui.main_window import MainWindow, tree_icon_size
+from shuimu.core.storage import Storage
 
 
 def test_main_window_structure(qtbot, tmp_path):
@@ -50,7 +50,7 @@ def test_add_link_via_controller_shows_in_tree(qtbot, tmp_path):
 def test_workspace_root_switch(qtbot, tmp_path, monkeypatch):
     """中栏工作目录可切换, 非法目录弹警告框且保持当前状态."""
     warnings = []
-    monkeypatch.setattr("shuimu.app._warn",
+    monkeypatch.setattr("shuimu.gui.main_window._warn",
                         lambda _p, title, text: warnings.append((title, text)))
     storage = Storage(str(tmp_path / "ui3.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"))
@@ -73,7 +73,7 @@ def test_workspace_root_switch(qtbot, tmp_path, monkeypatch):
 def test_preview_bad_dir_warns(qtbot, tmp_path, monkeypatch):
     """整理页输入非法目录时弹警告框."""
     warnings = []
-    monkeypatch.setattr("shuimu.app._warn",
+    monkeypatch.setattr("shuimu.gui.main_window._warn",
                         lambda _p, title, text: warnings.append((title, text)))
     storage = Storage(str(tmp_path / "ui4.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"))
@@ -87,7 +87,7 @@ def test_preview_bad_dir_warns(qtbot, tmp_path, monkeypatch):
 def test_resource_activated_opens_file(qtbot, tmp_path, monkeypatch):
     """双击文件资源用系统默认程序打开, 不改变中栏工作目录."""
     opened = []
-    monkeypatch.setattr("shuimu.app._open_local",
+    monkeypatch.setattr("shuimu.gui.main_window._open_local",
                         lambda path: opened.append(path) or True)
     storage = Storage(str(tmp_path / "ui5.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"))
@@ -109,7 +109,7 @@ def test_resource_activated_opens_file(qtbot, tmp_path, monkeypatch):
 def test_resource_activated_dir_locates_in_browser(qtbot, tmp_path, monkeypatch):
     """双击目录资源仍在中栏定位, 不调用系统程序打开."""
     opened = []
-    monkeypatch.setattr("shuimu.app._open_local",
+    monkeypatch.setattr("shuimu.gui.main_window._open_local",
                         lambda path: opened.append(path) or True)
     storage = Storage(str(tmp_path / "ui6.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"))
@@ -129,7 +129,7 @@ def test_resource_activated_dir_locates_in_browser(qtbot, tmp_path, monkeypatch)
 def test_browser_double_click_opens_file(qtbot, tmp_path, monkeypatch):
     """中栏双击文件用系统默认程序打开, 双击目录进入该目录."""
     opened = []
-    monkeypatch.setattr("shuimu.app._open_local",
+    monkeypatch.setattr("shuimu.gui.main_window._open_local",
                         lambda path: opened.append(path) or True)
     storage = Storage(str(tmp_path / "ui7.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"))
@@ -153,7 +153,7 @@ def test_browser_double_click_opens_file(qtbot, tmp_path, monkeypatch):
 def test_resource_activated_link_uses_open_url(qtbot, tmp_path, monkeypatch):
     """双击链接资源经 _open_url 打开."""
     opened = []
-    monkeypatch.setattr("shuimu.app._open_url",
+    monkeypatch.setattr("shuimu.gui.main_window._open_url",
                         lambda url: opened.append(url) or True)
     storage = Storage(str(tmp_path / "ui8.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"))
@@ -184,7 +184,7 @@ def test_open_local_prefers_wslview(monkeypatch, tmp_path):
     f.write_text("x")
     desktop, calls = _fake_desktop()
     seen = []
-    monkeypatch.setattr("shuimu.app._wslview_open",
+    monkeypatch.setattr("shuimu.gui.main_window._wslview_open",
                         lambda t: seen.append(t) or True)
     monkeypatch.setattr(shuimu_app, "QDesktopServices", desktop)
     assert shuimu_app._open_local(str(f))
@@ -197,7 +197,7 @@ def test_open_local_falls_back_to_qt(monkeypatch, tmp_path):
     f = tmp_path / "a.pdf"
     f.write_text("x")
     desktop, calls = _fake_desktop()
-    monkeypatch.setattr("shuimu.app._wslview_open", lambda t: None)
+    monkeypatch.setattr("shuimu.gui.main_window._wslview_open", lambda t: None)
     monkeypatch.setattr(shuimu_app, "QDesktopServices", desktop)
     assert shuimu_app._open_local(str(f))
     assert len(calls) == 1

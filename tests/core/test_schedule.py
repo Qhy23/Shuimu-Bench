@@ -3,7 +3,7 @@
 import os
 from datetime import date, time
 
-from shuimu.schedule import (
+from shuimu.core.schedule import (
     DayEntry,
     clamp_to_semester,
     next_series_id,

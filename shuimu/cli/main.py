@@ -21,9 +21,9 @@ import shlex
 import sys
 from datetime import date, time, timedelta
 
-from .controller import KIND_LABEL, Controller
-from .paths import default_db_path, default_schedule_path
-from .schedule import (
+from ..core.controller import KIND_LABEL, Controller
+from ..core.paths import default_db_path, default_schedule_path
+from ..core.schedule import (
     SESSION_TIMES,
     WEEKDAY_NAMES,
     Event,
@@ -35,7 +35,7 @@ from .schedule import (
     week_label,
     week_start,
 )
-from .storage import Storage
+from ..core.storage import Storage
 
 
 def build_parser() -> argparse.ArgumentParser:

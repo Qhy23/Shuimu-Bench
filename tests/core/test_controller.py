@@ -7,16 +7,16 @@ from datetime import date, time
 
 import pytest
 
-from shuimu.config import DEFAULTS
-from shuimu.controller import Controller, detect_kind
-from shuimu.schedule import Event, save_schedule
-from shuimu.storage import Storage
+from shuimu.core.config import DEFAULTS
+from shuimu.core.controller import Controller, detect_kind
+from shuimu.core.schedule import Event, save_schedule
+from shuimu.core.storage import Storage
 
 
 @pytest.fixture()
 def ctl(tmp_path, monkeypatch):
     """每个测试用独立的 controller + 临时数据库 + 临时日程文件(模板隔离)."""
-    monkeypatch.setattr("shuimu.controller.template_schedule_path",
+    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
                         lambda: str(tmp_path / "no-such-template.yaml"))
     storage = Storage(str(tmp_path / "ctl.db"))
     yield Controller(storage, schedule_path=str(tmp_path / "s.yaml"))
@@ -197,7 +197,7 @@ class TestScheduleActions:
 
     def test_import_courses(self, ctl):
         """个人校历导入替换 courses 段, manual 与待办保留, 留痕含合并数."""
-        fixture = os.path.join(os.path.dirname(__file__), "fixtures",
+        fixture = os.path.join(os.path.dirname(__file__), "..", "fixtures",
                                "portal_calendar_sample.html")
         ctl.add_todo("任务")
         data = ctl.schedule_snapshot()
@@ -230,7 +230,7 @@ class TestSemesterConfig:
 
     def test_week_count_from_config(self, tmp_path, monkeypatch):
         """week_count 经配置注入, 非法值回退 0."""
-        monkeypatch.setattr("shuimu.controller.template_schedule_path",
+        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
                             lambda: str(tmp_path / "no-tpl.yaml"))
         cfg = deepcopy(DEFAULTS)
         cfg["schedule"]["week_count"] = 18

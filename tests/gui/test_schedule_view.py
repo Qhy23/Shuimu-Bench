@@ -9,18 +9,18 @@ from PySide6.QtCore import QDate, QTime
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QPushButton, QWidget
 
-from shuimu import schedule_view, theme
-from shuimu.config import DEFAULTS
-from shuimu.controller import Controller
-from shuimu.schedule import Event, load_schedule, week_start
-from shuimu.schedule_view import (
+from shuimu.gui import schedule_view, theme
+from shuimu.core.config import DEFAULTS
+from shuimu.core.controller import Controller
+from shuimu.core.schedule import Event, load_schedule, week_start
+from shuimu.gui.schedule_view import (
     ManualEntryDialog,
     ScheduleTab,
     TodoDialog,
     WeekPickerPopup,
 )
-from shuimu.storage import Storage
-from shuimu.theme import DANGER
+from shuimu.core.storage import Storage
+from shuimu.gui.theme import DANGER
 
 
 @pytest.fixture()
@@ -29,7 +29,7 @@ def sched_env(qtbot, tmp_path, monkeypatch):
     tpl_path = tmp_path / "schedule.example.yaml"
     tpl_path.write_text(
         "todos:\n  - {id: 1, title: 模板任务, done: false}\n", encoding="utf-8")
-    monkeypatch.setattr("shuimu.controller.template_schedule_path",
+    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
                         lambda: str(tpl_path))
     yaml_path = tmp_path / "schedule.yaml"
     storage = Storage(str(tmp_path / "sched.db"))
@@ -182,7 +182,7 @@ class TestImportCourses:
         monkeypatch.setattr(schedule_view, "_warn",
                             lambda _p, title, text: warnings.append((title, text)))
         ctl, tab, yaml_path = sched_env
-        fixture = os.path.join(os.path.dirname(__file__), "fixtures",
+        fixture = os.path.join(os.path.dirname(__file__), "..", "fixtures",
                                "portal_calendar_sample.html")
         monkeypatch.setattr(
             schedule_view.QFileDialog, "getOpenFileName",
@@ -223,7 +223,7 @@ class TestSemesterRange:
         """配置了学期起点与总周数的隔离环境(第 1 周 = 2026-10-19, 共 4 周)."""
         tpl_path = tmp_path / "schedule.example.yaml"
         tpl_path.write_text("todos: []\n", encoding="utf-8")
-        monkeypatch.setattr("shuimu.controller.template_schedule_path",
+        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
                             lambda: str(tpl_path))
         cfg = deepcopy(DEFAULTS)
         cfg["schedule"]["semester_start"] = "2026-10-19"

@@ -36,12 +36,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import APP_VERSION, artwork, theme
-from .config import font_size_value
-from .controller import KIND_LABEL, Controller
-from .paths import default_workspace_root
+from .. import APP_VERSION
+from ..core.config import font_size_value
+from ..core.controller import KIND_LABEL, Controller
+from ..core.paths import default_workspace_root
+from ..core.storage import Storage
+from . import artwork, theme
 from .schedule_view import ScheduleTab
-from .storage import Storage
 from .titlebar import TitleBar
 
 ROLE_RESOURCE_ID = Qt.UserRole

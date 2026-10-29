@@ -2,8 +2,8 @@
 
 from PySide6.QtWidgets import QLabel, QMainWindow
 
-from shuimu import theme
-from shuimu.titlebar import TitleBar
+from shuimu.gui import theme
+from shuimu.gui.titlebar import TitleBar
 
 
 def test_titlebar_has_three_buttons(qtbot):
