@@ -8,6 +8,8 @@ chrome(圆角/滚动条宽/边框)保持固定, 放大后显笨重.
 
 import hashlib
 
+from .config import DEFAULT_FONT_PX, clamp_font_px
+
 # ---- 设计 token ----
 PRIMARY = "#660874"        # 清华紫
 PRIMARY_LIGHT = "#8c2f9e"  # 悬停态
@@ -36,9 +38,6 @@ GRADIENT_CARD = ("qlineargradient(x1:0, y1:0, x2:0, y2:1,"
                  f" stop:0 {BG_PANEL}, stop:1 #2b2b3e)")
 PANEL_ALPHA = "rgba(38, 38, 55, 205)"
 
-DEFAULT_FONT_PX = 13
-MIN_FONT_PX = 9
-MAX_FONT_PX = 20
 FONT_SIZE = f"{DEFAULT_FONT_PX}px"  # 默认字号快照, 兼容旧引用
 
 _state = {"font_px": DEFAULT_FONT_PX}  # 当前字号, apply_theme 单点写入
@@ -55,15 +54,6 @@ def course_color(title: str) -> str:
     """课程色: md5(标题)前 6 位十六进制对色板长度取模."""
     digest = hashlib.md5(title.encode("utf-8")).hexdigest()
     return COURSE_PALETTE[int(digest[:6], 16) % len(COURSE_PALETTE)]
-
-
-def clamp_font_px(value) -> int:
-    """字号夹取到 [MIN_FONT_PX, MAX_FONT_PX]; 非法值回退默认."""
-    try:
-        px = int(value)
-    except (TypeError, ValueError):
-        return DEFAULT_FONT_PX
-    return max(MIN_FONT_PX, min(MAX_FONT_PX, px))
 
 
 def current_font_px() -> int:

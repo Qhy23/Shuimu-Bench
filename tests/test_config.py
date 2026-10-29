@@ -4,6 +4,8 @@ from datetime import date
 
 from shuimu.config import (
     DEFAULTS,
+    DEFAULT_FONT_PX,
+    clamp_font_px,
     font_size_value,
     load_config,
     organize_rules,
@@ -104,6 +106,22 @@ class TestSemesterWeekCount:
         assert semester_week_count({"schedule": {"week_count": "abc"}}) == 0
         assert semester_week_count({"schedule": {"week_count": -3}}) == 0
         assert semester_week_count({"schedule": None}) == 0
+
+
+class TestClampFontPx:
+    """字号夹取."""
+
+    def test_clamp_font_px(self):
+        """边界夹取与非法回退."""
+        assert clamp_font_px(8) == 9
+        assert clamp_font_px(21) == 20
+        assert clamp_font_px(13) == 13
+        assert clamp_font_px("abc") == 13
+        assert clamp_font_px(None) == 13
+
+    def test_default_font_matches_defaults(self):
+        """DEFAULT_FONT_PX 与 DEFAULTS 内置字号一致."""
+        assert DEFAULT_FONT_PX == DEFAULTS["app"]["font_size"]
 
 
 class TestFontSizeValue:

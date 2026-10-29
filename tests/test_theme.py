@@ -52,14 +52,6 @@ class TestScaling:
             assert theme.RADIUS in qss          # 圆角不变
             assert "width: 10px" in qss          # 滚动条宽不变
 
-    def test_clamp_font_px(self):
-        """边界夹取与非法回退."""
-        assert theme.clamp_font_px(8) == 9
-        assert theme.clamp_font_px(21) == 20
-        assert theme.clamp_font_px(13) == 13
-        assert theme.clamp_font_px("abc") == 13
-        assert theme.clamp_font_px(None) == 13
-
     def test_apply_theme_updates_current(self, qapp):
         """apply_theme 写入当前字号并更新 QApplication 样式表."""
         theme.apply_theme(qapp, 16)
