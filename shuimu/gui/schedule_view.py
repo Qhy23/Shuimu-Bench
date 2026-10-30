@@ -38,9 +38,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import artwork, theme
-from ..core.controller import Controller
-from ..core.schedule import (
+from shuimu.core.controller import Controller
+from shuimu.core.schedule import (
     SESSION_TIMES,
     WEEKDAY_NAMES,
     Event,
@@ -53,7 +52,8 @@ from ..core.schedule import (
     week_label,
     week_start,
 )
-from .week_grid import WeekGridWidget
+from shuimu.gui import artwork, theme
+from shuimu.gui.week_grid import WeekGridWidget
 
 class WeekPickerPopup(QWidget):
     """周次快速跳转面板(借鉴 thu-info-app 的 SemesterWeekPicker).

@@ -8,15 +8,15 @@
 import os
 from dataclasses import dataclass, field
 
-from .config import (
+from shuimu.core.config import (
     load_config,
     organize_rules,
     semester_start_date,
     semester_week_count,
 )
-from .organize import build_plan, execute_plan
-from .paths import default_schedule_path, template_schedule_path
-from .schedule import (
+from shuimu.core.organize import build_plan, execute_plan
+from shuimu.core.paths import default_schedule_path, template_schedule_path
+from shuimu.core.schedule import (
     Event,
     ScheduleData,
     add_todo as sched_add_todo,
@@ -26,8 +26,8 @@ from .schedule import (
     save_schedule,
     toggle_todo as sched_toggle_todo,
 )
-from .schedule_import import parse_calendar_html
-from .storage import Storage
+from shuimu.core.schedule_import import parse_calendar_html
+from shuimu.core.storage import Storage
 
 
 @dataclass

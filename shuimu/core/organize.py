@@ -8,7 +8,7 @@ import os
 import shutil
 from dataclasses import dataclass
 
-from .config import DEFAULTS
+from shuimu.core.config import DEFAULTS
 
 _DEFAULT_RULES = {
     "categories": DEFAULTS["organize"]["categories"],

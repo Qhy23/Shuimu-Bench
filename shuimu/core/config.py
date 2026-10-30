@@ -10,7 +10,7 @@ from datetime import date
 
 import yaml
 
-from .paths import project_root, user_data_dir
+from shuimu.core.paths import project_root, user_data_dir
 
 # 界面字号基准与边界(px): 纯常量与夹取逻辑, GUI 主题自此取用
 DEFAULT_FONT_PX = 13

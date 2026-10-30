@@ -7,7 +7,7 @@
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPen, QPixmap
 
-from . import theme
+from shuimu.gui import theme
 
 MASTER = 256  # 母版边长
 

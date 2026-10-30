@@ -36,14 +36,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_VERSION
-from ..core.config import font_size_value
-from ..core.controller import KIND_LABEL, Controller
-from ..core.paths import default_workspace_root
-from ..core.storage import Storage
-from . import artwork, theme
-from .schedule_view import ScheduleTab
-from .titlebar import TitleBar
+from shuimu import APP_VERSION
+from shuimu.core.config import font_size_value
+from shuimu.core.controller import KIND_LABEL, Controller
+from shuimu.core.paths import default_workspace_root
+from shuimu.core.storage import Storage
+from shuimu.gui import artwork, theme
+from shuimu.gui.schedule_view import ScheduleTab
+from shuimu.gui.titlebar import TitleBar
 
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1

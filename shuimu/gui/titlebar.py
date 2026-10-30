@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import artwork, theme
+from shuimu.gui import artwork, theme
 
 _BUTTON_STYLE = f"""
 QPushButton {{

@@ -9,7 +9,7 @@ import os
 import sqlite3
 import time
 
-from .config import load_config
+from shuimu.core.config import load_config
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;

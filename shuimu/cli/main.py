@@ -21,9 +21,9 @@ import shlex
 import sys
 from datetime import date, time, timedelta
 
-from ..core.controller import KIND_LABEL, Controller
-from ..core.paths import default_db_path, default_schedule_path
-from ..core.schedule import (
+from shuimu.core.controller import KIND_LABEL, Controller
+from shuimu.core.paths import default_db_path, default_schedule_path
+from shuimu.core.schedule import (
     SESSION_TIMES,
     WEEKDAY_NAMES,
     Event,
@@ -35,7 +35,7 @@ from ..core.schedule import (
     week_label,
     week_start,
 )
-from ..core.storage import Storage
+from shuimu.core.storage import Storage
 
 
 def build_parser() -> argparse.ArgumentParser:

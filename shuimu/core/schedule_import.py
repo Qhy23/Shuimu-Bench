@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date, time
 from html import unescape
 
-from .schedule import Event
+from shuimu.core.schedule import Event
 
 _DATE_HEAD = re.compile(r"★\s*(\d{4}-\d{2}-\d{2})")
 _TIME_CELL = re.compile(r"^(\d{1,2}):(\d{2})$")

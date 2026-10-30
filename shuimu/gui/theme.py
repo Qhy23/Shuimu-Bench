@@ -8,7 +8,7 @@ chrome(圆角/滚动条宽/边框)保持固定, 放大后显笨重.
 
 import hashlib
 
-from ..core.config import DEFAULT_FONT_PX, clamp_font_px
+from shuimu.core.config import DEFAULT_FONT_PX, clamp_font_px
 
 # ---- 设计 token ----
 PRIMARY = "#660874"        # 清华紫

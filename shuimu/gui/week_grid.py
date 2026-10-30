@@ -15,8 +15,8 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from . import artwork, theme
-from ..core.schedule import WEEKDAY_NAMES, DayEntry, week_start
+from shuimu.core.schedule import WEEKDAY_NAMES, DayEntry, week_start
+from shuimu.gui import artwork, theme
 
 AXIS_W = 44            # 左侧时刻轴宽(px)
 HEADER_H = 30          # 顶部日头条高(px)
