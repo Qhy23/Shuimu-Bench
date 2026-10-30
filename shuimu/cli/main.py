@@ -193,6 +193,7 @@ def _print_schedule(ctl: Controller, args) -> int:
         monday = week_start(date.today())
     data = ctl.schedule_snapshot()
     flat = _flatten_events(data)
+    index_by_id = {id(e): i for i, (_s, e) in enumerate(flat)}
     print("== " + week_label(monday, start, ctl.semester_week_count()) + " ==")
     entries = entries_for_week(data, monday)
     shown = False
@@ -202,8 +203,7 @@ def _print_schedule(ctl: Controller, args) -> int:
         day = monday + timedelta(days=weekday - 1)
         print(f"{WEEKDAY_NAMES[weekday - 1]} {day.strftime('%m/%d')}")
         for entry in entries[weekday]:
-            index = next(i for i, (_s, e) in enumerate(flat)
-                         if e is entry.origin) + 1
+            index = index_by_id[id(entry.origin)] + 1
             marks = "[手动]" if entry.is_manual else ""
             if entry.origin and entry.origin.sid:
                 marks += f"[系列#{entry.origin.sid}]"
@@ -236,7 +236,10 @@ def _print_todos(ctl: Controller) -> int:
 
 
 def _cmd_add_event(ctl: Controller, args) -> int:
-    """添加手动日程: --date 单次, --weekday+--weeks 按周数展开为系列."""
+    """添加手动日程: --date 单次, --weekday+--weeks 按周数展开为系列.
+
+    参数校验错误与 ActionResult 失败统一走 stderr, 退出码 2(契约同 _emit).
+    """
     try:
         start = end = None
         if args.session is not None:
@@ -269,9 +272,7 @@ def _cmd_add_event(ctl: Controller, args) -> int:
     except ValueError as exc:
         print(f"参数错误: {exc}", file=sys.stderr)
         return 2
-    result = ctl.add_manual(events)
-    print(result.message)
-    return 0 if result.ok else 2
+    return _emit(ctl.add_manual(events))
 
 
 def _pick_event(ctl: Controller, index: int):
@@ -305,9 +306,7 @@ def _cmd_edit_event(ctl: Controller, args) -> int:
     except ValueError as exc:
         print(f"参数错误: {exc}", file=sys.stderr)
         return 2
-    result = ctl.update_event(section, old, new, whole_series=args.series)
-    print(result.message)
-    return 0 if result.ok else 2
+    return _emit(ctl.update_event(section, old, new, whole_series=args.series))
 
 
 def _cmd_rm_event(ctl: Controller, args) -> int:
@@ -317,9 +316,7 @@ def _cmd_rm_event(ctl: Controller, args) -> int:
         print("序号超出范围", file=sys.stderr)
         return 2
     section, old = picked
-    result = ctl.remove_event(section, old, whole_series=args.series)
-    print(result.message)
-    return 0 if result.ok else 2
+    return _emit(ctl.remove_event(section, old, whole_series=args.series))
 
 
 _WORKSPACE_COMMANDS = ("courses", "add-course", "del-course", "add",
@@ -366,9 +363,7 @@ def _run_workspace_command(ctl: Controller, args) -> int:
 def _cmd_todo(ctl: Controller, args) -> int:
     """add-todo / toggle-todo."""
     if args.command == "toggle-todo":
-        result = ctl.toggle_todo(args.todo_id)
-        print(result.message, file=sys.stderr if not result.ok else sys.stdout)
-        return 0 if result.ok else 2
+        return _emit(ctl.toggle_todo(args.todo_id))
     due = None
     if args.due:
         try:
@@ -376,9 +371,7 @@ def _cmd_todo(ctl: Controller, args) -> int:
         except ValueError:
             print("--due 须为 YYYY-MM-DD", file=sys.stderr)
             return 2
-    result = ctl.add_todo(args.title, due, args.course)
-    print(result.message)
-    return 0 if result.ok else 2
+    return _emit(ctl.add_todo(args.title, due, args.course))
 
 
 def _cmd_edit_or_rm(ctl: Controller, args) -> int:
@@ -397,9 +390,7 @@ def _run_schedule_command(ctl: Controller, args) -> int:
     if args.command in ("add-todo", "toggle-todo"):
         return _cmd_todo(ctl, args)
     if args.command == "import-schedule":
-        result = ctl.import_courses(args.path)
-        print(result.message)
-        return 0 if result.ok else 2
+        return _emit(ctl.import_courses(args.path))
     if args.command in ("edit-event", "rm-event"):
         return _cmd_edit_or_rm(ctl, args)
     return _cmd_add_event(ctl, args)
@@ -458,10 +449,10 @@ def _cmd_organize(ctl: Controller, args) -> int:
         print(f"共 {len(plan)} 项(预览). 加 --yes 执行.")
         return 0
     result = ctl.execute_organize(args.directory, plan)
-    print(result.message)
+    code = _emit(result)
     for err in result.detail.get("errors", []):
         print(f"  失败: {err}", file=sys.stderr)
-    return 0 if result.ok else 1
+    return code
 
 
 if __name__ == "__main__":

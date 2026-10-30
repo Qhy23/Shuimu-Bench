@@ -53,6 +53,7 @@ from shuimu.core.schedule import (
     week_start,
 )
 from shuimu.gui import artwork, theme
+from shuimu.gui.dialogs import warn
 from shuimu.gui.week_grid import WeekGridWidget
 
 class WeekPickerPopup(QWidget):
@@ -278,16 +279,16 @@ class ManualEntryDialog(QDialog):
     def _accept_if_valid(self) -> None:
         """校验: 标题非空, 结束晚于开始, 周数模式至少选一周."""
         if not self.title_edit.text().strip():
-            _warn(self, "无法保存", "标题不能为空")
+            warn(self, "无法保存", "标题不能为空")
             return
         start_edit, end_edit = ((self.date_start_edit, self.date_end_edit)
                                 if self._is_date_mode()
                                 else (self.week_start_edit, self.week_end_edit))
         if end_edit.time() <= start_edit.time():
-            _warn(self, "无法保存", "结束时间必须晚于开始时间, 且在同一天内")
+            warn(self, "无法保存", "结束时间必须晚于开始时间, 且在同一天内")
             return
         if not self._is_date_mode() and not self._checked_weeks():
-            _warn(self, "无法保存", "请至少选择一个周次")
+            warn(self, "无法保存", "请至少选择一个周次")
             return
         self.accept()
 
@@ -308,11 +309,6 @@ class ManualEntryDialog(QDialog):
 
 
 ROLE_TID = Qt.UserRole + 2
-
-
-def _warn(parent, title: str, text: str) -> None:
-    """弹出警告对话框(独立成函数便于测试替换)."""
-    QMessageBox.warning(parent, title, text)
 
 
 class TodoDialog(QDialog):
@@ -347,7 +343,7 @@ class TodoDialog(QDialog):
     def _accept_if_valid(self) -> None:
         """标题为空时警告且不关闭."""
         if not self.title_edit.text().strip():
-            _warn(self, "无法创建", "标题不能为空")
+            warn(self, "无法创建", "标题不能为空")
             return
         self.accept()
 
@@ -670,9 +666,9 @@ class ScheduleTab(QWidget):
         result = self.controller.import_courses(path)
         if not result.ok:
             self._self_write = False
-            _warn(self, "导入失败", result.message)
+            warn(self, "导入失败", result.message)
         elif result.detail.get("warnings"):
-            _warn(self, "导入完成(部分条目有提示)",
+            warn(self, "导入完成(部分条目有提示)",
                   result.message + "\n\n" + "\n".join(result.detail["warnings"]))
         self._render_all()
 
@@ -685,7 +681,7 @@ class ScheduleTab(QWidget):
         result = action()
         if not result.ok:
             self._self_write = False
-            _warn(self, "日程操作失败", result.message)
+            warn(self, "日程操作失败", result.message)
         self._render_all()
 
     # ---- 文件监听 ----

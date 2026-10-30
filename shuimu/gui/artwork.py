@@ -4,6 +4,8 @@
 小尺寸图标由 256px 母版平滑缩放获得.
 """
 
+import functools
+
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPen, QPixmap
 
@@ -90,10 +92,13 @@ def faint_bench(size: int) -> QPixmap:
     return pixmap
 
 
+@functools.lru_cache(maxsize=128)
 def kind_icon(kind: str, failed: bool = False, size: int = 16) -> QPixmap:
     """课程树节点小图标: 课程(长椅)/目录(夹)/文件(页)/链接(链环).
 
     failed 为 True 时(失效资源)整体降灰.
+    结果按 (kind, failed, size) 缓存, 供课程树与字号缩放反复取用;
+    多主题落地时需加主题维度进缓存键或切换时 cache_clear().
     """
     edge = QColor(theme.FG_DIM if failed else theme.FG_TEXT)
     fill = QColor(theme.BG_PANEL)

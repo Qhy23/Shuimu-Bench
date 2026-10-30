@@ -33,6 +33,11 @@ SESSION_TIMES = {
 }
 
 
+def minutes_of_day(value: time) -> int:
+    """time 折算为当日分钟数(周历网格布局与联排课间隔判断共用)."""
+    return value.hour * 60 + value.minute
+
+
 @dataclass
 class Event:
     """一次有确切日期与起止时间的事件(课程或手动添加).

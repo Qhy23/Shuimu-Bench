@@ -50,7 +50,7 @@ def test_add_link_via_controller_shows_in_tree(qtbot, tmp_path):
 def test_workspace_root_switch(qtbot, tmp_path, monkeypatch):
     """中栏工作目录可切换, 非法目录弹警告框且保持当前状态."""
     warnings = []
-    monkeypatch.setattr("shuimu.gui.main_window._warn",
+    monkeypatch.setattr("shuimu.gui.main_window.warn",
                         lambda _p, title, text: warnings.append((title, text)))
     storage = Storage(str(tmp_path / "ui3.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"))
@@ -73,7 +73,7 @@ def test_workspace_root_switch(qtbot, tmp_path, monkeypatch):
 def test_preview_bad_dir_warns(qtbot, tmp_path, monkeypatch):
     """整理页输入非法目录时弹警告框."""
     warnings = []
-    monkeypatch.setattr("shuimu.gui.main_window._warn",
+    monkeypatch.setattr("shuimu.gui.main_window.warn",
                         lambda _p, title, text: warnings.append((title, text)))
     storage = Storage(str(tmp_path / "ui4.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"))

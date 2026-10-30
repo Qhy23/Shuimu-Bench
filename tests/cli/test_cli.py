@@ -262,6 +262,15 @@ class TestScheduleCommands:
         assert "高等数学A(1)" in out and "AI 编程进阶" in out
         assert "#1" in out  # 全局序号
 
+    def test_import_failure_writes_stderr(self, capsys, db, sched):
+        """失败消息走 stderr 且 stdout 为空(契约: 成功 stdout / 失败 stderr)."""
+        code = main(["--db", db, "--schedule", sched,
+                     "import-schedule", "/nonexistent.html"])
+        captured = capsys.readouterr()
+        assert code == 2
+        assert "导入失败" in captured.err
+        assert captured.out == ""
+
     @pytest.mark.usefixtures("semester")
     def test_schedule_week_and_empty(self, capsys, db, sched):
         """--week 按学期周显示, 空周提示."""

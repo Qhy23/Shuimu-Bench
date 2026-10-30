@@ -15,7 +15,12 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from shuimu.core.schedule import WEEKDAY_NAMES, DayEntry, week_start
+from shuimu.core.schedule import (
+    WEEKDAY_NAMES,
+    DayEntry,
+    minutes_of_day,
+    week_start,
+)
 from shuimu.gui import artwork, theme
 
 AXIS_W = 44            # 左侧时刻轴宽(px)
@@ -31,12 +36,9 @@ DAY_COUNT = 7
 GAP = 2
 
 
-def _minutes(value: time) -> int:
-    return value.hour * 60 + value.minute
-
-
 def _end_minutes(entry: DayEntry) -> int:
-    return _minutes(entry.end) if entry.end else _minutes(entry.start) + DEFAULT_MIN
+    return (minutes_of_day(entry.end) if entry.end
+            else minutes_of_day(entry.start) + DEFAULT_MIN)
 
 
 @dataclass(frozen=True)
@@ -84,7 +86,7 @@ def _assign_lanes(entries: list) -> list:
     lanes = []
     for entry in sorted(entries, key=lambda e: (e.start, e.title)):
         for lane in lanes:
-            if _end_minutes(lane[-1]) <= _minutes(entry.start):
+            if _end_minutes(lane[-1]) <= minutes_of_day(entry.start):
                 lane.append(entry)
                 break
         else:
@@ -101,8 +103,8 @@ def _layout_cluster(items: list, x: float, col_w: float,
     boxes = []
     for lane_index, lane in enumerate(lanes):
         for entry in lane:
-            start_m = _minutes(entry.start)
-            top = max(m.header_h + (start_m - _minutes(DAY_START)) * m.ppm,
+            start_m = minutes_of_day(entry.start)
+            top = max(m.header_h + (start_m - minutes_of_day(DAY_START)) * m.ppm,
                       m.header_h)
             height = (max(_end_minutes(entry) - start_m, MIN_CARD_MIN)
                       * m.ppm) - GAP
@@ -123,7 +125,7 @@ def layout_day(entries: list, x: float, col_w: float,
     clusters = []  # 每簇: {"items": [...], "end": 簇内最晚结束分钟}
     for entry in ordered:
         end = _end_minutes(entry)
-        if clusters and _minutes(entry.start) < clusters[-1]["end"]:
+        if clusters and minutes_of_day(entry.start) < clusters[-1]["end"]:
             clusters[-1]["items"].append(entry)
             clusters[-1]["end"] = max(clusters[-1]["end"], end)
         else:
@@ -226,7 +228,7 @@ class WeekGridWidget(QWidget):
         if self.today_column() is None:
             return 0
         now_m = datetime.now().hour * 60 + datetime.now().minute
-        offset = self._m.header_h + (now_m - _minutes(DAY_START)) * self._m.ppm
+        offset = self._m.header_h + (now_m - minutes_of_day(DAY_START)) * self._m.ppm
         bottom = self._m.header_h + DAY_MINUTES * self._m.ppm
         return int(max(self._m.header_h, min(offset, bottom)))
 
@@ -342,7 +344,7 @@ class WeekGridWidget(QWidget):
         now = datetime.now()
         minutes_now = now.hour * 60 + now.minute
         m = self._m
-        y = m.header_h + (minutes_now - _minutes(DAY_START)) * m.ppm
+        y = m.header_h + (minutes_now - minutes_of_day(DAY_START)) * m.ppm
         bottom = min(m.header_h + DAY_MINUTES * m.ppm, self.height())
         if m.header_h <= y <= bottom:
             pen = QPen(QColor(theme.DANGER))

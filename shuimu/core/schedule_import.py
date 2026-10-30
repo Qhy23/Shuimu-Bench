@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date, time
 from html import unescape
 
-from shuimu.core.schedule import Event
+from shuimu.core.schedule import Event, minutes_of_day
 
 _DATE_HEAD = re.compile(r"★\s*(\d{4}-\d{2}-\d{2})")
 _TIME_CELL = re.compile(r"^(\d{1,2}):(\d{2})$")
@@ -35,10 +35,6 @@ def _clean_html(fragment: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _minutes(value: time) -> int:
-    return value.hour * 60 + value.minute
-
-
 def merge_adjacent(events: list) -> list:
     """同日同名且间隔不超过 MERGE_GAP_MIN 分钟的条目合并为一条.
 
@@ -48,7 +44,7 @@ def merge_adjacent(events: list) -> list:
     for entry in sorted(events, key=lambda e: (e.start, e.title)):
         previous = merged[-1] if merged else None
         if (previous is not None and previous.title == entry.title
-                and 0 <= _minutes(entry.start) - _minutes(previous.end)
+                and 0 <= minutes_of_day(entry.start) - minutes_of_day(previous.end)
                 <= MERGE_GAP_MIN):
             previous.end = entry.end
         else:

@@ -90,7 +90,7 @@ class TestTodoDialog:
     def test_blank_title_rejected(self, qtbot, monkeypatch):
         """空标题弹警告且对话框不被接受."""
         warnings = []
-        monkeypatch.setattr(schedule_view, "_warn",
+        monkeypatch.setattr(schedule_view, "warn",
                             lambda _p, title, text: warnings.append((title, text)))
         dialog = TodoDialog([])
         qtbot.addWidget(dialog)
@@ -179,7 +179,7 @@ class TestImportCourses:
     def test_import_replaces_courses(self, sched_env, monkeypatch):
         """确认后导入: courses 被替换(联排合并), 留痕与刷新到位."""
         warnings = []
-        monkeypatch.setattr(schedule_view, "_warn",
+        monkeypatch.setattr(schedule_view, "warn",
                             lambda _p, title, text: warnings.append((title, text)))
         ctl, tab, yaml_path = sched_env
         fixture = os.path.join(os.path.dirname(__file__), "..", "fixtures",
@@ -203,7 +203,7 @@ class TestImportCourses:
         """确认框选否时不改动文件."""
         _ctl, tab, yaml_path = sched_env
         before = yaml_path.read_text(encoding="utf-8")
-        monkeypatch.setattr(schedule_view, "_warn",
+        monkeypatch.setattr(schedule_view, "warn",
                             lambda _p, title, text: None)
         monkeypatch.setattr(
             schedule_view.QFileDialog, "getOpenFileName",
@@ -317,7 +317,7 @@ class TestManualEntryDialog:
     def test_validations(self, qtbot, monkeypatch):
         """空标题/结束不晚于开始/未选周次均拒绝."""
         warnings = []
-        monkeypatch.setattr(schedule_view, "_warn",
+        monkeypatch.setattr(schedule_view, "warn",
                             lambda _p, title, text: warnings.append(title))
         dialog = self._dialog(qtbot)
         dialog._accept_if_valid()

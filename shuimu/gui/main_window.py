@@ -42,6 +42,7 @@ from shuimu.core.controller import KIND_LABEL, Controller
 from shuimu.core.paths import default_workspace_root
 from shuimu.core.storage import Storage
 from shuimu.gui import artwork, theme
+from shuimu.gui.dialogs import warn
 from shuimu.gui.schedule_view import ScheduleTab
 from shuimu.gui.titlebar import TitleBar
 
@@ -59,11 +60,6 @@ def _button(text: str, slot) -> QPushButton:
     btn: QPushButton = QPushButton(text)
     btn.clicked.connect(slot)
     return btn
-
-
-def _warn(parent, title: str, text: str) -> None:
-    """弹出警告对话框(独立成函数便于测试替换)."""
-    QMessageBox.warning(parent, title, text)
 
 
 def _open_local(path: str) -> bool:
@@ -249,7 +245,7 @@ class MainWindow(QMainWindow):
         if not os.path.isdir(path):
             self.statusBar().showMessage(f"目录不存在: {path}")
             self.root_edit.setText(self.workspace_root)
-            _warn(self, "无效的工作目录",
+            warn(self, "无效的工作目录",
                   f"目录不存在或不可访问:\n{path}\n\n已保持当前工作目录不变.")
             return False
         self.workspace_root = path
@@ -450,7 +446,7 @@ class MainWindow(QMainWindow):
             if _open_local(path):
                 self.statusBar().showMessage(f"已打开: {path}")
             else:
-                _warn(self, "无法打开文件",
+                warn(self, "无法打开文件",
                       f"系统没有可用于打开该文件的默认程序:\n{path}")
             return
         self.set_workspace_root(path)
@@ -492,7 +488,7 @@ class MainWindow(QMainWindow):
         result = self.ctl.preview_organize(directory)
         self.statusBar().showMessage(result.message)
         if not result.ok:
-            _warn(self, "无法生成预览", result.message + "\n\n请检查目录路径是否正确.")
+            warn(self, "无法生成预览", result.message + "\n\n请检查目录路径是否正确.")
             return
         self._plan = result.detail["plan"]
         self.plan_table.setRowCount(len(self._plan))
