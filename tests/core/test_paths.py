@@ -7,9 +7,11 @@ import yaml
 
 from shuimu.core.paths import (
     default_db_path,
+    default_links_path,
     default_schedule_path,
     default_workspace_root,
     project_root,
+    template_links_path,
     template_schedule_path,
 )
 
@@ -70,5 +72,24 @@ class TestSchedulePaths:
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
         path = default_schedule_path()
+        assert str(tmp_path) in path
+        monkeypatch.delattr(sys, "frozen", raising=False)
+
+
+class TestLinksPaths:
+    """常用链接数据文件与模板路径."""
+
+    def test_dev_mode_under_project(self):
+        """源码运行时数据文件与模板都在项目 data/ 下."""
+        path = default_links_path()
+        assert path.endswith(os.path.join("data", "links.yaml"))
+        assert project_root() in path
+        assert template_links_path().endswith("links.example.yaml")
+
+    def test_frozen_mode_uses_user_dir(self, monkeypatch, tmp_path):
+        """打包后数据文件落到平台用户数据目录."""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        path = default_links_path()
         assert str(tmp_path) in path
         monkeypatch.delattr(sys, "frozen", raising=False)

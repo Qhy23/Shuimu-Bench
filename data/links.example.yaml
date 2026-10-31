@@ -1,0 +1,13 @@
+# 水木工作台常用链接模板(links.example.yaml).
+# 首次运行时复制为 data/links.yaml, 程序实际读取的是后者(可在其中自由编辑).
+# 条目: name 显示名称(须唯一), url 须以 http:// 或 https:// 开头.
+# 注意: GUI 保存(添加/编辑/删除)会重写 data/links.yaml, 手写注释会丢失.
+links:
+  - name: 网络学堂
+    url: https://learn.tsinghua.edu.cn
+  - name: 信息门户
+    url: https://info.tsinghua.edu.cn
+  - name: 图书馆
+    url: https://lib.tsinghua.edu.cn
+  - name: 邮箱
+    url: https://mail.tsinghua.edu.cn

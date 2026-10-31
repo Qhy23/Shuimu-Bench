@@ -20,3 +20,4 @@ dist/
 *.db-shm
 *.db-wal
 data/schedule.yaml
+data/links.yaml
