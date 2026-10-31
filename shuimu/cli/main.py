@@ -14,6 +14,9 @@
   python cli.py add-todo 微积分作业 --due 2026-10-26
   python cli.py import-schedule 个人校历.html
   python cli.py add-event 答疑 --weekday 3 --session 1 --weeks 1-8
+  python cli.py links
+  python cli.py add-link 网络学堂 https://learn.tsinghua.edu.cn --group 课堂资源
+  python cli.py open-link 网络学堂
 """
 
 import argparse
@@ -21,8 +24,14 @@ import shlex
 import sys
 from datetime import date, time, timedelta
 
+from shuimu.core import url_open
 from shuimu.core.controller import KIND_LABEL, Controller
-from shuimu.core.paths import default_db_path, default_schedule_path
+from shuimu.core.paths import (
+    default_db_path,
+    default_links_path,
+    default_schedule_path,
+)
+from shuimu.core.quicklinks import grouped_links
 from shuimu.core.schedule import (
     SESSION_TIMES,
     WEEKDAY_NAMES,
@@ -45,6 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="数据库路径(默认 data/shuimu.db; 仅启动时生效)")
     parser.add_argument("--schedule", default=default_schedule_path(),
                         help="日程 YAML 路径(默认 data/schedule.yaml)")
+    parser.add_argument("--links", default=default_links_path(),
+                        help="常用链接 YAML 路径(默认 data/links.yaml)")
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("courses", help="列出全部课程")
@@ -76,8 +87,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_log = sub.add_parser("log", help="查看操作留痕")
     p_log.add_argument("--limit", type=int, default=20)
 
+    _build_links_subcommands(sub)
     _build_schedule_subcommands(sub)
     return parser
+
+
+def _build_links_subcommands(sub) -> None:
+    """注册常用链接相关子命令(GUI 同源, 均为 Controller 动作的薄封装)."""
+    sub.add_parser("links", help="列出常用链接(按分组)")
+
+    p_add_link = sub.add_parser("add-link", help="添加常用链接")
+    p_add_link.add_argument("name")
+    p_add_link.add_argument("url", help="须以 http:// 或 https:// 开头")
+    p_add_link.add_argument("--group", default="", help="分组名(缺省未分组)")
+
+    p_edit_link = sub.add_parser("edit-link",
+                                 help="修改常用链接(仅改给定的字段)")
+    p_edit_link.add_argument("name", help="现有链接名(按名称定位)")
+    p_edit_link.add_argument("--name", dest="new_name", help="新名称")
+    p_edit_link.add_argument("--url")
+    p_edit_link.add_argument("--group", help="分组名(传空串归入未分组)")
+
+    p_rm_link = sub.add_parser("rm-link", help="删除常用链接")
+    p_rm_link.add_argument("name")
+
+    p_open_link = sub.add_parser("open-link", help="用系统浏览器打开常用链接")
+    p_open_link.add_argument("name")
 
 
 def _build_schedule_subcommands(sub) -> None:
@@ -322,11 +357,15 @@ def _cmd_rm_event(ctl: Controller, args) -> int:
 _WORKSPACE_COMMANDS = ("courses", "add-course", "del-course", "add",
                        "resources", "remove", "search", "organize", "log")
 
+_LINKS_COMMANDS = ("links", "add-link", "edit-link", "rm-link", "open-link")
+
 
 def run_command(ctl: Controller, args) -> int:
     """执行一条已解析的命令, 返回退出码. 不持有连接, 由调用方管理."""
     if args.command in _WORKSPACE_COMMANDS:
         return _run_workspace_command(ctl, args)
+    if args.command in _LINKS_COMMANDS:
+        return _run_links_command(ctl, args)
     if args.command:
         return _run_schedule_command(ctl, args)
     return 0
@@ -358,6 +397,63 @@ def _run_workspace_command(ctl: Controller, args) -> int:
     return 0
 
 
+
+
+def _find_link(ctl: Controller, name: str):
+    """按名称找常用链接, 找不到返回 None(名称全局唯一)."""
+    return next((link for link in ctl.list_quick_links()
+                 if link.name == name), None)
+
+
+def _print_links(ctl: Controller) -> int:
+    """列常用链接: 按分组(首现顺序, 未分组末尾), 与 GUI 分组树同源聚合."""
+    links = ctl.list_quick_links()
+    if not links:
+        print("(暂无常用链接)")
+        return 0
+    for group, items in grouped_links(links):
+        print(f"== {group or '未分组'} ==")
+        for link in items:
+            print(f"  {link.name} | {link.url}")
+    return 0
+
+
+def _run_links_command(ctl: Controller, args) -> int:
+    """执行常用链接相关子命令(GUI 同源动作的薄封装)."""
+    if args.command == "links":
+        return _print_links(ctl)
+    if args.command == "add-link":
+        return _emit(ctl.add_quick_link(args.name, args.url, args.group))
+    if args.command == "edit-link":
+        return _cmd_edit_link(ctl, args)
+    if args.command == "rm-link":
+        return _emit(ctl.remove_quick_link(args.name))
+    # open-link
+    return _cmd_open_link(ctl, args)
+
+
+def _cmd_edit_link(ctl: Controller, args) -> int:
+    """edit-link: 仅改给定字段, 未给字段保持原值."""
+    current = _find_link(ctl, args.name)
+    if current is None:
+        print(f"链接不存在: {args.name}", file=sys.stderr)
+        return 2
+    new_name = args.new_name if args.new_name is not None else current.name
+    url = args.url if args.url is not None else current.url
+    group = args.group if args.group is not None else current.group
+    return _emit(ctl.update_quick_link(args.name, new_name, url, group))
+
+
+def _cmd_open_link(ctl: Controller, args) -> int:
+    """open-link: 经 URL 分发层(默认系统浏览器)打开常用链接."""
+    link = _find_link(ctl, args.name)
+    if link is None:
+        print(f"链接不存在: {args.name}", file=sys.stderr)
+        return 2
+    if not url_open.open_url(link.url):
+        print(f"无法打开链接: {link.url}", file=sys.stderr)
+        return 2
+    return 0
 
 
 def _cmd_todo(ctl: Controller, args) -> int:
@@ -399,9 +495,12 @@ def _run_schedule_command(ctl: Controller, args) -> int:
 def main(argv=None) -> int:
     """CLI 入口: 带子命令则单次执行, 不带则进入交互模式."""
     args = build_parser().parse_args(argv)
+    # CLI 无 Qt: 注册纯标准库的系统浏览器打开为 URL 分发层默认处理器.
+    url_open.set_default(url_open.open_url_external)
     storage = Storage(args.db)
     try:
-        ctl = Controller(storage, schedule_path=args.schedule)
+        ctl = Controller(storage, schedule_path=args.schedule,
+                         links_path=args.links)
         if args.command is None:
             return repl(ctl)
         return run_command(ctl, args)

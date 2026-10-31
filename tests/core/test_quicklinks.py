@@ -167,4 +167,4 @@ class TestGroupedLinks:
 
     def test_empty_input(self):
         """空列表聚合为空."""
-        assert grouped_links([]) == []
+        assert not grouped_links([])

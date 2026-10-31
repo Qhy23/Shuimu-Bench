@@ -350,3 +350,88 @@ class TestScheduleCommands:
         monkeypatch.setattr("shuimu.core.controller.load_config", lambda: cfg)
         code, _ = run(capsys, db, "schedule", "--week", "3", schedule=sched)
         assert code == 2
+
+
+@pytest.fixture()
+def links_yaml(tmp_path, monkeypatch):
+    """独立的常用链接 YAML 路径(模板指向不存在的文件, 隔离仓库模板)."""
+    monkeypatch.setattr("shuimu.core.controller.template_links_path",
+                        lambda: str(tmp_path / "no-tpl.yaml"))
+    return str(tmp_path / "links.yaml")
+
+
+def run_links(capsys, db, links_yaml, *argv):
+    """执行带 --links 隔离路径的 CLI 并返回 (退出码, stdout, stderr)."""
+    code = main(["--db", db, "--links", links_yaml, *argv])
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+class TestLinksCommands:
+    """常用链接子命令(与 GUI 同源)."""
+
+    def test_add_list_grouped(self, capsys, db, links_yaml):
+        """添加(带分组与不带分组)后按分组列出, 未分组末尾."""
+        run_links(capsys, db, links_yaml,
+                  "add-link", "学堂", "https://learn.example.com",
+                  "--group", "课堂资源")
+        run_links(capsys, db, links_yaml,
+                  "add-link", "散链", "https://misc.example.com")
+        code, out, _ = run_links(capsys, db, links_yaml, "links")
+        assert code == 0
+        assert "== 课堂资源 ==" in out and "学堂" in out
+        assert out.rindex("未分组") > out.rindex("课堂资源")
+
+    def test_add_rejects_bad_url(self, capsys, db, links_yaml):
+        """非 http 前缀退出码 2, 不落盘."""
+        code, _, err = run_links(capsys, db, links_yaml,
+                                 "add-link", "坏", "x.example.com")
+        assert code == 2 and err.strip()
+        code, out, _ = run_links(capsys, db, links_yaml, "links")
+        assert "坏" not in out
+
+    def test_edit_link_partial(self, capsys, db, links_yaml):
+        """仅改给定字段, 未给字段保持原值."""
+        run_links(capsys, db, links_yaml,
+                  "add-link", "学堂", "https://learn.example.com",
+                  "--group", "课堂资源")
+        code, out, _ = run_links(capsys, db, links_yaml,
+                                 "edit-link", "学堂", "--group", "AI工具")
+        assert code == 0 and "已更新" in out
+        _, out, _ = run_links(capsys, db, links_yaml, "links")
+        assert "== AI工具 ==" in out and "https://learn.example.com" in out
+
+    def test_edit_link_missing(self, capsys, db, links_yaml):
+        """定位不到链接退出码 2."""
+        code, _, err = run_links(capsys, db, links_yaml,
+                                 "edit-link", "不存在", "--url",
+                                 "https://x.example.com")
+        assert code == 2 and "不存在" in err
+
+    def test_rm_link(self, capsys, db, links_yaml):
+        """删除后列表不再出现."""
+        run_links(capsys, db, links_yaml,
+                  "add-link", "学堂", "https://learn.example.com")
+        code, _, _ = run_links(capsys, db, links_yaml, "rm-link", "学堂")
+        assert code == 0
+        _, out, _ = run_links(capsys, db, links_yaml, "links")
+        assert "学堂" not in out
+
+    def test_open_link_dispatches(self, capsys, db, links_yaml, monkeypatch):
+        """open-link 经 URL 分发层默认处理器打开; 不存在退出码 2.
+
+        假掉 open_url_external 本身: main() 会把它注册为默认处理器,
+        从而整条链路(注册->分发)都在测试内闭环, 不真开浏览器.
+        """
+        opened = []
+        monkeypatch.setattr("shuimu.core.url_open._state",
+                            {"default": None, "registry": {}})
+        monkeypatch.setattr(
+            "shuimu.core.url_open.open_url_external",
+            lambda url: opened.append(url) or True)
+        run_links(capsys, db, links_yaml,
+                  "add-link", "学堂", "https://learn.example.com")
+        code, _, _ = run_links(capsys, db, links_yaml, "open-link", "学堂")
+        assert code == 0 and opened == ["https://learn.example.com"]
+        code, _, err = run_links(capsys, db, links_yaml, "open-link", "没有")
+        assert code == 2 and "没有" in err
