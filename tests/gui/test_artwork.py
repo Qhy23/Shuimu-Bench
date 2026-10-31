@@ -28,6 +28,17 @@ class TestBenchIcon:
         assert not artwork.bench_icon_qt(64).isNull()
 
 
+class TestLogIcon:
+    """标题栏日志按钮图标."""
+
+    @pytest.mark.parametrize("size", [16, 24])
+    def test_size(self, size):
+        """指定边长返回非空 QIcon."""
+        icon = artwork.log_icon(size)
+        assert not icon.isNull()
+        assert icon.availableSizes()
+
+
 class TestKindIcon:
     """课程树节点图标."""
 

@@ -3,7 +3,8 @@
 替代系统窗口框架. 样式引用 theme 的设计 token.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -39,7 +40,7 @@ class TitleBar(QWidget):
 
     HEIGHT = 36
 
-    def __init__(self, window, title: str, on_about=None):
+    def __init__(self, window, title: str, on_about=None, on_log=None):
         super().__init__(window)
         self._window = window
         self._drag_pos = None
@@ -64,6 +65,13 @@ class TitleBar(QWidget):
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Expanding,
                                    QSizePolicy.Minimum))
 
+        if on_log is not None:
+            log_btn = self._make_button("", on_log, object_name="log")
+            log_btn.setIcon(QIcon(artwork.log_icon(16)))
+            log_btn.setIconSize(QSize(16, 16))
+            log_btn.setToolTip("操作留痕")
+            log_btn.setFixedSize(32, self.HEIGHT - 8)
+            layout.addWidget(log_btn)
         if on_about is not None:
             about_btn = self._make_button("?", on_about)
             about_btn.setFixedSize(32, self.HEIGHT - 8)

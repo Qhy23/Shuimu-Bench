@@ -161,3 +161,22 @@ def chevron_icon(direction: str, size: int = 20) -> QIcon:
     painter.end()
     return QIcon(pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
                                Qt.TransformationMode.SmoothTransformation))
+
+
+def log_icon(size: int = 16) -> QIcon:
+    """日志(操作留痕)按钮图标: 圆角矩形描边 + 三横线, FG_DIM 单色."""
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    s = size * 2.0
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(_pen(theme.FG_DIM, max(1.5, size * 0.12)))
+    painter.drawRoundedRect(QRectF(s * 0.18, s * 0.14, s * 0.64, s * 0.72),
+                            s * 0.08, s * 0.08)
+    for i in range(3):
+        yy = s * (0.32 + 0.18 * i)
+        painter.drawLine(round(s * 0.3), round(yy), round(s * 0.7), round(yy))
+    painter.end()
+    return QIcon(pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation))

@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -53,7 +52,7 @@ from shuimu.core.schedule import (
     week_start,
 )
 from shuimu.gui import artwork, theme
-from shuimu.gui.dialogs import warn
+from shuimu.gui.dialogs import ok_cancel_box, warn
 from shuimu.gui.week_grid import WeekGridWidget
 
 class WeekPickerPopup(QWidget):
@@ -165,12 +164,7 @@ class ManualEntryDialog(QDialog):
             mode_row.addWidget(self.date_mode_btn)
             layout.addLayout(mode_row)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel, self)
-        buttons.accepted.connect(self._accept_if_valid)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        layout.addWidget(ok_cancel_box(self, self._accept_if_valid))
 
         if initial:
             self._prefill(initial)
@@ -333,12 +327,7 @@ class TodoDialog(QDialog):
         self.course_box.addItem("(不关联)")
         self.course_box.addItems(course_names)
         form.addRow("课程", self.course_box)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel, self)
-        buttons.accepted.connect(self._accept_if_valid)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        form.addRow(ok_cancel_box(self, self._accept_if_valid))
 
     def _accept_if_valid(self) -> None:
         """标题为空时警告且不关闭."""
