@@ -64,6 +64,11 @@ def user_data_dir() -> str:
     return os.path.join(base, "shuimu")
 
 
+def cli_history_path() -> str:
+    """REPL 命令历史文件(用户级, 跨会话持久; dev 模式也不入仓库)."""
+    return os.path.join(user_data_dir(), "cli_history")
+
+
 def default_workspace_root() -> str:
     """中栏文件浏览器的默认根目录.
 

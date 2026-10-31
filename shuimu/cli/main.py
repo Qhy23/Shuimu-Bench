@@ -2,7 +2,8 @@
 
 两种用法:
   一次性: python cli.py <子命令> [参数]
-  交互式: python cli.py            (不带子命令进入 REPL, 逐行输入命令)
+  交互式: python cli.py            (不带子命令进入 REPL, 逐行输入命令;
+                                     ↑↓ 历史/Tab 补全由 readline 提供)
 
 示例:
   python cli.py add-course 高等数学
@@ -20,13 +21,22 @@
 """
 
 import argparse
+import atexit
+import glob
+import os
 import shlex
 import sys
 from datetime import date, time, timedelta
 
+try:
+    import readline
+except ImportError:  # Windows 无标准库 readline, REPL 降级为无补全无历史
+    readline = None
+
 from shuimu.core import url_open
 from shuimu.core.controller import KIND_LABEL, Controller
 from shuimu.core.paths import (
+    cli_history_path,
     default_db_path,
     default_links_path,
     default_schedule_path,
@@ -508,10 +518,101 @@ def main(argv=None) -> int:
         storage.close()
 
 
+# ---- REPL 行编辑/历史/补全 (readline, 平台不支持时优雅降级) ----
+
+_REPL_KEYWORDS = ("exit", "help", "quit")
+
+
+def _subcommand_options(parser) -> dict:
+    """从解析器反射 {子命令: [选项串...]} (如 "--group/--yes").
+
+    逐 action 找 _SubParsersAction.choices, 再取各 subparser 的
+    option_strings; 不手工维护第二份清单.
+    """
+    result = {}
+    for action in getattr(parser, "_actions", []):
+        choices = getattr(action, "choices", None)
+        if not isinstance(choices, dict):
+            continue
+        for name, sub in choices.items():
+            result[name] = [opt for act in getattr(sub, "_actions", [])
+                            for opt in act.option_strings]
+    return result
+
+
+def _filename_candidates(word: str) -> list:
+    """文件名候选(glob, 目录补路径分隔符), 供路径类参数补全."""
+    candidates = []
+    for match in sorted(glob.glob(glob.escape(word) + "*")):
+        candidates.append(match + os.sep if os.path.isdir(match) else match)
+    return candidates
+
+
+def _completions(line: str, options_by_command: dict) -> list:
+    """对整行缓冲给出当前词的补全候选(纯逻辑, readline 适配与单测共用).
+
+    规则: 行首词补子命令名(含 REPL 关键字); "-" 开头词补当前子命令的
+    选项; 其余词补文件名. 词边界按空白分隔(与 set_completer_delims 一致).
+    """
+    if line and not line[-1].isspace():
+        split_at = max(line.rfind(" "), line.rfind("\t")) + 1
+        prior, word = line[:split_at], line[split_at:]
+    else:
+        prior, word = line.strip(), ""
+    prior_tokens = prior.split()
+    if not prior_tokens:
+        names = sorted([*options_by_command, *_REPL_KEYWORDS])
+        return [name for name in names if name.startswith(word)]
+    if word.startswith("-"):
+        opts = sorted(set(options_by_command.get(prior_tokens[0], [])))
+        return [opt for opt in opts if opt.startswith(word)]
+    return _filename_candidates(word)
+
+
+def _make_completer(options_by_command: dict):
+    """readline completer: 行缓冲经 _completions 取候选."""
+    def complete(text: str, state: int):
+        candidates = _completions(readline.get_line_buffer(),
+                                  options_by_command)
+        return candidates[state] if state < len(candidates) else None
+    return complete
+
+
+def _init_readline(options_by_command: dict) -> None:
+    """REPL 启用行编辑/跨会话历史/Tab 补全; 平台无 readline 则跳过."""
+    if readline is None:
+        return
+    readline.set_completer_delims(" \t\n")  # "-" 等属于词内字符(补全选项用)
+    readline.parse_and_bind("tab: complete")
+    readline.set_completer(_make_completer(options_by_command))
+    readline.set_history_length(500)
+    try:
+        readline.read_history_file(cli_history_path())
+    except OSError:
+        pass  # 首次运行无历史文件
+    atexit.register(_save_history)
+
+
+def _save_history() -> None:
+    """退出时持久化 REPL 历史(尽力而为, 失败不影响主流程)."""
+    if readline is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(cli_history_path()), exist_ok=True)
+        readline.write_history_file(cli_history_path())
+    except OSError:
+        pass
+
+
 def repl(ctl: Controller) -> int:
-    """交互模式: 一次启动, 逐行输入子命令; help 查看用法, exit/quit 退出."""
+    """交互模式: 一次启动, 逐行输入子命令; help 查看用法, exit/quit 退出.
+
+    行编辑/↑↓ 历史/Tab 补全由 readline 提供(Windows 无标准库
+    readline 时降级为普通输入).
+    """
     print("水木工作台 CLI 交互模式. 输入 help 查看命令, exit 退出.")
     parser = build_parser()
+    _init_readline(_subcommand_options(parser))
     while True:
         try:
             line = input("shuimu> ").strip()

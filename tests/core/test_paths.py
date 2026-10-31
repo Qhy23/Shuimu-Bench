@@ -6,6 +6,7 @@ import sys
 import yaml
 
 from shuimu.core.paths import (
+    cli_history_path,
     default_db_path,
     default_links_path,
     default_schedule_path,
@@ -93,3 +94,13 @@ class TestLinksPaths:
         path = default_links_path()
         assert str(tmp_path) in path
         monkeypatch.delattr(sys, "frozen", raising=False)
+
+
+class TestCliHistoryPath:
+    """REPL 命令历史路径(用户级, dev 模式也不入仓库)."""
+
+    def test_under_user_data_dir(self, monkeypatch, tmp_path):
+        """始终在用户数据目录下, 与 dev/frozen 无关."""
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        assert cli_history_path().endswith("cli_history")
+        assert str(tmp_path) in cli_history_path()

@@ -1,5 +1,6 @@
 """cli.py 单元测试: 子命令行为与退出码."""
 
+import importlib
 import os
 from copy import deepcopy
 
@@ -7,6 +8,10 @@ import pytest
 
 from shuimu.cli import main
 from shuimu.core.config import DEFAULTS
+
+# shuimu/cli/__init__.py 把 main 重导出为函数, 遮蔽了同名子模块属性;
+# 经 importlib 直取模块对象以访问 _completions 等实现.
+cli_main = importlib.import_module("shuimu.cli.main")
 
 CAL_FIXTURE = os.path.join(os.path.dirname(__file__), "..", "fixtures",
                            "portal_calendar_sample.html")
@@ -435,3 +440,47 @@ class TestLinksCommands:
         assert code == 0 and opened == ["https://learn.example.com"]
         code, _, err = run_links(capsys, db, links_yaml, "open-link", "没有")
         assert code == 2 and "没有" in err
+
+
+class TestReplCompletion:
+    """REPL Tab 补全候选(纯逻辑)."""
+
+    OPTIONS = {"add-link": ["--group"], "edit-link": ["--name", "--url",
+                                                      "--group"],
+               "links": [], "organize": ["--yes"]}
+
+    def test_first_word_subcommands_and_keywords(self):
+        """行首词补子命令名与 REPL 关键字, 按前缀过滤且有序."""
+        assert cli_main._completions("add-l", self.OPTIONS) == \
+            ["add-link"]
+        assert cli_main._completions("", self.OPTIONS)[0] == "add-link"
+        assert cli_main._completions("e", self.OPTIONS) == \
+            ["edit-link", "exit"]
+        assert cli_main._completions("help", self.OPTIONS) == ["help"]
+        assert cli_main._completions("zzz", self.OPTIONS) == []
+
+    def test_option_completion_for_current_command(self):
+        """'-'-开头词补当前子命令的选项."""
+        assert cli_main._completions("add-link --", self.OPTIONS) == \
+            ["--group"]
+        assert cli_main._completions("edit-link --na", self.OPTIONS) == \
+            ["--name"]
+        assert cli_main._completions("no-such --x", self.OPTIONS) == []
+
+    def test_trailing_space_completes_filenames(self, tmp_path, monkeypatch):
+        """子命令后接空格补文件名; 目录补路径分隔符."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "讲义.pdf").write_text("x")
+        (tmp_path / "课件").mkdir()
+        got = cli_main._completions("add 1 ", self.OPTIONS)
+        assert "课件" + os.sep in got and "讲义.pdf" in got
+        got = cli_main._completions("organize 讲", self.OPTIONS)
+        assert got == ["讲义.pdf"]
+
+    def test_subcommand_options_reflected_from_parser(self):
+        """选项清单从 build_parser 反射(含每个子命令自带的 -h/--help)."""
+        opts = cli_main._subcommand_options(cli_main.build_parser())
+        assert opts["add-link"] == ["-h", "--help", "--group"]
+        assert "--series" in opts["rm-event"]
+        assert "--name" in opts["edit-link"]
+        assert opts["links"] == ["-h", "--help"]
