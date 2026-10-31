@@ -1,6 +1,7 @@
 """主窗口与三栏 UI.
 
-左栏: 课程空间树(SQLite 索引) | 中栏: 文件浏览(直读磁盘) | 右栏: 日志/整理面板.
+左栏: 课程空间树(SQLite 索引) | 中栏: 工作区页签(文件/链接) |
+右栏: 整理/日程面板; 操作留痕经标题栏按钮弹出预览.
 浏览不等于登记: 中栏选中后点"加入课程"才入索引; 整理先预览再执行.
 """
 
@@ -8,28 +9,24 @@ import os
 import platform
 import shutil
 import subprocess
-import time
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QBrush, QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
-    QFileSystemModel,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QSizeGrip,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
-    QTreeView,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -37,12 +34,14 @@ from PySide6.QtWidgets import (
 )
 
 from shuimu import APP_VERSION
+from shuimu.core import url_open
 from shuimu.core.config import font_size_value
 from shuimu.core.controller import KIND_LABEL, Controller
-from shuimu.core.paths import default_workspace_root
 from shuimu.core.storage import Storage
 from shuimu.gui import artwork, theme
-from shuimu.gui.dialogs import warn
+from shuimu.gui.dialogs import LogPreviewDialog, warn
+from shuimu.gui.file_page import FileBrowserPage
+from shuimu.gui.links_page import LinksPage
 from shuimu.gui.schedule_view import ScheduleTab
 from shuimu.gui.titlebar import TitleBar
 
@@ -78,6 +77,11 @@ def _open_url(url: str) -> bool:
     return QDesktopServices.openUrl(QUrl(url))
 
 
+# URL 分发层的默认处理器在此注册: 链接资源与链接页统一经 url_open.open_url
+# 打开, 未来浏览器插件可注册内嵌方式与之并存(见 core/url_open.py).
+url_open.set_default(_open_url)
+
+
 def _in_wsl() -> bool:
     """是否运行在 WSL 内(内核版本号含 microsoft 或设置 WSL_DISTRO_NAME)."""
     return "microsoft" in platform.release().lower() or bool(
@@ -106,15 +110,16 @@ def _wslview_open(target: str):
 class MainWindow(QMainWindow):
     """三栏主窗口(无边框, 自绘标题栏)."""
 
-    def __init__(self, storage: Storage, schedule_path: str = None):
+    def __init__(self, storage: Storage, schedule_path: str = None,
+                 links_path: str = None):
         super().__init__()
         self.storage = storage
-        self.ctl = Controller(storage, schedule_path=schedule_path)
+        self.ctl = Controller(storage, schedule_path=schedule_path,
+                              links_path=links_path)
         self._plan = []
         self.dir_edit = None
         self.plan_table = None
-        self.root_edit = None
-        self.workspace_root = default_workspace_root()
+        self._log_dialog = None
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
@@ -123,7 +128,8 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
         self.title_bar = TitleBar(self, self.ctl.config["app"]["title"],
-                                  on_about=self._show_about)
+                                  on_about=self._show_about,
+                                  on_log=self._open_log_dialog)
         self.setWindowIcon(QIcon(artwork.bench_icon(256)))
         container_layout.addWidget(self.title_bar)
 
@@ -141,7 +147,6 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(grip)
 
         self.reload_courses()
-        self.refresh_log()
         self.statusBar().showMessage("就绪")
 
     def _show_about(self) -> None:
@@ -190,6 +195,7 @@ class MainWindow(QMainWindow):
         """应用全局字号: 刷新 QSS 并联动自绘部件."""
         theme.apply_theme(QApplication.instance(), font_px)
         self.schedule_tab.set_font_px(theme.current_font_px())
+        self.links_page.set_font_px(theme.current_font_px())
         self.title_bar.set_font_px(theme.current_font_px())
         self.reload_courses()  # 树节点图标随字号重建
         if not quiet:
@@ -217,70 +223,62 @@ class MainWindow(QMainWindow):
         layout.addLayout(row2)
 
     def _build_center(self) -> None:
-        panel = QWidget(self.splitter)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        # 路径栏: 显示并调整中栏工作目录
-        row = QHBoxLayout()
-        self.root_edit = QLineEdit(self.workspace_root)
-        self.root_edit.setToolTip("中栏工作目录, 回车生效")
-        self.root_edit.returnPressed.connect(self._apply_root_edit)
-        row.addWidget(self.root_edit)
-        row.addWidget(_button("上级", self._go_up))
-        row.addWidget(_button("浏览...", self._pick_workspace_root))
-        layout.addLayout(row)
-        self.file_model = QFileSystemModel(panel)
-        self.file_model.setRootPath("")  # 模型挂载整个文件系统, 视图定位到工作目录
-        self.file_view = QTreeView(panel)
-        self.file_view.setModel(self.file_model)
-        self.file_view.setRootIndex(self.file_model.index(self.workspace_root))
-        self.file_view.setColumnWidth(0, 260)
-        self.file_view.doubleClicked.connect(self._on_browser_double_clicked)
-        layout.addWidget(self.file_view)
-        layout.addWidget(_button("加入选中课程", self._add_selected_files))
+        self.center_tabs = QTabWidget(self.splitter)
+        self.file_page = FileBrowserPage(parent=self.center_tabs)
+        self.file_page.add_requested.connect(self._on_add_requested)
+        self.file_page.open_requested.connect(self._on_open_requested)
+        self.file_page.status_message.connect(self.statusBar().showMessage)
+        self.center_tabs.addTab(self.file_page, "文件")
+        self.links_page = LinksPage(self.ctl, self.center_tabs)
+        self.center_tabs.addTab(self.links_page, "链接")
+        self.center_tabs.currentChanged.connect(self._on_center_tab_changed)
+
+    def _on_center_tab_changed(self, index: int) -> None:
+        """切到链接页时刷新列表(兜底 data/links.yaml 被外部编辑)."""
+        if self.center_tabs.widget(index) is self.links_page:
+            self.links_page.reload()
+
+    @property
+    def workspace_root(self) -> str:
+        """中栏工作目录(转发文件页)."""
+        return self.file_page.workspace_root
 
     def set_workspace_root(self, path: str) -> bool:
-        """调整中栏工作目录. 成功返回 True 并同步路径栏与视图."""
-        path = os.path.abspath(os.path.expanduser(path.strip()))
-        if not os.path.isdir(path):
-            self.statusBar().showMessage(f"目录不存在: {path}")
-            self.root_edit.setText(self.workspace_root)
-            warn(self, "无效的工作目录",
-                  f"目录不存在或不可访问:\n{path}\n\n已保持当前工作目录不变.")
-            return False
-        self.workspace_root = path
-        self.root_edit.setText(path)
-        self.file_view.setRootIndex(self.file_model.index(path))
-        self.statusBar().showMessage(f"工作目录: {path}")
-        return True
+        """调整中栏工作目录(转发文件页)."""
+        return self.file_page.set_workspace_root(path)
 
-    def _apply_root_edit(self) -> None:
-        self.set_workspace_root(self.root_edit.text())
-
-    def _pick_workspace_root(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "选择工作目录", self.workspace_root)
-        if path:
-            self.set_workspace_root(path)
-
-    def _go_up(self) -> None:
-        parent = os.path.dirname(self.workspace_root)
-        if parent != self.workspace_root:
-            self.set_workspace_root(parent)
-
-    def _on_browser_double_clicked(self, index) -> None:
-        """双击目录进入该目录, 双击文件用系统默认程序打开."""
-        if self.file_model.isDir(index):
-            self.set_workspace_root(self.file_model.filePath(index))
+    def _on_add_requested(self, path: str) -> None:
+        """文件页请求把选中项登记进当前课程."""
+        course_id = self._current_course_id()
+        if course_id is None:
+            self.statusBar().showMessage("请先在左栏选中一门课程")
             return
-        path = self.file_model.filePath(index)
+        result = self.ctl.add_resource(course_id, path)
+        self.statusBar().showMessage(result.message)
+        if result.ok:
+            self.reload_courses()
+
+    def _on_open_requested(self, path: str) -> None:
+        """文件页请求用系统默认程序打开文件."""
         if not _open_local(path):
             self.statusBar().showMessage(f"无法打开: {path}")
 
+    def _open_log_dialog(self) -> None:
+        """打开操作留痕预览(非模态, 可常开对照)."""
+        if self._log_dialog is None:
+            self._log_dialog = LogPreviewDialog(self.storage, self)
+            self._log_dialog.finished.connect(self._on_log_dialog_closed)
+        self._log_dialog.refresh()
+        self._log_dialog.show()
+        self._log_dialog.raise_()
+        self._log_dialog.activateWindow()
+
+    def _on_log_dialog_closed(self) -> None:
+        """预览关闭后清引用, 下次点击重建."""
+        self._log_dialog = None
+
     def _build_right(self) -> None:
         self.tabs = QTabWidget(self.splitter)
-        self.log_view = QPlainTextEdit(readOnly=True)
-        self.tabs.addTab(self.log_view, "日志")
         self.tabs.addTab(self._build_organize_tab(), "整理")
         self.schedule_tab = ScheduleTab(self.ctl, self.tabs)
         self.tabs.addTab(self.schedule_tab, "日程")
@@ -365,22 +363,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(result.message)
         if result.ok:
             self.reload_courses()
-            self.refresh_log()
-
-    def _add_selected_files(self) -> None:
-        course_id = self._current_course_id()
-        if course_id is None:
-            self.statusBar().showMessage("请先在左栏选中一门课程")
-            return
-        index = self.file_view.currentIndex()
-        if not index.isValid():
-            self.statusBar().showMessage("请先在中栏选中文件或目录")
-            return
-        result = self.ctl.add_resource(course_id, self.file_model.filePath(index))
-        self.statusBar().showMessage(result.message)
-        if result.ok:
-            self.reload_courses()
-            self.refresh_log()
 
     def _delete_course(self) -> None:
         """删除选中课程: 确认后级联移除其资源索引, 磁盘文件不动."""
@@ -403,7 +385,6 @@ class MainWindow(QMainWindow):
         result = self.ctl.delete_course(course_id)
         self.statusBar().showMessage(result.message)
         self.reload_courses()
-        self.refresh_log()
 
     def _remove_selected(self) -> None:
         item = self.course_tree.currentItem()
@@ -424,7 +405,6 @@ class MainWindow(QMainWindow):
         result = self.ctl.remove_resource(rid)
         self.statusBar().showMessage(result.message)
         self.reload_courses()
-        self.refresh_log()
 
     def _on_resource_activated(self, item, _column) -> None:
         """双击资源: 链接用浏览器打开, 文件用系统默认程序打开, 目录在中栏定位."""
@@ -436,7 +416,7 @@ class MainWindow(QMainWindow):
             return
         path = res["path_or_url"]
         if res["kind"] == "link":
-            if not _open_url(path):
+            if not url_open.open_url(path):
                 self.statusBar().showMessage(f"无法打开链接: {path}")
             return
         if not os.path.exists(path):
@@ -451,21 +431,6 @@ class MainWindow(QMainWindow):
             return
         self.set_workspace_root(path)
 
-    # ---- 右栏: 日志 ----
-
-    def refresh_log(self) -> None:
-        """从 operations 表重建日志视图."""
-        lines = []
-        for op in self.storage.list_operations():
-            ts = time.strftime("%m-%d %H:%M:%S", time.localtime(op["started_at"]))
-            parts = [f"[{ts}]", op["status"], op["action"]]
-            if op["path_snapshot"]:
-                parts.append(op["path_snapshot"])
-            if op["detail"]:
-                parts.append(str(op["detail"]))
-            lines.append(" ".join(parts))
-        self.log_view.setPlainText("\n".join(lines) or "(暂无操作记录)")
-
     # ---- 右栏: 整理 ----
 
     def _pick_dir(self) -> None:
@@ -474,13 +439,10 @@ class MainWindow(QMainWindow):
             self.dir_edit.setText(path)
 
     def _use_browser_dir(self) -> None:
-        index = self.file_view.currentIndex()
-        if not index.isValid():
+        path = self.file_page.current_dir()
+        if path is None:
             self.statusBar().showMessage("请先在中栏选中目录")
             return
-        path = self.file_model.filePath(index)
-        if os.path.isfile(path):
-            path = os.path.dirname(path)
         self.dir_edit.setText(path)
 
     def _preview_plan(self) -> None:
@@ -506,10 +468,8 @@ class MainWindow(QMainWindow):
             self, "执行整理", f"将移动 {len(plan)} 个文件, 确认执行?")
         if answer != QMessageBox.StandardButton.Yes:
             self.ctl.cancel_organize(directory)
-            self.refresh_log()
             return
         result = self.ctl.execute_organize(directory, plan)
         self.plan_table.setRowCount(0)
         self._plan = []
-        self.refresh_log()
         self.statusBar().showMessage(result.message)
