@@ -43,6 +43,6 @@ pylint --rcfile=../.pylintrc main.py shuimu/ tests/   # lint(配置在课程根�
 - 数据库: `project/data/shuimu.db`(SQLite, WAL; 已 gitignore).
 - 三表: `courses`(课程), `resources`(索引: kind 为 file/dir/link, 文件类统一存绝对路径 + size/mtime), `operations`(操作留痕, params/detail 为 JSON).
 - 日程数据: `project/data/schedule.yaml`(独立于 SQLite; gitignore), 模板 `data/schedule.example.yaml` 随仓库分发; 纯逻辑在 `shuimu/core/schedule.py`, 页签在 `shuimu/gui/schedule_view.py`.
-- 常用链接: `project/data/links.yaml`(独立于 SQLite; gitignore), 模板 `data/links.example.yaml` 随仓库分发; 纯逻辑在 `shuimu/core/quicklinks.py`, 页签在 `shuimu/gui/links_page.py`(中栏"链接"页, 经 `core/url_open.py` 分发层调系统浏览器打开, 为未来浏览器插件预留注册口).
+- 常用链接: `project/data/links.yaml`(独立于 SQLite; gitignore), 模板 `data/links.example.yaml` 随仓库分发; 条目可带 `group` 分组(平铺字段, 组名不持久化, 显示时由 `grouped_links` 派生: 首现顺序+未分组末尾); 纯逻辑在 `shuimu/core/quicklinks.py`, 分组树页签在 `shuimu/gui/links_page.py`(中栏"链接"页, 经 `core/url_open.py` 分发层调系统浏览器打开, 为未来浏览器插件预留注册口).
 - 索引只存引用, 不复制文件本体; 文件失效保留记录, 由 UI 标灰.
 - 测试伪资料: 课程根目录 `content/`(仓库外), 单元测试一律用 tmp_path 保持隔离.

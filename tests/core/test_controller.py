@@ -333,15 +333,23 @@ class TestQuickLinkActions:
 
     def test_add(self, ctl):
         """添加落盘并留痕(params/detail 为 JSON)."""
-        result = ctl.add_quick_link("  学堂  ", "  https://learn.example.com  ")
+        result = ctl.add_quick_link("  学堂  ", "  https://learn.example.com  ",
+                                    " 信息化服务 ")
         assert result.ok
         links = ctl.list_quick_links()
-        assert links == [QuickLink("学堂", "https://learn.example.com")]
+        assert links == [QuickLink("学堂", "https://learn.example.com",
+                                   "信息化服务")]
         ops = ctl.storage.list_operations()
         assert ops[0]["action"] == "add_quick_link"
         assert json.loads(ops[0]["params"]) == {"name": "学堂"}
-        assert json.loads(ops[0]["detail"]) == {"url":
-                                                "https://learn.example.com"}
+        assert json.loads(ops[0]["detail"]) == {
+            "url": "https://learn.example.com", "group": "信息化服务"}
+
+    def test_add_without_group(self, ctl):
+        """group 缺省为未分组, 落盘条目不带 group 键."""
+        ctl.add_quick_link("散链", "https://misc.example.com")
+        assert ctl.list_quick_links() == [
+            QuickLink("散链", "https://misc.example.com", "")]
 
     def test_add_rejects_bad_input(self, ctl):
         """重名/空名/非 http 前缀拒绝且不留痕不落盘."""
@@ -354,19 +362,33 @@ class TestQuickLinkActions:
         assert len(ctl.list_quick_links()) == 1
 
     def test_update(self, ctl):
-        """改名改址写回并留痕, 改名时与新名冲突拒绝."""
-        ctl.add_quick_link("学堂", "https://learn.example.com")
-        ctl.add_quick_link("门户", "https://info.example.com")
+        """改名改址改组写回并留痕, 改名时与新名冲突拒绝."""
+        ctl.add_quick_link("学堂", "https://learn.example.com", "信息化服务")
+        ctl.add_quick_link("门户", "https://info.example.com", "信息门户")
         result = ctl.update_quick_link("学堂", "网络学堂",
-                                       "https://learn2.example.com")
+                                       "https://learn2.example.com",
+                                       "资源查找")
         assert result.ok
         links = ctl.list_quick_links()
-        assert links[0] == QuickLink("网络学堂", "https://learn2.example.com")
+        assert links[0] == QuickLink("网络学堂", "https://learn2.example.com",
+                                     "资源查找")
         ops = ctl.storage.list_operations()
         assert ops[0]["action"] == "update_quick_link"
         assert ops[0]["path_snapshot"] == "学堂"
+        assert json.loads(ops[0]["detail"])["group"] == "资源查找"
         assert not ctl.update_quick_link("网络学堂", "门户",
                                          "https://x.example.com").ok
+
+    def test_update_moves_group(self, ctl):
+        """改到未分组: group 置空, 条目位置不变."""
+        ctl.add_quick_link("学堂", "https://learn.example.com", "AI工具")
+        ctl.add_quick_link("门户", "https://info.example.com")
+        result = ctl.update_quick_link("学堂", "学堂",
+                                       "https://learn.example.com")
+        assert result.ok
+        links = ctl.list_quick_links()
+        assert [link.name for link in links] == ["学堂", "门户"]  # 原地更新
+        assert links[0].group == ""
 
     def test_update_missing(self, ctl):
         """定位不到条目返回失败."""

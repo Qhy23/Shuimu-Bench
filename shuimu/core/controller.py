@@ -350,9 +350,10 @@ class Controller:
         """常用链接列表(只读, 不留痕)."""
         return self._links_snapshot()
 
-    def add_quick_link(self, name: str, url: str) -> ActionResult:
-        """新增常用链接, 写回 YAML 并留痕."""
-        name, url = name.strip(), url.strip()
+    def add_quick_link(self, name: str, url: str,
+                       group: str = "") -> ActionResult:
+        """新增常用链接(可带分组), 写回 YAML 并留痕."""
+        name, url, group = name.strip(), url.strip(), group.strip()
         if not name:
             return ActionResult(False, "名称不能为空")
         if not url.startswith(("http://", "https://")):
@@ -360,19 +361,23 @@ class Controller:
         links = self._links_snapshot()
         if any(link.name == name for link in links):
             return ActionResult(False, f"名称已存在: {name}")
-        links.append(QuickLink(name, url))
+        links.append(QuickLink(name, url, group))
         try:
             save_quick_links(self.links_path, links)
         except OSError as exc:
             return ActionResult(False, f"保存失败: {exc}")
         self.storage.log_operation(
-            "add_quick_link", params={"name": name}, detail={"url": url})
+            "add_quick_link", params={"name": name},
+            detail={"url": url, "group": group})
         return ActionResult(True, f"已添加链接 {name}", {"name": name})
 
-    def update_quick_link(self, old_name: str, name: str,
-                          url: str) -> ActionResult:
-        """按旧名称定位修改常用链接, 写回 YAML 并留痕."""
-        name, url = name.strip(), url.strip()
+    def update_quick_link(self, old_name: str, name: str, url: str,
+                          group: str = "") -> ActionResult:
+        """按旧名称定位修改常用链接(含分组), 写回 YAML 并留痕.
+
+        改分组为原地更新: 条目在文件中的位置不变, 显示分组由渲染层重聚.
+        """
+        name, url, group = name.strip(), url.strip(), group.strip()
         if not name:
             return ActionResult(False, "名称不能为空")
         if not url.startswith(("http://", "https://")):
@@ -384,14 +389,14 @@ class Controller:
                 False, f"链接不存在: {old_name}(文件可能已被外部修改)")
         if name != old_name and any(link.name == name for link in links):
             return ActionResult(False, f"名称已存在: {name}")
-        target.name, target.url = name, url
+        target.name, target.url, target.group = name, url, group
         try:
             save_quick_links(self.links_path, links)
         except OSError as exc:
             return ActionResult(False, f"保存失败: {exc}")
         self.storage.log_operation(
             "update_quick_link", path_snapshot=old_name,
-            params={"name": name}, detail={"url": url})
+            params={"name": name}, detail={"url": url, "group": group})
         scope = name if name == old_name else f"{old_name} -> {name}"
         return ActionResult(True, f"已更新链接 {scope}")
 

@@ -4,7 +4,10 @@
 纯 YAML; GUI 保存(添加/编辑/删除)会全量重写该文件, 手写注释会丢失.
 
 schema:
-  links: [{name, url}]   # name 显示名称(约定唯一, url 须以 http:// 或 https:// 开头)
+  links: [{name, url, group?}]   # name 显示名称(全局唯一), url 须以 http://
+                                 # 或 https:// 开头, group 可选分组(缺省未分组)
+分组是链接的属性而非独立实体: 组名不单独持久化, 显示时由 grouped_links
+从条目派生(首现顺序, 未分组末尾), 不存在孤儿组.
 """
 
 import os
@@ -14,7 +17,8 @@ import yaml
 
 from shuimu.core.yamlio import atomic_write_yaml, ensure_from_template
 
-HEADER = ("# 水木工作台常用链接(name 显示名称, url 须以 http:// 或 https:// 开头).\n"
+HEADER = ("# 水木工作台常用链接(name 显示名称, url 须以 http:// 或 https:// 开头,\n"
+          "# group 可选分组, 留空或省略为\"未分组\").\n"
           "# 注意: GUI 保存会重写本文件, 手写注释会丢失.\n")
 
 
@@ -24,6 +28,7 @@ class QuickLink:
 
     name: str
     url: str
+    group: str = ""
 
 
 def parse_quick_link(raw) -> QuickLink:
@@ -37,7 +42,10 @@ def parse_quick_link(raw) -> QuickLink:
     if not isinstance(url, str) or not url.strip().startswith(
             ("http://", "https://")):
         raise ValueError("url 须以 http:// 或 https:// 开头")
-    return QuickLink(name.strip(), url.strip())
+    group = raw.get("group") or ""
+    if not isinstance(group, str):
+        raise ValueError("group 须为字符串")
+    return QuickLink(name.strip(), url.strip(), group.strip())
 
 
 def load_quick_links(path: str) -> list:
@@ -70,10 +78,32 @@ def load_quick_links(path: str) -> list:
 def save_quick_links(path: str, links: list) -> None:
     """全量重写链接文件. 原子替换: 先写 .tmp 再 os.replace.
 
-    OSError 由调用方(Controller)处理.
+    group 为空不落键, 保持文件干净. OSError 由调用方(Controller)处理.
     """
-    root = {"links": [{"name": link.name, "url": link.url} for link in links]}
+    root = {"links": [
+        {"name": link.name, "url": link.url,
+         **({"group": link.group} if link.group else {})}
+        for link in links]}
     atomic_write_yaml(path, root, HEADER)
+
+
+def grouped_links(links: list) -> list:
+    """按 group 聚合为 [(组名, [QuickLink...])...].
+
+    组按文件内首次出现顺序排列; 空组名("")即"未分组", 固定在最后且
+    仅在有条目时出现. 派生自条目本身, 供 GUI 分组树与下拉建议共用.
+    """
+    groups: dict = {}
+    ungrouped = []
+    for link in links:
+        if link.group:
+            groups.setdefault(link.group, []).append(link)
+        else:
+            ungrouped.append(link)
+    result = list(groups.items())
+    if ungrouped:
+        result.append(("", ungrouped))
+    return result
 
 
 def ensure_links_file(path: str, template_path: str = None) -> bool:

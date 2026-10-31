@@ -1,13 +1,63 @@
 # 水木工作台常用链接模板(links.example.yaml).
 # 首次运行时复制为 data/links.yaml, 程序实际读取的是后者(可在其中自由编辑).
-# 条目: name 显示名称(须唯一), url 须以 http:// 或 https:// 开头.
+# 条目: name 显示名称(全局唯一), url 须以 http:// 或 https:// 开头,
+#       group 可选分组(留空或省略为"未分组"; 分组按首次出现顺序显示).
 # 注意: GUI 保存(添加/编辑/删除)会重写 data/links.yaml, 手写注释会丢失.
 links:
-  - name: 网络学堂
-    url: https://learn.tsinghua.edu.cn
   - name: 信息门户
     url: https://info.tsinghua.edu.cn
+    group: 信息门户
+  - name: WebVPN
+    url: https://webvpn.tsinghua.edu.cn
+    group: 信息门户
+  - name: 清华大学
+    url: https://www.tsinghua.edu.cn
+    group: 信息门户
+  - name: 学生清华
+    url: https://student.tsinghua.edu.cn
+    group: 信息门户
+
+  - name: 选课系统
+    url: https://zhjwxk.cic.tsinghua.edu.cn/xklogin.do
+    group: 课堂资源
+  - name: 网络学堂
+    url: https://learn.tsinghua.edu.cn
+    group: 课堂资源
+  - name: 雨课堂
+    url: https://pro.yuketang.cn
+    group: 课堂资源
+
   - name: 图书馆
     url: https://lib.tsinghua.edu.cn
+    group: 资源查找
+  - name: 教学参考书服务平台
+    url: https://ereserves.lib.tsinghua.edu.cn
+    group: 资源查找
+
+  - name: 信息化用户服务
+    url: https://its.tsinghua.edu.cn
+    group: 信息化服务
   - name: 邮箱
-    url: https://mail.tsinghua.edu.cn
+    url: https://mails.tsinghua.edu.cn
+    group: 信息化服务
+  - name: 清华云盘
+    url: https://cloud.tsinghua.edu.cn
+    group: 信息化服务
+  - name: 问卷系统
+    url: https://wenjuan.tsinghua.edu.cn
+    group: 信息化服务
+  - name: 算力调度信息系统
+    url: https://easycompute.cs.tsinghua.edu.cn
+    group: 信息化服务
+  - name: 校园网自服务平台
+    url: https://usereg.tsinghua.edu.cn
+    group: 信息化服务
+  - name: tuna 开源软件镜像站
+    url: https://mirrors.tuna.tsinghua.edu.cn
+    group: 信息化服务
+  - name: 清华大学 GitLab
+    url: https://git.tsinghua.edu.cn
+    group: 信息化服务
+  - name: Tsinghua Overleaf
+    url: https://overleaf.tsinghua.edu.cn
+    group: 信息化服务
