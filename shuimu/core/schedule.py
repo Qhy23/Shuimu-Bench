@@ -11,11 +11,12 @@ schema 三段:
 """
 
 import os
-import shutil
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
 
 import yaml
+
+from shuimu.core.yamlio import atomic_write_yaml, ensure_from_template
 
 HEADER = ("# 水木工作台日程数据(courses=导入课程, manual=手动事件, todos=待办).\n"
           "# 注意: GUI 保存会重写本文件, 手写注释会丢失.\n")
@@ -246,12 +247,7 @@ def save_schedule(path: str, data: ScheduleData) -> None:
             for t in data.todos
         ],
     }
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(HEADER)
-        yaml.safe_dump(root, f, allow_unicode=True, sort_keys=False)
-    os.replace(tmp, path)
+    atomic_write_yaml(path, root, HEADER)
 
 
 def ensure_schedule_file(path: str, template_path: str = None) -> bool:
@@ -259,17 +255,8 @@ def ensure_schedule_file(path: str, template_path: str = None) -> bool:
 
     模板缺失/不可复制时退化为写入仅含头部说明与空三段的骨架.
     """
-    if os.path.exists(path):
-        return False
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    if template_path and os.path.isfile(template_path):
-        try:
-            shutil.copyfile(template_path, path)
-            return True
-        except OSError:
-            pass  # 复制失败, 落到写骨架
-    save_schedule(path, ScheduleData())
-    return True
+    return ensure_from_template(
+        path, template_path, lambda p: save_schedule(p, ScheduleData()))
 
 
 # ---- 周计算与聚合 ----
