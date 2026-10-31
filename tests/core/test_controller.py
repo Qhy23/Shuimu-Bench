@@ -9,17 +9,21 @@ import pytest
 
 from shuimu.core.config import DEFAULTS
 from shuimu.core.controller import Controller, detect_kind
+from shuimu.core.quicklinks import QuickLink
 from shuimu.core.schedule import Event, save_schedule
 from shuimu.core.storage import Storage
 
 
 @pytest.fixture()
 def ctl(tmp_path, monkeypatch):
-    """每个测试用独立的 controller + 临时数据库 + 临时日程文件(模板隔离)."""
+    """每个测试用独立的 controller + 临时数据库 + 临时日程/链接文件(模板隔离)."""
     monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
                         lambda: str(tmp_path / "no-such-template.yaml"))
+    monkeypatch.setattr("shuimu.core.controller.template_links_path",
+                        lambda: str(tmp_path / "no-such-links-template.yaml"))
     storage = Storage(str(tmp_path / "ctl.db"))
-    yield Controller(storage, schedule_path=str(tmp_path / "s.yaml"))
+    yield Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
+                     links_path=str(tmp_path / "links.yaml"))
     storage.close()
 
 
@@ -315,3 +319,67 @@ class TestManualActions:
         """定位不到条目返回失败."""
         ghost = self._event(26)
         assert not ctl.remove_event("manual", ghost).ok
+
+
+class TestQuickLinkActions:
+    """常用链接动作."""
+
+    def test_list_seeds_lazily(self, ctl, tmp_path):
+        """首次读取播种数据文件(模板缺失退化为骨架), 列表为空."""
+        path = tmp_path / "links.yaml"
+        assert not path.exists()
+        assert not ctl.list_quick_links()
+        assert path.exists()
+
+    def test_add(self, ctl):
+        """添加落盘并留痕(params/detail 为 JSON)."""
+        result = ctl.add_quick_link("  学堂  ", "  https://learn.example.com  ")
+        assert result.ok
+        links = ctl.list_quick_links()
+        assert links == [QuickLink("学堂", "https://learn.example.com")]
+        ops = ctl.storage.list_operations()
+        assert ops[0]["action"] == "add_quick_link"
+        assert json.loads(ops[0]["params"]) == {"name": "学堂"}
+        assert json.loads(ops[0]["detail"]) == {"url":
+                                                "https://learn.example.com"}
+
+    def test_add_rejects_bad_input(self, ctl):
+        """重名/空名/非 http 前缀拒绝且不留痕不落盘."""
+        ctl.add_quick_link("学堂", "https://learn.example.com")
+        before = len(ctl.storage.list_operations())
+        assert not ctl.add_quick_link("学堂", "https://other.example.com").ok
+        assert not ctl.add_quick_link("  ", "https://x.example.com").ok
+        assert not ctl.add_quick_link("门户", "info.example.com").ok
+        assert len(ctl.storage.list_operations()) == before
+        assert len(ctl.list_quick_links()) == 1
+
+    def test_update(self, ctl):
+        """改名改址写回并留痕, 改名时与新名冲突拒绝."""
+        ctl.add_quick_link("学堂", "https://learn.example.com")
+        ctl.add_quick_link("门户", "https://info.example.com")
+        result = ctl.update_quick_link("学堂", "网络学堂",
+                                       "https://learn2.example.com")
+        assert result.ok
+        links = ctl.list_quick_links()
+        assert links[0] == QuickLink("网络学堂", "https://learn2.example.com")
+        ops = ctl.storage.list_operations()
+        assert ops[0]["action"] == "update_quick_link"
+        assert ops[0]["path_snapshot"] == "学堂"
+        assert not ctl.update_quick_link("网络学堂", "门户",
+                                         "https://x.example.com").ok
+
+    def test_update_missing(self, ctl):
+        """定位不到条目返回失败."""
+        assert not ctl.update_quick_link("不存在", "x",
+                                         "https://x.example.com").ok
+
+    def test_remove(self, ctl):
+        """删除写回并留痕; 不存在返回失败."""
+        ctl.add_quick_link("学堂", "https://learn.example.com")
+        result = ctl.remove_quick_link("学堂")
+        assert result.ok
+        assert not ctl.list_quick_links()
+        ops = ctl.storage.list_operations()
+        assert ops[0]["action"] == "remove_quick_link"
+        assert ops[0]["path_snapshot"] == "学堂"
+        assert not ctl.remove_quick_link("学堂").ok

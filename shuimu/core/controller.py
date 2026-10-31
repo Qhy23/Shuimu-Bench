@@ -15,7 +15,18 @@ from shuimu.core.config import (
     semester_week_count,
 )
 from shuimu.core.organize import build_plan, execute_plan
-from shuimu.core.paths import default_schedule_path, template_schedule_path
+from shuimu.core.paths import (
+    default_links_path,
+    default_schedule_path,
+    template_links_path,
+    template_schedule_path,
+)
+from shuimu.core.quicklinks import (
+    QuickLink,
+    ensure_links_file,
+    load_quick_links,
+    save_quick_links,
+)
 from shuimu.core.schedule import (
     Event,
     ScheduleData,
@@ -53,14 +64,16 @@ class Controller:
     """业务动作集合, 持有 Storage 与配置. 无界面状态."""
 
     def __init__(self, storage: Storage, config: dict = None,
-                 schedule_path: str = None):
+                 schedule_path: str = None, links_path: str = None):
         self.storage = storage
         self.config = config or load_config()
         self.organize_rules = organize_rules(self.config)
         self.schedule_path = schedule_path or default_schedule_path()
+        self.links_path = links_path or default_links_path()
         self._semester_start = semester_start_date(self.config)
         self._week_count = semester_week_count(self.config)
         self._schedule_seeded = False
+        self._links_seeded = False
         self.storage.ensure_default_course(self.config["course"]["default_name"])
 
     def add_course(self, name: str) -> ActionResult:
@@ -323,3 +336,78 @@ class Controller:
     def course_names(self) -> list:
         """课程名列表, 供新建待办对话框下拉."""
         return [c["name"] for c in self.storage.list_courses()]
+
+    # ---- 常用链接 ----
+
+    def _links_snapshot(self) -> list:
+        """当前常用链接列表. 首次调用或数据文件缺失时(重新)播种."""
+        if not self._links_seeded or not os.path.isfile(self.links_path):
+            ensure_links_file(self.links_path, template_links_path())
+            self._links_seeded = True
+        return load_quick_links(self.links_path)
+
+    def list_quick_links(self) -> list:
+        """常用链接列表(只读, 不留痕)."""
+        return self._links_snapshot()
+
+    def add_quick_link(self, name: str, url: str) -> ActionResult:
+        """新增常用链接, 写回 YAML 并留痕."""
+        name, url = name.strip(), url.strip()
+        if not name:
+            return ActionResult(False, "名称不能为空")
+        if not url.startswith(("http://", "https://")):
+            return ActionResult(False, "URL 须以 http:// 或 https:// 开头")
+        links = self._links_snapshot()
+        if any(link.name == name for link in links):
+            return ActionResult(False, f"名称已存在: {name}")
+        links.append(QuickLink(name, url))
+        try:
+            save_quick_links(self.links_path, links)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "add_quick_link", params={"name": name}, detail={"url": url})
+        return ActionResult(True, f"已添加链接 {name}", {"name": name})
+
+    def update_quick_link(self, old_name: str, name: str,
+                          url: str) -> ActionResult:
+        """按旧名称定位修改常用链接, 写回 YAML 并留痕."""
+        name, url = name.strip(), url.strip()
+        if not name:
+            return ActionResult(False, "名称不能为空")
+        if not url.startswith(("http://", "https://")):
+            return ActionResult(False, "URL 须以 http:// 或 https:// 开头")
+        links = self._links_snapshot()
+        target = next((link for link in links if link.name == old_name), None)
+        if target is None:
+            return ActionResult(
+                False, f"链接不存在: {old_name}(文件可能已被外部修改)")
+        if name != old_name and any(link.name == name for link in links):
+            return ActionResult(False, f"名称已存在: {name}")
+        target.name, target.url = name, url
+        try:
+            save_quick_links(self.links_path, links)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "update_quick_link", path_snapshot=old_name,
+            params={"name": name}, detail={"url": url})
+        scope = name if name == old_name else f"{old_name} -> {name}"
+        return ActionResult(True, f"已更新链接 {scope}")
+
+    def remove_quick_link(self, name: str) -> ActionResult:
+        """删除常用链接, 写回 YAML 并留痕."""
+        links = self._links_snapshot()
+        target = next((link for link in links if link.name == name), None)
+        if target is None:
+            return ActionResult(
+                False, f"链接不存在: {name}(文件可能已被外部修改)")
+        links.remove(target)
+        try:
+            save_quick_links(self.links_path, links)
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        self.storage.log_operation(
+            "remove_quick_link", path_snapshot=name,
+            detail={"url": target.url})
+        return ActionResult(True, f"已删除链接 {name}")
