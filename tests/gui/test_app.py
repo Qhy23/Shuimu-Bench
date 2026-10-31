@@ -186,9 +186,19 @@ def test_resource_activated_link_uses_open_url(qtbot, tmp_path, monkeypatch):
     storage.close()
 
 
-def test_url_open_default_registered():
-    """导入主窗口模块后, 系统浏览器打开方式已注册为默认处理器."""
-    assert url_open._state["default"] == shuimu_app._open_url
+def test_url_open_routes_to_gui_opener(monkeypatch):
+    """GUI 打开方式注入分发层后, open_url 经 _open_url 走 QDesktopServices.
+
+    (单测进程内 CLI/GUI 入口都会注册默认处理器, 直接断言全局残留会依赖
+    测试执行顺序; 故此处显式注入 GUI 版验证整条分发链路.)
+    """
+    monkeypatch.setattr(url_open, "_state", {"default": None, "registry": {}})
+    monkeypatch.setattr(shuimu_app, "_wslview_open", lambda t: None)
+    desktop, calls = _fake_desktop()
+    monkeypatch.setattr(shuimu_app, "QDesktopServices", desktop)
+    url_open.set_default(shuimu_app._open_url)
+    assert url_open.open_url("https://example.com") is True
+    assert len(calls) == 1
 
 
 def test_titlebar_log_button_opens_preview(qtbot, tmp_path):
@@ -245,29 +255,6 @@ def test_open_local_falls_back_to_qt(monkeypatch, tmp_path):
     monkeypatch.setattr(shuimu_app, "QDesktopServices", desktop)
     assert shuimu_app._open_local(str(f))
     assert len(calls) == 1
-
-
-def test_wslview_open_dispatch(monkeypatch):
-    """_wslview_open: 非 WSL 或无 wslview 返回 None, 否则调 wslview."""
-    monkeypatch.setattr(shuimu_app, "_in_wsl", lambda: False)
-    assert shuimu_app._wslview_open("/x/a.pdf") is None
-    monkeypatch.setattr(shuimu_app, "_in_wsl", lambda: True)
-    monkeypatch.setattr(shuimu_app.shutil, "which", lambda name: None)
-    assert shuimu_app._wslview_open("/x/a.pdf") is None
-    monkeypatch.setattr(shuimu_app.shutil, "which",
-                        lambda name: "/usr/bin/wslview")
-
-    class Result:
-        """subprocess.run 结果替身."""
-
-        returncode = 0
-
-    ran = []
-    monkeypatch.setattr(shuimu_app.subprocess, "run",
-                        lambda cmd, check, timeout:
-                        ran.append((cmd, check, timeout)) or Result())
-    assert shuimu_app._wslview_open("/x/a.pdf") is True
-    assert ran == [(["/usr/bin/wslview", "/x/a.pdf"], False, 15)]
 
 
 class TestZoom:

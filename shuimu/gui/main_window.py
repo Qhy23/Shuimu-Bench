@@ -6,9 +6,6 @@
 """
 
 import os
-import platform
-import shutil
-import subprocess
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QBrush, QDesktopServices, QIcon, QKeySequence, QShortcut
@@ -38,6 +35,7 @@ from shuimu.core import url_open
 from shuimu.core.config import font_size_value
 from shuimu.core.controller import KIND_LABEL, Controller
 from shuimu.core.storage import Storage
+from shuimu.core.url_open import wslview_open as _wslview_open
 from shuimu.gui import artwork, theme
 from shuimu.gui.dialogs import LogPreviewDialog, warn
 from shuimu.gui.file_page import FileBrowserPage
@@ -79,32 +77,8 @@ def _open_url(url: str) -> bool:
 
 # URL 分发层的默认处理器在此注册: 链接资源与链接页统一经 url_open.open_url
 # 打开, 未来浏览器插件可注册内嵌方式与之并存(见 core/url_open.py).
+# _wslview_open 为 core 实现的模块内别名(WSL 分发与测试替换入口).
 url_open.set_default(_open_url)
-
-
-def _in_wsl() -> bool:
-    """是否运行在 WSL 内(内核版本号含 microsoft 或设置 WSL_DISTRO_NAME)."""
-    return "microsoft" in platform.release().lower() or bool(
-        os.environ.get("WSL_DISTRO_NAME"))
-
-
-def _wslview_open(target: str):
-    """WSL 内优先用 wslview 打开, 转发给 Windows 默认程序.
-
-    WSL 里 xdg-open 的默认关联常指向 snap 应用(如 chromium), snapd 在
-    WSL 中不可用导致打开失败; wslview 直接走 Windows 文件关联.
-    非 WSL 或未安装 wslview 时返回 None, 由调用方回退 Qt.
-    """
-    if not _in_wsl():
-        return None
-    wslview = shutil.which("wslview")
-    if not wslview:
-        return None
-    try:
-        proc = subprocess.run([wslview, target], check=False, timeout=15)
-    except subprocess.TimeoutExpired:
-        return False
-    return proc.returncode == 0
 
 
 class MainWindow(QMainWindow):
