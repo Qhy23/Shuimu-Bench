@@ -23,3 +23,10 @@ organize:
 schedule:
   semester_start: "2026-09-14"    # 学期第 1 周的周一; 留空不显示周次
   week_count: 23                  # 学期总周数; 秋季 16 课+2 考+5 寒假共 23, 春季 16+2 共 18, 暑期各年不同; 0 为不限制, 学期外周显示"假期"
+
+fileops:
+  trash_dir: ""                   # 文件页删除的回收站目录; 留空用系统回收站
+                                  # (Linux 为 ~/.local/share/Trash, Windows 为系统回收站);
+                                  # WSL 无桌面回收站, 测试时建议指定自建目录,
+                                  # 如 "data/trash"(相对路径按项目根解析);
+                                  # 本机专属配置可写在用户数据目录 config.yaml(优先级更高, 不入仓库)

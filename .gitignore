@@ -21,3 +21,4 @@ dist/
 *.db-wal
 data/schedule.yaml
 data/links.yaml
+data/trash/

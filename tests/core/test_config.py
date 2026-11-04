@@ -11,6 +11,7 @@ from shuimu.core.config import (
     organize_rules,
     semester_start_date,
     semester_week_count,
+    trash_dir_value,
 )
 
 
@@ -51,6 +52,38 @@ class TestLoadConfig:
         f = tmp_path / "config.yaml"
         f.write_text("- just\n- a\n- list\n", encoding="utf-8")
         assert load_config(str(f)) == DEFAULTS
+
+    def test_layered_user_overrides_project(self, tmp_path, monkeypatch):
+        """用户级部分配置只覆盖显式键, 不遮蔽项目根的其余配置."""
+        project = tmp_path / "project"
+        project.mkdir()
+        user = tmp_path / "user"
+        user.mkdir()
+        (project / "config.yaml").write_text(
+            'app:\n  title: "项目标题"\nschedule:\n  semester_start: "2026-09-14"\n',
+            encoding="utf-8")
+        (user / "config.yaml").write_text(
+            'app:\n  title: "用户标题"\n', encoding="utf-8")
+        monkeypatch.setattr("shuimu.core.config.project_root", lambda: str(project))
+        monkeypatch.setattr("shuimu.core.config.user_data_dir", lambda: str(user))
+        cfg = load_config()
+        assert cfg["app"]["title"] == "用户标题"          # 用户层覆盖
+        assert cfg["schedule"]["semester_start"] == "2026-09-14"  # 项目层保留
+        assert cfg["course"]["default_name"] == "未分组"    # 默认层兜底
+
+    def test_layered_broken_user_skipped(self, tmp_path, monkeypatch):
+        """用户级文件损坏时跳过, 项目层仍生效."""
+        project = tmp_path / "project"
+        project.mkdir()
+        user = tmp_path / "user"
+        user.mkdir()
+        (project / "config.yaml").write_text(
+            'schedule:\n  semester_start: "2026-09-14"\n', encoding="utf-8")
+        (user / "config.yaml").write_text("{{{not yaml", encoding="utf-8")
+        monkeypatch.setattr("shuimu.core.config.project_root", lambda: str(project))
+        monkeypatch.setattr("shuimu.core.config.user_data_dir", lambda: str(user))
+        cfg = load_config()
+        assert cfg["schedule"]["semester_start"] == "2026-09-14"
 
 
 class TestOrganizeRules:
@@ -141,3 +174,21 @@ class TestFontSizeValue:
         """非法回退默认."""
         assert font_size_value({"app": {"font_size": "big"}}) == 13
         assert font_size_value({"app": None}) == 13
+
+
+class TestTrashDirValue:
+    """回收站目录配置提取."""
+
+    def test_default_empty(self):
+        """默认/缺失/空串返回 ""."""
+        assert trash_dir_value(DEFAULTS) == ""
+        assert trash_dir_value({}) == ""
+        assert trash_dir_value({"fileops": None}) == ""
+
+    def test_configured(self):
+        """配置值原样返回(展开由 trash 层负责)."""
+        assert trash_dir_value({"fileops": {"trash_dir": "data/trash"}}) == "data/trash"
+
+    def test_non_string_falls_back(self):
+        """非字符串回退 ""."""
+        assert trash_dir_value({"fileops": {"trash_dir": 42}}) == ""

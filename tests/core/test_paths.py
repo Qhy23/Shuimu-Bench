@@ -5,6 +5,7 @@ import sys
 
 import yaml
 
+from shuimu.core.config import DEFAULTS
 from shuimu.core.paths import (
     cli_history_path,
     default_db_path,
@@ -53,7 +54,7 @@ class TestConfigYamlExample:
         example = os.path.join(project_root(), "config.yaml")
         with open(example, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        assert set(data) == {"app", "course", "organize", "schedule"}
+        assert set(data) == set(DEFAULTS)
         assert data["course"]["default_name"] == "未分组"
         assert "文档" in data["organize"]["categories"]
 

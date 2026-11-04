@@ -1,6 +1,8 @@
 """应用配置: config.yaml + 内置默认值.
 
-加载顺序: 显式路径 > 用户数据目录 config.yaml > 项目根 config.yaml > 内置默认值.
+加载顺序(低 -> 高): 内置默认值 <- 项目根 config.yaml <- 用户数据目录
+config.yaml, 逐层合并, 高优先级只覆盖显式给出的键(部分文件不会遮蔽
+低层的其余配置); 传入显式路径时只读该文件.
 配置只读, 编辑 yaml 后重启应用生效. 数据归 SQLite, 配置归文本文件.
 """
 
@@ -43,23 +45,28 @@ DEFAULTS = {
         "semester_start": "",  # 学期第 1 周的周一(YYYY-MM-DD), 空为不启用周次显示
         "week_count": 0,       # 学期总周数(课程+考试), 0 为不限制
     },
+    "fileops": {
+        "trash_dir": "",  # 文件页删除的回收站目录; 空用系统回收站(见 core/trash.py)
+    },
 }
 
 
 def load_config(path: str = None) -> dict:
-    """加载配置并合并到默认值上, 返回 dict. 文件缺失或损坏时用默认值."""
+    """加载配置并逐层合并, 返回 dict.
+
+    缺失的候选跳过, 损坏的候选跳过(已合并的更低层保留).
+    """
     cfg = copy.deepcopy(DEFAULTS)
-    for candidate in _candidates(path):
+    for candidate in reversed(list(_candidates(path))):
         if not os.path.isfile(candidate):
             continue
         try:
             with open(candidate, encoding="utf-8") as f:
                 user = yaml.safe_load(f)
         except (OSError, yaml.YAMLError):
-            break  # 文件损坏也回退默认值
+            continue  # 损坏文件跳过, 不影响其他层
         if isinstance(user, dict):
             _merge(cfg, user)
-        break
     return cfg
 
 
@@ -113,6 +120,15 @@ def semester_week_count(cfg: dict) -> int:
     except (TypeError, ValueError):
         return 0
     return count if count > 0 else 0
+
+
+def trash_dir_value(cfg: dict) -> str:
+    """提取回收站目录配置(原始串, 展开/解析由 core/trash.py 负责).
+
+    空串/缺失/非字符串返回 ""(用系统回收站).
+    """
+    raw = (cfg.get("fileops") or {}).get("trash_dir", "")
+    return raw if isinstance(raw, str) else ""
 
 
 def _candidates(path):
