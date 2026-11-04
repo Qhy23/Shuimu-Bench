@@ -14,6 +14,7 @@ from shuimu.core.config import (
     semester_start_date,
     semester_week_count,
 )
+from shuimu.core import fileops, trash
 from shuimu.core.organize import build_plan, execute_plan
 from shuimu.core.paths import (
     default_links_path,
@@ -159,6 +160,102 @@ class Controller:
         """记录一次取消的整理."""
         self.storage.log_operation("organize", status="cancelled",
                                    path_snapshot=directory)
+
+    # ---- 文件操作 ----
+
+    def file_copy(self, sources: list, dst_dir: str) -> ActionResult:
+        """把一批文件/目录复制到 dst_dir, 冲突自动改名, 留痕."""
+        return self._transfer(fileops.copy_batch, "file_copy", "复制",
+                              sources, dst_dir)
+
+    def file_move(self, sources: list, dst_dir: str) -> ActionResult:
+        """把一批文件/目录移动到 dst_dir(剪切粘贴), 冲突自动改名, 留痕."""
+        return self._transfer(fileops.move_batch, "file_move", "移动",
+                              sources, dst_dir)
+
+    def file_delete(self, paths: list) -> ActionResult:
+        """把一批文件/目录移入回收站.
+
+        留痕 detail 记录 原路径 -> 回收站路径 映射, 为将来恢复留数据.
+        """
+        paths = [p for p in paths if p]
+        if not paths:
+            return ActionResult(False, "没有可操作的项目")
+        items, errors = [], []
+        for path in paths:
+            try:
+                result = trash.move_to_trash(path, self.config)
+                items.append({"src": path, "backend": result.backend,
+                              "trash": result.trash_path})
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+        snapshot = paths[0] if len(paths) == 1 else f"{paths[0]} 等 {len(paths)} 项"
+        self.storage.log_operation(
+            "file_delete", status="failed" if errors else "ok",
+            path_snapshot=snapshot, detail={"items": items, "errors": errors})
+        message = f"已移入回收站 {len(items)} 项"
+        if errors:
+            return ActionResult(False, f"{message}, 失败 {len(errors)} 项",
+                                {"items": items, "errors": errors})
+        return ActionResult(True, message, {"items": items})
+
+    def file_rename(self, path: str, new_name: str) -> ActionResult:
+        """同目录重命名."""
+        try:
+            dst = fileops.rename_entry(path, new_name)
+        except (ValueError, OSError) as exc:
+            return ActionResult(False, str(exc))
+        self.storage.log_operation(
+            "file_rename", params={"new_name": new_name},
+            path_snapshot=path, detail={"dst": dst})
+        message = (f"已重命名 {os.path.basename(path)}"
+                   f" -> {os.path.basename(dst)}")
+        return ActionResult(True, message, {"dst": dst})
+
+    def file_mkdir(self, parent: str, name: str = None) -> ActionResult:
+        """在 parent 下新建文件夹(重名自动改名), 消息含实际创建名."""
+        try:
+            created = fileops.make_dir(parent, name)
+        except (ValueError, OSError) as exc:
+            return ActionResult(False, str(exc))
+        self.storage.log_operation(
+            "file_mkdir", params={"parent": parent},
+            path_snapshot=created, detail={"name": os.path.basename(created)})
+        return ActionResult(True, f"已创建文件夹 {os.path.basename(created)}",
+                            {"path": created})
+
+    def _transfer(self, batch, action: str, verb: str,
+                  sources: list, dst_dir: str) -> ActionResult:
+        """复制/移动共用骨架: 校验 -> 批操作 -> 留痕."""
+        sources = [s for s in sources if s]
+        if not sources:
+            return ActionResult(False, "没有可操作的项目")
+        if not os.path.isdir(dst_dir):
+            return ActionResult(False, f"目标目录不存在: {dst_dir}")
+        items = batch(sources, dst_dir)
+        detail = {
+            "items": [{"src": i.src, "dst": i.dst, "status": i.status}
+                      for i in items],
+            "renamed": sum(
+                1 for i in items
+                if i.status == "ok"
+                and i.dst != os.path.join(dst_dir, os.path.basename(i.src))),
+        }
+        ok_n = sum(1 for i in items if i.status == "ok")
+        skip_n = sum(1 for i in items if i.status == "skipped")
+        fail_n = sum(1 for i in items if i.status == "failed")
+        self.storage.log_operation(
+            action, status="failed" if fail_n else "ok",
+            params={"dst_dir": dst_dir, "count": len(sources)},
+            path_snapshot=dst_dir, detail=detail)
+        message = f"已{verb} {ok_n} 项到 {dst_dir}"
+        if skip_n:
+            message += f", 跳过 {skip_n} 项"
+        if fail_n:
+            message += f", 失败 {fail_n} 项"
+        if detail["renamed"]:
+            message += f"({detail['renamed']} 项重名自动改名)"
+        return ActionResult(not fail_n, message, detail)
 
     # ---- 日程 ----
 

@@ -27,6 +27,22 @@ def ctl(tmp_path, monkeypatch):
     storage.close()
 
 
+@pytest.fixture()
+def ctl_trash(tmp_path, monkeypatch):
+    """带独立 trash_dir 配置的 controller(删除测试不碰真实回收站)."""
+    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
+                        lambda: str(tmp_path / "no-such-template.yaml"))
+    monkeypatch.setattr("shuimu.core.controller.template_links_path",
+                        lambda: str(tmp_path / "no-such-links-template.yaml"))
+    cfg = deepcopy(DEFAULTS)
+    cfg["fileops"]["trash_dir"] = str(tmp_path / "trash")
+    storage = Storage(str(tmp_path / "ctl.db"))
+    yield Controller(storage, config=cfg,
+                     schedule_path=str(tmp_path / "s.yaml"),
+                     links_path=str(tmp_path / "links.yaml"))
+    storage.close()
+
+
 class TestDetectKind:
     """资源类型判断."""
 
@@ -156,6 +172,110 @@ class TestOrganizeActions:
         """取消整理留痕为 cancelled."""
         ctl.cancel_organize(str(tmp_path))
         assert ctl.storage.list_operations()[0]["status"] == "cancelled"
+
+
+class TestFileOpActions:
+    """文件操作动作(复制/移动/删除/重命名/新建)."""
+
+    def test_copy(self, ctl, tmp_path):
+        """复制两项成功留痕, detail 含逐条结果."""
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.mkdir()
+        dst.mkdir()
+        (src / "a.txt").write_text("a")
+        (src / "b.txt").write_text("b")
+        result = ctl.file_copy([str(src / "a.txt"), str(src / "b.txt")], str(dst))
+        assert result.ok
+        assert (dst / "a.txt").exists() and (dst / "b.txt").exists()
+        op = ctl.storage.list_operations()[0]
+        assert op["action"] == "file_copy" and op["status"] == "ok"
+        detail = json.loads(op["detail"])
+        assert len(detail["items"]) == 2
+        assert detail["renamed"] == 0
+
+    def test_copy_conflict_renamed(self, ctl, tmp_path):
+        """目标重名自动改名并计入 renamed."""
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.mkdir()
+        dst.mkdir()
+        (src / "a.txt").write_text("new")
+        (dst / "a.txt").write_text("old")
+        result = ctl.file_copy([str(src / "a.txt")], str(dst))
+        assert result.ok and "1 项重名自动改名" in result.message
+        assert (dst / "a_1.txt").read_text() == "new"
+        assert json.loads(ctl.storage.list_operations()[0]["detail"])["renamed"] == 1
+
+    def test_copy_partial_failure(self, ctl, tmp_path):
+        """源缺失单条失败, 整体 not ok 且留痕 status=failed."""
+        dst = tmp_path / "dst"
+        dst.mkdir()
+        good = tmp_path / "g.txt"
+        good.write_text("x")
+        result = ctl.file_copy([str(tmp_path / "nope"), str(good)], str(dst))
+        assert not result.ok and (dst / "g.txt").exists()
+        op = ctl.storage.list_operations()[0]
+        assert op["action"] == "file_copy" and op["status"] == "failed"
+        assert json.loads(op["detail"])["items"][0]["status"] == "failed"
+
+    def test_invalid_input_no_log(self, ctl, tmp_path):
+        """空 sources 或目标目录不存在: 失败且不留痕."""
+        before = len(ctl.storage.list_operations())
+        assert not ctl.file_copy([], str(tmp_path)).ok
+        assert not ctl.file_copy([str(tmp_path)], str(tmp_path / "nope")).ok
+        assert len(ctl.storage.list_operations()) == before
+
+    def test_move_dir_into_itself(self, ctl, tmp_path):
+        """目录移入自身内部失败且原位不动."""
+        d = tmp_path / "d"
+        (d / "in").mkdir(parents=True)
+        (d / "in" / "x.txt").write_text("x")
+        result = ctl.file_move([str(d)], str(d / "in"))
+        assert not result.ok
+        assert (d / "in" / "x.txt").exists()
+        op = ctl.storage.list_operations()[0]
+        assert op["action"] == "file_move" and op["status"] == "failed"
+
+    def test_delete_to_trash(self, ctl_trash, tmp_path):
+        """删除入回收站, 留痕含原路径->回收站路径映射与后端名."""
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        result = ctl_trash.file_delete([str(f)])
+        assert result.ok and not f.exists()
+        op = ctl_trash.storage.list_operations()[0]
+        assert op["action"] == "file_delete" and op["status"] == "ok"
+        item = json.loads(op["detail"])["items"][0]
+        assert item["src"] == str(f)
+        assert item["backend"] == "config_dir"
+        assert item["trash"].endswith("a.txt")
+
+    def test_rename(self, ctl, tmp_path):
+        """重命名留痕 path_snapshot 为旧路径, detail 为新路径."""
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        result = ctl.file_rename(str(f), "b.txt")
+        assert result.ok and (tmp_path / "b.txt").exists()
+        op = ctl.storage.list_operations()[0]
+        assert op["action"] == "file_rename"
+        assert op["path_snapshot"] == str(f)
+        assert json.loads(op["detail"])["dst"] == str(tmp_path / "b.txt")
+
+    def test_rename_invalid_no_log(self, ctl, tmp_path):
+        """目标已存在: 失败且不留痕."""
+        (tmp_path / "a.txt").write_text("x")
+        (tmp_path / "b.txt").write_text("y")
+        before = len(ctl.storage.list_operations())
+        assert not ctl.file_rename(str(tmp_path / "a.txt"), "b.txt").ok
+        assert len(ctl.storage.list_operations()) == before
+
+    def test_mkdir(self, ctl, tmp_path):
+        """新建文件夹重名自动改名, 消息与 detail 用实际名."""
+        (tmp_path / "新建文件夹").mkdir()
+        result = ctl.file_mkdir(str(tmp_path))
+        assert result.ok and (tmp_path / "新建文件夹_1").is_dir()
+        assert "新建文件夹_1" in result.message
+        op = ctl.storage.list_operations()[0]
+        assert op["action"] == "file_mkdir"
+        assert json.loads(op["detail"])["name"] == "新建文件夹_1"
 
 
 class TestScheduleActions:
