@@ -1,24 +1,35 @@
-"""中栏文件浏览页: 工作目录定位 + QFileSystemModel 直读磁盘.
+"""中栏文件浏览页: 工作目录定位 + QFileSystemModel 直读磁盘 + 资源管理器基本操作.
 
 浏览不等于登记: 选中后点"加入选中课程"经 add_requested 信号交主窗口入库;
 双击文件经 open_requested 信号交主窗口用系统默认程序打开
 (打开分发逻辑集中在 main_window 一处, 便于测试替换).
+
+文件操作(复制/剪切/粘贴/删除/重命名/新建文件夹)经 controller 留痕;
+删除为移入回收站(后端分发见 core/trash.py). 剪贴板为应用内部状态,
+不碰系统剪贴板. 已知边界: 删除工作目录自身或其祖先时视图行为未定义,
+本轮不处理.
 """
 
 import os
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QItemSelectionModel, Qt, Signal
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFileDialog,
     QFileSystemModel,
     QHBoxLayout,
+    QInputDialog,
     QLineEdit,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
+from shuimu.core.controller import Controller
 from shuimu.core.paths import default_workspace_root
 from shuimu.gui.dialogs import warn
 
@@ -37,9 +48,12 @@ class FileBrowserPage(QWidget):
     open_requested = Signal(str)   # 请求用系统默认程序打开文件
     status_message = Signal(str)   # 状态栏提示(工作目录切换/校验失败等)
 
-    def __init__(self, workspace_root: str = None, parent=None):
+    def __init__(self, controller: Controller = None,
+                 workspace_root: str = None, parent=None):
         super().__init__(parent)
+        self._ctl = controller
         self._workspace_root = workspace_root or default_workspace_root()
+        self._clipboard = {"mode": None, "paths": []}  # 应用内部剪贴板
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         # 路径栏: 显示并调整工作目录
@@ -57,7 +71,18 @@ class FileBrowserPage(QWidget):
         self.file_view.setModel(self.file_model)
         self.file_view.setRootIndex(self.file_model.index(self._workspace_root))
         self.file_view.setColumnWidth(0, 260)
+        # 多选 + 整行选中; 关闭内联编辑, 重命名一律走对话框+controller 留痕
+        self.file_view.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.file_view.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.file_view.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.file_view.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_view.customContextMenuRequested.connect(self._show_context_menu)
         self.file_view.doubleClicked.connect(self._on_double_clicked)
+        self._build_actions()
         layout.addWidget(self.file_view)
         layout.addWidget(_button("加入选中课程", self._request_add))
 
@@ -72,6 +97,11 @@ class FileBrowserPage(QWidget):
         if not index.isValid():
             return None
         return self.file_model.filePath(index)
+
+    def selected_paths(self) -> list:
+        """全部选中项路径(多选), 无选中返回空列表."""
+        return [self.file_model.filePath(index)
+                for index in self.file_view.selectionModel().selectedRows(0)]
 
     def current_dir(self):
         """选中目录; 选中文件时取其所在目录. 无选中返回 None."""
@@ -125,3 +155,188 @@ class FileBrowserPage(QWidget):
             self.status_message.emit("请先在中栏选中文件或目录")
             return
         self.add_requested.emit(path)
+
+    # ---- 文件操作 ----
+
+    def _build_actions(self) -> None:
+        """创建操作 QAction 挂到视图(快捷键仅焦点在树内时生效).
+
+        WidgetWithChildrenShortcut: 不抢路径栏输入框的原生 Ctrl+C/V/A,
+        也与主窗口 Ctrl+=/-/0 缩放键无重叠.
+        """
+
+        def make(text: str, slot, key: str = None) -> QAction:
+            act = QAction(text, self)
+            if key:
+                act.setShortcut(QKeySequence(key))
+            act.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            act.triggered.connect(slot)
+            self.file_view.addAction(act)
+            return act
+
+        self.act_copy = make("复制", self._copy_selected, "Ctrl+C")
+        self.act_cut = make("剪切", self._cut_selected, "Ctrl+X")
+        self.act_paste = make("粘贴", self._paste, "Ctrl+V")
+        self.act_delete = make("删除", self._delete_selected, "Delete")
+        self.act_rename = make("重命名", self._rename_current, "F2")
+        self.act_select_all = make("全选", self._select_all, "Ctrl+A")
+        self.act_mkdir = make("新建文件夹", self._mkdir)
+
+    def _show_context_menu(self, pos) -> None:
+        index = self.file_view.indexAt(pos)
+        self._ensure_clicked_selected(index)
+        on_dir = index.isValid() and self.file_model.isDir(index)
+        menu = self._build_context_menu(index.isValid(), on_dir)
+        menu.exec(self.file_view.viewport().mapToGlobal(pos))
+
+    def _ensure_clicked_selected(self, index) -> None:
+        """右键的条目未在选中集内时, 把选择切到该条目.
+
+        否则菜单动作会作用于旧的选中项而非用户所见项.
+        """
+        if index.isValid() and not self.file_view.selectionModel().isSelected(index):
+            self.file_view.setCurrentIndex(index)
+            self.file_view.selectionModel().select(
+                index, QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | QItemSelectionModel.SelectionFlag.Rows)
+
+    def _build_context_menu(self, on_item: bool, on_dir: bool = False) -> QMenu:
+        """构造右键菜单(与弹出分离, 便于测试).
+
+        on_item 为在条目上右键; on_dir 表示该条目是目录(菜单加粘贴).
+        空白处只给粘贴/新建/全选.
+        """
+        menu = QMenu(self)
+        if on_item:
+            menu.addAction("打开", self._open_current)
+            menu.addAction("加入课程", self._request_add)
+            menu.addSeparator()
+            menu.addAction(self.act_copy)
+            menu.addAction(self.act_cut)
+            if on_dir:
+                menu.addAction(self.act_paste)
+            menu.addSeparator()
+            menu.addAction(self.act_rename)
+            menu.addAction(self.act_delete)
+        else:
+            menu.addAction(self.act_paste)
+            menu.addAction(self.act_mkdir)
+            menu.addSeparator()
+            menu.addAction(self.act_select_all)
+        self.act_paste.setEnabled(bool(self._clipboard["paths"]))
+        return menu
+
+    def _open_current(self) -> None:
+        """对当前项执行与双击一致的行为."""
+        index = self.file_view.currentIndex()
+        if index.isValid():
+            self._on_double_clicked(index)
+
+    def _ctl_or_hint(self):
+        """取 controller; 未注入时状态栏提示(浏览功能不受影响)."""
+        if self._ctl is None:
+            self.status_message.emit("控制器不可用, 无法执行文件操作")
+            return None
+        return self._ctl
+
+    def _selected_or_hint(self) -> list:
+        """取全部选中路径; 空选时状态栏提示."""
+        paths = self.selected_paths()
+        if not paths:
+            self.status_message.emit("请先选中文件或目录")
+        return paths
+
+    def _copy_selected(self) -> None:
+        paths = self._selected_or_hint()
+        if not paths:
+            return
+        self._clipboard = {"mode": "copy", "paths": paths}
+        self.status_message.emit(f"已复制 {len(paths)} 项")
+
+    def _cut_selected(self) -> None:
+        paths = self._selected_or_hint()
+        if not paths:
+            return
+        self._clipboard = {"mode": "cut", "paths": paths}
+        self.status_message.emit(f"已剪切 {len(paths)} 项(粘贴后生效)")
+
+    def _paste(self) -> None:
+        """粘贴到目标目录(Explorer 语义).
+
+        恰好选中一个目录时贴入该目录(树形视图展开子目录浏览时,
+        工作目录并未跟着变, 须以选中为准), 否则贴进当前工作目录.
+        剪切分支只移出成功的项(部分失败可重试); 复制分支保留剪贴板可多次粘贴.
+        """
+        if not self._clipboard["paths"]:
+            self.status_message.emit("剪贴板为空")
+            return
+        ctl = self._ctl_or_hint()
+        if ctl is None:
+            return
+        target = self._paste_target()
+        action = (ctl.file_copy if self._clipboard["mode"] == "copy"
+                  else ctl.file_move)
+        result = action(self._clipboard["paths"], target)
+        self.status_message.emit(result.message)
+        if self._clipboard["mode"] == "cut":
+            done = {item["src"] for item in result.detail.get("items", [])
+                    if item["status"] == "ok"}
+            remaining = [p for p in self._clipboard["paths"] if p not in done]
+            self._clipboard = {"mode": "cut" if remaining else None,
+                               "paths": remaining}
+
+    def _paste_target(self) -> str:
+        """粘贴目标: 恰好选中一个目录时该目录, 否则当前工作目录."""
+        paths = self.selected_paths()
+        if len(paths) == 1 and os.path.isdir(paths[0]):
+            return paths[0]
+        return self._workspace_root
+
+    def _delete_selected(self) -> None:
+        paths = self._selected_or_hint()
+        if not paths:
+            return
+        ctl = self._ctl_or_hint()
+        if ctl is None:
+            return
+        names = [os.path.basename(p) for p in paths]
+        preview = "\n".join(names[:5]) + ("\n..." if len(names) > 5 else "")
+        answer = QMessageBox.question(
+            self, "删除",
+            f"把选中的 {len(paths)} 个项目移入回收站?\n\n{preview}\n\n可从回收站找回.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        result = ctl.file_delete(paths)
+        self.status_message.emit(result.message)
+
+    def _rename_current(self) -> None:
+        path = self.selected_path()
+        if path is None:
+            self.status_message.emit("请先选中要重命名的项目")
+            return
+        ctl = self._ctl_or_hint()
+        if ctl is None:
+            return
+        name, ok = QInputDialog.getText(self, "重命名", "新名称:",
+                                        text=os.path.basename(path))
+        if not ok:
+            return
+        if not name.strip() or name.strip() == os.path.basename(path):
+            self.status_message.emit("名称未变化")
+            return
+        result = ctl.file_rename(path, name)
+        self.status_message.emit(result.message)
+
+    def _mkdir(self) -> None:
+        ctl = self._ctl_or_hint()
+        if ctl is None:
+            return
+        name, ok = QInputDialog.getText(self, "新建文件夹", "名称:",
+                                        text="新建文件夹")
+        if not ok:
+            return
+        result = ctl.file_mkdir(self._workspace_root, name)
+        self.status_message.emit(result.message)
+
+    def _select_all(self) -> None:
+        self.file_view.selectAll()

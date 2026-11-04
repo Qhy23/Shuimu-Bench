@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
 
     def _build_center(self) -> None:
         self.center_tabs = QTabWidget(self.splitter)
-        self.file_page = FileBrowserPage(parent=self.center_tabs)
+        self.file_page = FileBrowserPage(self.ctl, parent=self.center_tabs)
         self.file_page.add_requested.connect(self._on_add_requested)
         self.file_page.open_requested.connect(self._on_open_requested)
         self.file_page.status_message.connect(self.statusBar().showMessage)
