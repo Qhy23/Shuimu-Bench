@@ -9,6 +9,7 @@ import shutil
 from dataclasses import dataclass
 
 from shuimu.core.config import DEFAULTS
+from shuimu.core.fileops import dedupe_path
 
 _DEFAULT_RULES = {
     "categories": DEFAULTS["organize"]["categories"],
@@ -34,19 +35,6 @@ def category_of(filename: str, rules: dict = None) -> str:
     return rules["fallback"]
 
 
-def _dedupe(dst: str, taken: set) -> str:
-    """目标已存在(磁盘上或本计划内)时, 追加 _1 _2 后缀."""
-    if dst not in taken and not os.path.exists(dst):
-        return dst
-    base, ext = os.path.splitext(dst)
-    i = 1
-    while True:
-        candidate = f"{base}_{i}{ext}"
-        if candidate not in taken and not os.path.exists(candidate):
-            return candidate
-        i += 1
-
-
 def build_plan(directory: str, rules: dict = None) -> list:
     """生成归类计划: 顶层普通文件按类型移动到 category 子目录.
 
@@ -61,7 +49,7 @@ def build_plan(directory: str, rules: dict = None) -> list:
         if name.startswith(".") or not os.path.isfile(src):
             continue
         dst = os.path.join(directory, category_of(name, rules), name)
-        dst = _dedupe(dst, taken)
+        dst = dedupe_path(dst, taken)
         taken.add(dst)
         items.append(MoveItem(src=src, dst=dst))
     return items
