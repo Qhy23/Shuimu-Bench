@@ -82,8 +82,8 @@ class TestSelection:
 class TestClipboardOps:
     """复制/剪切/粘贴."""
 
-    def test_copy_then_paste_twice(self, page, qtbot):
-        """复制可多次粘贴, 重名自动 _1; 剪贴板保留."""
+    def test_copy_then_paste_twice(self, page, monkeypatch, qtbot):
+        """复制可多次粘贴; 二次粘贴同名冲突选保留两者得 _1, 剪贴板保留."""
         page, _ctl, ws = page
         other = ws.parent / "other"
         other.mkdir()
@@ -91,6 +91,8 @@ class TestClipboardOps:
         page._clipboard = {"mode": "copy", "paths": [str(other / "a.txt")]}
         page._paste()
         qtbot.waitUntil((ws / "a.txt").exists)
+        monkeypatch.setattr(page, "_ask_conflict",
+                            lambda *_a, **_k: ("keep_both", False))
         page._paste()
         qtbot.waitUntil((ws / "a_1.txt").exists)
         assert page._clipboard["paths"] == [str(other / "a.txt")]  # 保留可再贴
@@ -284,14 +286,35 @@ class TestActionsAndMenu:
     """快捷键挂载与右键菜单构造."""
 
     def test_shortcuts_registered(self, page):
-        """六个快捷键挂在视图上, 触发等价于对应槽."""
+        """七个快捷键挂在视图上, 触发等价于对应槽."""
         page, _ctl, _ws = page
         acts = {act.shortcut().toString(): act
                 for act in page.file_view.actions() if not act.shortcut().isEmpty()}
         # Delete 键的 QKeySequence 显示名为 "Del"
         assert set(acts) == {"Ctrl+C", "Ctrl+X", "Ctrl+V",
-                             "Del", "F2", "Ctrl+A"}
+                             "Del", "F2", "Ctrl+A", "Ctrl+Z"}
         assert acts["Ctrl+A"] is page.act_select_all
+        assert acts["Ctrl+Z"] is page.act_undo
+
+    def test_undo_via_shortcut(self, page, monkeypatch, qtbot):
+        """Ctrl+Z 槽: 新建文件夹后撤销即消失并留痕."""
+        page, ctl, ws = page
+        monkeypatch.setattr("shuimu.gui.file_page.QInputDialog",
+                            _FakeInput("撤销我"))
+        page._mkdir()
+        qtbot.waitUntil((ws / "撤销我").is_dir)
+        page._undo()   # 直接调槽: trigger() 在 offscreen 下为排队投递, 时序不定
+        assert not (ws / "撤销我").exists()
+        op = ctl.storage.list_operations()[0]
+        assert op["action"] == "undo"
+
+    def test_undo_empty_stack_hint(self, page):
+        """空撤销栈给提示."""
+        page, _ctl, _ws = page
+        received = []
+        page.status_message.connect(received.append)
+        page._undo()
+        assert any("没有可撤销" in msg for msg in received)
 
     def test_menu_on_item(self, page):
         """文件条目菜单含 打开/加入课程/复制/剪切/重命名/删除, 无粘贴."""
@@ -309,13 +332,116 @@ class TestActionsAndMenu:
             assert label in texts
 
     def test_menu_on_blank(self, page):
-        """空白菜单含 粘贴/新建文件夹/全选, 粘贴态随剪贴板."""
+        """空白菜单含 粘贴/新建文件夹/撤销/全选, 粘贴态随剪贴板."""
         page, _ctl, _ws = page
         menu = page._build_context_menu(False)
         texts = [act.text() for act in menu.actions()]
-        for label in ("粘贴", "新建文件夹", "全选"):
+        for label in ("粘贴", "新建文件夹", "撤销", "全选"):
             assert label in texts
         assert not page.act_paste.isEnabled()
         page._clipboard = {"mode": "copy", "paths": ["/tmp/x"]}
         menu = page._build_context_menu(False)
         assert page.act_paste.isEnabled()
+
+
+class TestConflictPaste:
+    """粘贴同名冲突: 逐个询问, 决策驱动执行."""
+
+    @staticmethod
+    def _conflict_src(ws, name="a.txt", content="new"):
+        """在 ws 外建一个源文件, 返回路径."""
+        other = ws.parent / "conflict_src"
+        other.mkdir(exist_ok=True)
+        f = other / name
+        f.write_text(content)
+        return str(f)
+
+    def test_replace_moves_old_to_trash(self, page, monkeypatch, qtbot):
+        """覆盖: 旧文件入回收站, 新内容落位, 撤销栈两层可回."""
+        page, ctl, ws = page
+        (ws / "a.txt").write_text("old")
+        src = self._conflict_src(ws)
+        page._clipboard = {"mode": "copy", "paths": [src]}
+        monkeypatch.setattr(page, "_ask_conflict",
+                            lambda *_a, **_k: ("replace", False))
+        page._paste()
+        qtbot.waitUntil(lambda: (ws / "a.txt").read_text() == "new")
+        assert (ws.parent / "trash" / "files" / "a.txt").read_text() == "old"
+        actions = [op["action"] for op in ctl.storage.list_operations()]
+        assert actions[0] == "file_copy"     # 最新在前
+        assert "file_delete" in actions      # 旧文件删除留痕
+
+    def test_skip_leaves_target(self, page, monkeypatch):
+        """跳过: 目标不动, 源仍在剪贴板."""
+        page, _ctl, ws = page
+        (ws / "a.txt").write_text("old")
+        src = self._conflict_src(ws)
+        page._clipboard = {"mode": "copy", "paths": [src]}
+        monkeypatch.setattr(page, "_ask_conflict",
+                            lambda *_a, **_k: ("skip", False))
+        page._paste()
+        assert (ws / "a.txt").read_text() == "old"
+        assert page._clipboard["paths"] == [src]
+
+    def test_keep_both_renames(self, page, monkeypatch, qtbot):
+        """保留两者: 新文件自动 _1."""
+        page, _ctl, ws = page
+        (ws / "a.txt").write_text("old")
+        src = self._conflict_src(ws)
+        page._clipboard = {"mode": "copy", "paths": [src]}
+        monkeypatch.setattr(page, "_ask_conflict",
+                            lambda *_a, **_k: ("keep_both", False))
+        page._paste()
+        qtbot.waitUntil((ws / "a_1.txt").exists)
+        assert (ws / "a.txt").read_text() == "old"
+
+    def test_cancel_aborts(self, page, monkeypatch):
+        """取消: 整个粘贴不执行."""
+        page, ctl, ws = page
+        (ws / "a.txt").write_text("old")
+        src = self._conflict_src(ws)
+        page._clipboard = {"mode": "copy", "paths": [src]}
+        monkeypatch.setattr(page, "_ask_conflict",
+                            lambda *_a, **_k: ("cancel", False))
+        page._paste()
+        assert (ws / "a.txt").read_text() == "old"
+        assert not ctl.storage.list_operations()
+
+    def test_apply_all_covers_rest(self, page, monkeypatch, qtbot):
+        """应用于其余全部: 一次决策覆盖全部冲突."""
+        page, _ctl, ws = page
+        for name in ("a.txt", "b.txt"):
+            (ws / name).write_text("old")
+        srcs = [self._conflict_src(ws, "a.txt"),
+                self._conflict_src(ws, "b.txt")]
+        page._clipboard = {"mode": "copy", "paths": srcs}
+        asked = []
+
+        def fake_ask(_name, remaining):
+            asked.append(remaining)
+            return "replace", True    # 首个决策即应用于其余
+
+        monkeypatch.setattr(page, "_ask_conflict", fake_ask)
+        page._paste()
+        assert asked == [2]           # 只问了第一次, 其余沿决策
+        qtbot.waitUntil(lambda: (ws / "b.txt").read_text() == "new")
+
+    def test_resolve_conflicts_flow(self, page, monkeypatch):
+        """逐个询问与应用于其余全部的决策链逻辑."""
+        page, _ctl, _ws = page
+        conflicts = [("/x/a", "/y/a"), ("/x/b", "/y/b"), ("/x/c", "/y/c")]
+        answers = iter([("skip", False), ("keep_both", True)])
+
+        def fake_ask(_name, remaining):
+            return next(answers)
+
+        monkeypatch.setattr(page, "_ask_conflict", fake_ask)
+        policies = page._resolve_conflicts(conflicts)
+        assert policies == {"/x/a": "skip", "/x/b": "keep_both",
+                            "/x/c": "keep_both"}
+
+    def test_resolve_conflicts_cancel(self, page, monkeypatch):
+        """决策链中取消 -> None."""
+        page, _ctl, _ws = page
+        monkeypatch.setattr(page, "_ask_conflict", lambda *_a, **_k: ("cancel", False))
+        assert page._resolve_conflicts([("/x/a", "/y/a")]) is None
