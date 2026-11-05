@@ -75,6 +75,7 @@ class Controller:
         self._week_count = semester_week_count(self.config)
         self._schedule_seeded = False
         self._links_seeded = False
+        self._undo_stack = []   # 文件页操作撤销栈(内存, LIFO, 不跨会话)
         self.storage.ensure_default_course(self.config["course"]["default_name"])
 
     def add_course(self, name: str) -> ActionResult:
@@ -190,6 +191,9 @@ class Controller:
             except OSError as exc:
                 errors.append(f"{path}: {exc}")
         snapshot = paths[0] if len(paths) == 1 else f"{paths[0]} 等 {len(paths)} 项"
+        # Windows Shell 后端不回传回收站路径, 不可撤销, 不入栈
+        self._push_undo("file_delete", [(item["src"], item["trash"])
+                                        for item in items if item["trash"]])
         self.storage.log_operation(
             "file_delete", status="failed" if errors else "ok",
             path_snapshot=snapshot, detail={"items": items, "errors": errors})
@@ -208,6 +212,7 @@ class Controller:
         self.storage.log_operation(
             "file_rename", params={"new_name": new_name},
             path_snapshot=path, detail={"dst": dst})
+        self._push_undo("file_rename", [(path, dst)])
         message = (f"已重命名 {os.path.basename(path)}"
                    f" -> {os.path.basename(dst)}")
         return ActionResult(True, message, {"dst": dst})
@@ -221,6 +226,7 @@ class Controller:
         self.storage.log_operation(
             "file_mkdir", params={"parent": parent},
             path_snapshot=created, detail={"name": os.path.basename(created)})
+        self._push_undo("file_mkdir", [(None, created)])
         return ActionResult(True, f"已创建文件夹 {os.path.basename(created)}",
                             {"path": created})
 
@@ -244,6 +250,8 @@ class Controller:
         ok_n = sum(1 for i in items if i.status == "ok")
         skip_n = sum(1 for i in items if i.status == "skipped")
         fail_n = sum(1 for i in items if i.status == "failed")
+        self._push_undo(action, [(i.src, i.dst) for i in items
+                                 if i.status == "ok"])
         self.storage.log_operation(
             action, status="failed" if fail_n else "ok",
             params={"dst_dir": dst_dir, "count": len(sources)},
@@ -256,6 +264,52 @@ class Controller:
         if detail["renamed"]:
             message += f"({detail['renamed']} 项重名自动改名)"
         return ActionResult(not fail_n, message, detail)
+
+    def undo(self) -> ActionResult:
+        """撤销最近一次文件页操作(内存栈, LIFO, 不跨会话, 无 redo).
+
+        - 复制/新建 -> 目标项移入回收站
+        - 移动      -> 移回原位
+        - 删除      -> 从回收站恢复到原路径
+        - 重命名    -> 改回旧名
+        原位置被占用或目标已缺失时该项失败, 不静默改名.
+        """
+        if not self._undo_stack:
+            return ActionResult(False, "没有可撤销的操作")
+        entry = self._undo_stack.pop()
+        kind, items = entry["kind"], entry["items"]
+        done, errors = 0, []
+        snapshot = None
+        for original, current in items:
+            snapshot = snapshot or current
+            try:
+                if kind in ("file_copy", "file_mkdir"):
+                    trash.move_to_trash(current, self.config)
+                elif kind in ("file_move", "file_delete"):
+                    fileops.move_back(current, original)
+                else:  # file_rename
+                    fileops.rename_entry(current, os.path.basename(original))
+                done += 1
+            except (ValueError, OSError) as exc:
+                errors.append(str(exc))
+        self.storage.log_operation(
+            "undo", status="failed" if errors else "ok",
+            params={"undid": kind}, path_snapshot=snapshot,
+            detail={"done": done, "errors": errors})
+        label = {"file_copy": "复制", "file_move": "移动", "file_delete": "删除",
+                 "file_rename": "重命名", "file_mkdir": "新建文件夹"}[kind]
+        message = f"已撤销{label} {done} 项"
+        if errors:
+            return ActionResult(False, f"{message}, 失败 {len(errors)} 项",
+                                {"done": done, "errors": errors})
+        return ActionResult(True, message, {"done": done})
+
+    def _push_undo(self, kind: str, items: list) -> None:
+        """成功条目入撤销栈(空批不入, 上限 100 条, 超出丢最旧)."""
+        if not items:
+            return
+        self._undo_stack.append({"kind": kind, "items": items})
+        del self._undo_stack[:-100]
 
     # ---- 日程 ----
 

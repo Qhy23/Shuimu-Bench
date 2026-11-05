@@ -8,8 +8,10 @@ from shuimu.core.fileops import (
     check_target,
     copy_batch,
     dedupe_path,
+    find_conflicts,
     is_within,
     make_dir,
+    move_back,
     move_batch,
     rename_entry,
 )
@@ -212,6 +214,73 @@ class TestMoveBatch:
         items = move_batch([str(f)], str(tmp_path))
         assert items[0].status == "skipped"
         assert f.exists()
+
+
+class TestFindConflicts:
+    """粘贴前冲突预检."""
+
+    def test_conflict_detected(self, tmp_path):
+        """目标已存在同名且非同一文件 -> 冲突."""
+        src_dir, dst_dir = tmp_path / "s", tmp_path / "d"
+        src_dir.mkdir()
+        dst_dir.mkdir()
+        (src_dir / "a.txt").write_text("new")
+        (dst_dir / "a.txt").write_text("old")
+        conflicts = find_conflicts([str(src_dir / "a.txt")], str(dst_dir))
+        assert conflicts == [(str(src_dir / "a.txt"), str(dst_dir / "a.txt"))]
+
+    def test_same_file_not_conflict(self, tmp_path):
+        """粘贴回原目录(同一文件)不算冲突."""
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        assert not find_conflicts([str(f)], str(tmp_path))
+
+    def test_free_target_and_missing_source(self, tmp_path):
+        """目标空闲无冲突; 源缺失不报冲突(交给批操作)."""
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / "b.txt").write_text("x")
+        assert not find_conflicts([str(other / "b.txt")], str(tmp_path))
+        assert not find_conflicts([str(tmp_path / "nope")], str(tmp_path))
+
+
+class TestMoveBack:
+    """撤销移动/回收站恢复."""
+
+    def test_move_back(self, tmp_path):
+        """移回原位成功."""
+        original = tmp_path / "orig.txt"
+        original.write_text("x")
+        moved = tmp_path / "moved.txt"
+        os.rename(original, moved)
+        move_back(str(moved), str(original))
+        assert original.exists() and not moved.exists()
+
+    def test_move_back_missing_current(self, tmp_path):
+        """现位置缺失 -> ValueError."""
+        with pytest.raises(ValueError):
+            move_back(str(tmp_path / "nope"), str(tmp_path / "orig.txt"))
+
+    def test_move_back_occupied(self, tmp_path):
+        """原位置被占用 -> ValueError, 不静默改名."""
+        moved, occupied = tmp_path / "moved.txt", tmp_path / "orig.txt"
+        moved.write_text("m")
+        occupied.write_text("o")
+        with pytest.raises(ValueError):
+            move_back(str(moved), str(occupied))
+        assert occupied.read_text() == "o"  # 占用者不动
+
+    def test_move_back_recreates_parent(self, tmp_path):
+        """原父目录缺失时自动重建."""
+        orig_parent = tmp_path / "a" / "b"
+        orig_parent.mkdir(parents=True)
+        original = orig_parent / "f.txt"
+        original.write_text("x")
+        moved = tmp_path / "staging.txt"
+        os.rename(original, moved)
+        os.rmdir(orig_parent)
+        move_back(str(moved), str(original))
+        assert original.exists()
 
 
 class TestRenameEntry:

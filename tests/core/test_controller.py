@@ -278,6 +278,123 @@ class TestFileOpActions:
         assert json.loads(op["detail"])["name"] == "新建文件夹_1"
 
 
+class TestUndo:
+    """Ctrl+Z 撤销栈(内存, LIFO, 不跨会话)."""
+
+    def test_empty_stack(self, ctl):
+        """空栈提示无可撤销."""
+        result = ctl.undo()
+        assert not result.ok and "没有可撤销" in result.message
+
+    def test_undo_copy(self, ctl_trash, tmp_path):
+        """撤销复制: 副本移入回收站."""
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.mkdir()
+        dst.mkdir()
+        (src / "a.txt").write_text("x")
+        assert ctl_trash.file_copy([str(src / "a.txt")], str(dst)).ok
+        result = ctl_trash.undo()
+        assert result.ok and not (dst / "a.txt").exists()
+        assert (tmp_path / "trash" / "files" / "a.txt").exists()
+        op = ctl_trash.storage.list_operations()[0]
+        assert op["action"] == "undo"
+        assert json.loads(op["params"])["undid"] == "file_copy"
+
+    def test_undo_move(self, ctl, tmp_path):
+        """撤销移动: 移回原位."""
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.mkdir()
+        dst.mkdir()
+        f = src / "a.txt"
+        f.write_text("x")
+        assert ctl.file_move([str(f)], str(dst)).ok
+        assert ctl.undo().ok
+        assert f.exists() and not (dst / "a.txt").exists()
+
+    def test_undo_delete_restores(self, ctl_trash, tmp_path):
+        """撤销删除: 从回收站恢复到原路径."""
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        assert ctl_trash.file_delete([str(f)]).ok
+        assert not f.exists()
+        result = ctl_trash.undo()
+        assert result.ok
+        assert f.read_text() == "x"
+        assert not (tmp_path / "trash" / "files" / "a.txt").exists()
+
+    def test_undo_rename(self, ctl, tmp_path):
+        """撤销重命名: 改回旧名."""
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        assert ctl.file_rename(str(f), "b.txt").ok
+        assert ctl.undo().ok
+        assert f.exists() and not (tmp_path / "b.txt").exists()
+
+    def test_undo_mkdir(self, ctl_trash, tmp_path):
+        """撤销新建文件夹: 移入回收站."""
+        assert ctl_trash.file_mkdir(str(tmp_path)).ok
+        result = ctl_trash.undo()
+        assert result.ok and not (tmp_path / "新建文件夹").exists()
+        assert (tmp_path / "trash" / "files" / "新建文件夹").is_dir()
+
+    def test_undo_lifo_order(self, ctl_trash, tmp_path):
+        """连续撤销按后进先出."""
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.mkdir()
+        dst.mkdir()
+        (src / "a.txt").write_text("1")
+        (src / "b.txt").write_text("2")
+        assert ctl_trash.file_copy([str(src / "a.txt")], str(dst)).ok
+        assert ctl_trash.file_copy([str(src / "b.txt")], str(dst)).ok
+        assert ctl_trash.undo().ok                       # 撤销第二次复制
+        assert not (dst / "b.txt").exists()
+        assert (dst / "a.txt").exists()
+        assert ctl_trash.undo().ok                       # 再撤销第一次
+        assert not (dst / "a.txt").exists()
+
+    def test_undo_occupied_original_fails_item(self, ctl, tmp_path):
+        """撤销移动时原位被占: 该项失败, 占用者不动."""
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.mkdir()
+        dst.mkdir()
+        f = src / "a.txt"
+        f.write_text("moved")
+        assert ctl.file_move([str(f)], str(dst)).ok
+        f.write_text("recreated")                        # 原位被新文件占用
+        result = ctl.undo()
+        assert not result.ok and (dst / "a.txt").exists()
+        assert f.read_text() == "recreated"
+
+    def test_undo_after_partial_failure_only_ok_items(self, ctl_trash, tmp_path):
+        """部分失败的批操作只撤销成功的条目."""
+        dst = tmp_path / "dst"
+        dst.mkdir()
+        good = tmp_path / "g.txt"
+        good.write_text("x")
+        result = ctl_trash.file_copy([str(tmp_path / "nope"), str(good)], str(dst))
+        assert not result.ok                             # 缺失项失败
+        assert ctl_trash.undo().ok
+        assert not (dst / "g.txt").exists()              # 成功项已撤销
+        assert ctl_trash.undo().ok is False              # 栈空
+
+    def test_undo_stack_not_persisted(self, tmp_path, monkeypatch):
+        """栈随 controller 实例, 不跨实例共享."""
+        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
+                            lambda: str(tmp_path / "no-such-template.yaml"))
+        monkeypatch.setattr("shuimu.core.controller.template_links_path",
+                            lambda: str(tmp_path / "no-such-links-template.yaml"))
+        storage = Storage(str(tmp_path / "x.db"))
+        ctl_a = Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
+                           links_path=str(tmp_path / "l.yaml"))
+        assert ctl_a.file_mkdir(str(tmp_path)).ok
+        storage_b = Storage(str(tmp_path / "y.db"))
+        ctl_b = Controller(storage_b, schedule_path=str(tmp_path / "s2.yaml"),
+                           links_path=str(tmp_path / "l2.yaml"))
+        assert not ctl_b.undo().ok                       # 新实例空栈
+        storage.close()
+        storage_b.close()
+
+
 class TestScheduleActions:
     """日程动作."""
 

@@ -56,6 +56,40 @@ def check_target(src: str, dst_dir: str):
     return None
 
 
+def find_conflicts(sources: list, dst_dir: str) -> list:
+    """预检同名冲突: 返回 [(src, dst)] 其中 dst 在磁盘上已存在.
+
+    源与目标为同一文件(粘贴回原目录)不算冲突(批操作会标记 skipped);
+    源缺失不报冲突(交给批操作记 failed); 同批内部同名(磁盘上无冲突)
+    由去重自动加后缀, 不在此列.
+    """
+    conflicts = []
+    for src in sources:
+        dst = os.path.join(dst_dir, os.path.basename(src))
+        if not os.path.exists(dst):
+            continue
+        if os.path.realpath(src) == os.path.realpath(dst):
+            continue
+        conflicts.append((src, dst))
+    return conflicts
+
+
+def move_back(current: str, original: str) -> None:
+    """把 current 移回 original(撤销移动/从回收站恢复共用).
+
+    current 缺失或 original 已被占用抛 ValueError, IO 失败抛 OSError;
+    original 的父目录缺失时自动重建.
+    """
+    if not os.path.exists(current):
+        raise ValueError(f"已不存在: {current}")
+    if os.path.exists(original):
+        raise ValueError(f"原位置被占用: {original}")
+    parent = os.path.dirname(original)
+    if not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
+    shutil.move(current, original)
+
+
 def copy_batch(sources: list, dst_dir: str) -> list:
     """把一批文件/目录复制进 dst_dir, 冲突自动加后缀.
 
