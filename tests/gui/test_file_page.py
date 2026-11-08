@@ -1,15 +1,16 @@
 """file_page.py 单元测试: 文件页资源管理器操作(复制/剪切/粘贴/删除/重命名/新建).
 
 断言一律落在磁盘事实(文件存在性)而非视图行数: QFileSystemModel 的
-文件系统监听是异步的. 对话框经 monkeypatch 替换模块内引用, 不弹窗.
+文件系统监听是异步的. 多数对话框经 monkeypatch 替换模块内引用;
+同名冲突框另有定时器驱动的真实弹框测试(_drive_conflict_dialogs).
 """
 
 import json
 from copy import deepcopy
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QItemSelectionModel, QTimer
+from PySide6.QtWidgets import QApplication, QCheckBox, QMessageBox
 
 from shuimu.core.config import DEFAULTS
 from shuimu.core.controller import Controller
@@ -344,8 +345,41 @@ class TestActionsAndMenu:
         assert page.act_paste.isEnabled()
 
 
+def _drive_conflict_dialogs(button_text: str, times: int = 1,
+                            check_first: bool = False) -> None:
+    """定时器驱动真实同名冲突框: 弹出一个点一个, 共 times 个.
+
+    须在调用 _ask_conflict/_paste 之前挂上; offscreen 下模态 exec 的
+    事件循环会处理定时器. check_first 时先勾选首个框的"应用于其余"
+    复选框. 找不到目标按钮则关闭对话框兜底(视为取消).
+    """
+    state = {"left": times, "first": True}
+
+    def drive():
+        box = QApplication.activeModalWidget()
+        if not isinstance(box, QMessageBox):
+            QTimer.singleShot(20, drive)
+            return
+        if check_first and state["first"]:
+            for child in box.findChildren(QCheckBox):
+                child.click()
+        state["first"] = False
+        for btn in box.buttons():
+            if btn.text() == button_text:
+                btn.click()
+                break
+        else:
+            box.close()
+            return
+        state["left"] -= 1
+        if state["left"]:
+            QTimer.singleShot(20, drive)
+
+    QTimer.singleShot(20, drive)
+
+
 class TestConflictPaste:
-    """粘贴同名冲突: 逐个询问, 决策驱动执行."""
+    """粘贴同名冲突: 决策链逻辑经 mock 测试, 弹框路径用真实对话框驱动."""
 
     @staticmethod
     def _conflict_src(ws, name="a.txt", content="new"):
@@ -432,7 +466,7 @@ class TestConflictPaste:
         conflicts = [("/x/a", "/y/a"), ("/x/b", "/y/b"), ("/x/c", "/y/c")]
         answers = iter([("skip", False), ("keep_both", True)])
 
-        def fake_ask(_name, remaining):
+        def fake_ask(_name, _remaining):
             return next(answers)
 
         monkeypatch.setattr(page, "_ask_conflict", fake_ask)
@@ -445,3 +479,40 @@ class TestConflictPaste:
         page, _ctl, _ws = page
         monkeypatch.setattr(page, "_ask_conflict", lambda *_a, **_k: ("cancel", False))
         assert page._resolve_conflicts([("/x/a", "/y/a")]) is None
+
+    # ---- 真实弹框 (不 mock _ask_conflict) ----
+    # 回归背景 (2026-11-08): _ask_conflict 以临时对象传 QCheckBox 给
+    # setCheckBox, 语句结束即被 shiboken6 引用计数回收, 对话框内悬空指针.
+    # 全 mock 测试覆盖不到弹框构造路径, 故此组直连真实对话框.
+
+    def test_real_dialog_skip(self, page):
+        """真实对话框: 两冲突框点跳过且不勾复选框 -> (skip, False)."""
+        page, _ctl, _ws = page
+        _drive_conflict_dialogs("跳过")
+        assert page._ask_conflict("a.txt", 2) == ("skip", False)
+
+    def test_real_dialog_skip_apply_all(self, page):
+        """真实对话框: 勾选"应用于其余"后点跳过 -> (skip, True)."""
+        page, _ctl, _ws = page
+        _drive_conflict_dialogs("跳过", check_first=True)
+        assert page._ask_conflict("a.txt", 2) == ("skip", True)
+
+    def test_real_paste_two_conflicts_all_skip(self, page):
+        """端到端真实对话框: 两文件同名冲突连点两次跳过 -> 全跳过不落盘.
+
+        即 2026-11-08 实机崩溃场景的脚本化.
+        """
+        page, _ctl, ws = page
+        for name in ("a.txt", "b.txt"):
+            (ws / name).write_text("old")
+        srcs = [self._conflict_src(ws, "a.txt"),
+                self._conflict_src(ws, "b.txt")]
+        page._clipboard = {"mode": "copy", "paths": srcs}
+        msgs = []
+        page.status_message.connect(msgs.append)
+        _drive_conflict_dialogs("跳过", times=2)
+        page._paste()
+        assert (ws / "a.txt").read_text() == "old"
+        assert (ws / "b.txt").read_text() == "old"
+        assert page._clipboard["paths"] == srcs
+        assert msgs[-1] == "已跳过全部项目"
