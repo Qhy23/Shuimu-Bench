@@ -42,6 +42,13 @@ def run(capsys, db, *argv, schedule=None):
     return code, capsys.readouterr().out
 
 
+def run_full(capsys, db, *argv):
+    """执行 CLI 并返回 (退出码, stdout, stderr)."""
+    code = main(["--db", db, *argv])
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
 @pytest.fixture()
 def semester(monkeypatch):
     """固定学期配置(第 1 周 = 2026-09-14, 共 18 周)供周数展开测试."""
@@ -484,3 +491,72 @@ class TestReplCompletion:
         assert "--series" in opts["rm-event"]
         assert "--name" in opts["edit-link"]
         assert opts["links"] == ["-h", "--help"]
+
+
+@pytest.fixture()
+def plugins_isolated(tmp_path, monkeypatch):
+    """插件状态与外部目录隔离到 tmp(内置目录仍用真实仓库插件)."""
+    monkeypatch.setattr("shuimu.core.pluginman.default_plugins_state_path",
+                        lambda: str(tmp_path / "plugins.yaml"))
+    monkeypatch.setattr("shuimu.core.pluginman.external_plugins_dir",
+                        lambda: str(tmp_path / "ext-plugins"))
+
+
+@pytest.mark.usefixtures("plugins_isolated")
+class TestPluginCommands:
+    """插件相关子命令."""
+
+    def test_plugins_list_contains_hwcheck(self, capsys, db):
+        """plugins 列出内置 hwcheck 且状态可用."""
+        code, out = run(capsys, db, "plugins")
+        assert code == 0
+        assert "hwcheck" in out and "作业提交自查" in out and "内置" in out
+
+    def test_plugin_run_ok(self, capsys, db, tmp_path):
+        """合规目录运行退出 0, 输出含检查摘要."""
+        (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
+        code, out = run(capsys, db, "plugin-run", "hwcheck",
+                        "--path", str(tmp_path))
+        assert code == 0
+        assert "作业提交自查" in out and "检查" in out
+
+    def test_plugin_run_findings_exit_2(self, capsys, db, tmp_path):
+        """缺必交文件退出 2, 报告行含错误标记."""
+        (tmp_path / "note.txt").write_text("x", encoding="utf-8")
+        code, out, _err = run_full(capsys, db, "plugin-run", "hwcheck",
+                                   "--path", str(tmp_path))
+        assert code == 2
+        assert "缺少必交文件" in out
+
+    def test_plugin_run_unknown_plugin(self, capsys, db, tmp_path):
+        """未知插件退出 2."""
+        code, _out, err = run_full(capsys, db, "plugin-run", "ghost",
+                                   "--path", str(tmp_path))
+        assert code == 2 and "不存在" in err
+
+    def test_plugin_run_bad_set_form(self, capsys, db, tmp_path):
+        """--set 缺 = 退出 2."""
+        code, _out, err = run_full(capsys, db, "plugin-run", "hwcheck",
+                                   "--path", str(tmp_path), "--set", "novalue")
+        assert code == 2 and "K=V" in err
+
+    def test_disable_enable_roundtrip(self, capsys, db, tmp_path):
+        """disable/enable 往返, 留痕含 plugin_disable."""
+        assert run(capsys, db, "plugin-disable", "hwcheck")[0] == 0
+        code, out = run(capsys, db, "plugins")
+        assert "已禁用" in out
+        (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
+        code, _out, err = run_full(capsys, db, "plugin-run", "hwcheck",
+                                   "--path", str(tmp_path))
+        assert code == 2 and "已禁用" in err
+        assert run(capsys, db, "plugin-enable", "hwcheck")[0] == 0
+        assert run(capsys, db, "plugin-run", "hwcheck",
+                   "--path", str(tmp_path))[0] == 0
+        code, out = run(capsys, db, "log")
+        assert "plugin_disable" in out and "plugin_enable" in out
+
+    def test_plugin_repl_completion(self):
+        """REPL 补全含 plugin-run(经 parser 反射自动生效)."""
+        opts = cli_main._subcommand_options(cli_main.build_parser())
+        assert cli_main._completions("plugin-", opts) == \
+            sorted(["plugin-run", "plugin-enable", "plugin-disable"])

@@ -18,6 +18,8 @@
   python cli.py links
   python cli.py add-link 网络学堂 https://learn.tsinghua.edu.cn --group 课堂资源
   python cli.py open-link 网络学堂
+  python cli.py plugins
+  python cli.py plugin-run hwcheck --path ./hw3 --set rules=strict
 """
 
 import argparse
@@ -41,6 +43,7 @@ from shuimu.core.paths import (
     default_links_path,
     default_schedule_path,
 )
+from shuimu.core.pluginapi import SEVERITY_LABEL
 from shuimu.core.quicklinks import grouped_links
 from shuimu.core.schedule import (
     SESSION_TIMES,
@@ -99,6 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _build_links_subcommands(sub)
     _build_schedule_subcommands(sub)
+    _build_plugins_subcommands(sub)
     return parser
 
 
@@ -171,6 +175,26 @@ def _build_schedule_subcommands(sub) -> None:
     p_rm = sub.add_parser("rm-event", help="按序号删除日程")
     p_rm.add_argument("index", type=int)
     p_rm.add_argument("--series", action="store_true", help="删除整个系列")
+
+
+def _build_plugins_subcommands(sub) -> None:
+    """注册插件相关子命令(GUI 同源, 均为 Controller 动作的薄封装)."""
+    sub.add_parser("plugins", help="列出插件(来源/状态/权限/适用类型)")
+
+    p_run = sub.add_parser("plugin-run", help="对目标路径运行插件并留痕")
+    p_run.add_argument("plugin_id")
+    p_run.add_argument("--path", action="append", required=True,
+                       help="目标路径, 可多次(类型须匹配插件适用类型)")
+    p_run.add_argument("--set", action="append", default=[], metavar="K=V",
+                       help="插件参数, 可多次, 如 --set rules=strict")
+    p_run.add_argument("--yes", action="store_true",
+                       help="跳过写权限确认(无人值守)")
+
+    p_enable = sub.add_parser("plugin-enable", help="启用插件")
+    p_enable.add_argument("plugin_id")
+    p_disable = sub.add_parser("plugin-disable",
+                               help="禁用插件(禁用即不加载其代码)")
+    p_disable.add_argument("plugin_id")
 
 
 def _resource_status(row) -> str:
@@ -369,6 +393,9 @@ _WORKSPACE_COMMANDS = ("courses", "add-course", "del-course", "add",
 
 _LINKS_COMMANDS = ("links", "add-link", "edit-link", "rm-link", "open-link")
 
+_PLUGIN_COMMANDS = ("plugins", "plugin-run", "plugin-enable",
+                    "plugin-disable")
+
 
 def run_command(ctl: Controller, args) -> int:
     """执行一条已解析的命令, 返回退出码. 不持有连接, 由调用方管理."""
@@ -376,6 +403,8 @@ def run_command(ctl: Controller, args) -> int:
         return _run_workspace_command(ctl, args)
     if args.command in _LINKS_COMMANDS:
         return _run_links_command(ctl, args)
+    if args.command in _PLUGIN_COMMANDS:
+        return _run_plugins_command(ctl, args)
     if args.command:
         return _run_schedule_command(ctl, args)
     return 0
@@ -464,6 +493,86 @@ def _cmd_open_link(ctl: Controller, args) -> int:
         print(f"无法打开链接: {link.url}", file=sys.stderr)
         return 2
     return 0
+
+
+# ---- 插件 ----
+
+_PLUGIN_STATUS_LABEL = {"ok": "可用", "disabled": "已禁用", "broken": "损坏"}
+
+
+def _print_plugins(ctl: Controller) -> int:
+    """列插件: id/名称/版本/来源/状态/权限/适用类型, 异常附原因."""
+    records = ctl.plugins.records()
+    if not records:
+        print("(暂无插件)")
+        return 0
+    for record in records:
+        origin = "内置" if record.origin == "builtin" else "外部"
+        if record.manifest is None:
+            print(f"{os.path.basename(record.directory)}  (manifest 无法解析)"
+                  f" [{origin}] [损坏] {record.error}")
+            continue
+        manifest = record.manifest
+        line = (f"{manifest.id}  {manifest.name} v{manifest.version}"
+                f" [{origin}] [{_PLUGIN_STATUS_LABEL[record.status]}]"
+                f" 权限:{'/'.join(manifest.permissions)}"
+                f" 适用:{'/'.join(manifest.applies_to)}")
+        if record.status == "broken":
+            line += f" 原因: {record.error}"
+        print(line)
+        for warn_text in record.warnings:
+            print(f"    (注意: {warn_text})")
+    return 0
+
+
+def _parse_set_args(raw_sets: list) -> tuple:
+    """--set K=V 逐项拆分; 返回 (params, None) 或 (None, 错误消息)."""
+    params = {}
+    for item in raw_sets:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            return None, f"参数错误: --set 须为 K=V 形式: {item}"
+        params[key] = value
+    return params, None
+
+
+def _confirm_write(manifest) -> bool:
+    """CLI 写权限确认(交互输入 y)."""
+    answer = input(f"插件 {manifest.name} 声明写权限, 输入 y 确认执行: ")
+    return answer.strip().lower() == "y"
+
+
+def _cmd_plugin_run(ctl: Controller, args) -> int:
+    """plugin-run: 参数经 --set 传入, --yes 跳过写确认, 报告逐行打印."""
+    params, error = _parse_set_args(args.set)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+    confirm = (lambda manifest: True) if args.yes else _confirm_write
+    result = ctl.run_plugin(args.plugin_id, list(args.path), params,
+                            confirm=confirm)
+    code = _emit(result)
+    report = result.detail.get("report")
+    if report is not None:
+        for item in report.findings:
+            line = f"  [{SEVERITY_LABEL[item.severity]}] {item.check}: {item.title}"
+            if item.detail:
+                lines = item.detail.splitlines()
+                line += f" | {lines[0]}" + (" ..." if len(lines) > 1 else "")
+            print(line)
+        for output in report.outputs:
+            print(f"  产出: {output}")
+    return code
+
+
+def _run_plugins_command(ctl: Controller, args) -> int:
+    """执行插件相关子命令(GUI 同源动作的薄封装)."""
+    if args.command == "plugins":
+        return _print_plugins(ctl)
+    if args.command == "plugin-run":
+        return _cmd_plugin_run(ctl, args)
+    return _emit(ctl.set_plugin_enabled(
+        args.plugin_id, args.command == "plugin-enable"))
 
 
 def _cmd_todo(ctl: Controller, args) -> int:
@@ -571,7 +680,7 @@ def _completions(line: str, options_by_command: dict) -> list:
 
 def _make_completer(options_by_command: dict):
     """readline completer: 行缓冲经 _completions 取候选."""
-    def complete(text: str, state: int):
+    def complete(_text: str, state: int):
         candidates = _completions(readline.get_line_buffer(),
                                   options_by_command)
         return candidates[state] if state < len(candidates) else None
