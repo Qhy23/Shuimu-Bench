@@ -1,0 +1,19 @@
+# 作业提交自查规则包: 严格规范
+name: 严格规范
+description: "课程提交通用严格口径: 学号命名, 禁止缓存与多余压缩格式, 密钥全量扫描."
+required_files:
+  - {pattern: "*.pdf", label: 报告 PDF}
+  - {pattern: "*.zip", label: 代码压缩包}
+  - {pattern: "**/*.py", label: 源代码}
+forbidden_files:
+  - {pattern: "__pycache__/**", label: Python 缓存}
+  - {pattern: "*.rar", label: rar 压缩包}
+  - {pattern: "*.7z", label: 7z 压缩包}
+  - {pattern: "**/.DS_Store", label: macOS 元文件}
+name_checks:
+  - {applies: "*.pdf", pattern: "202[0-9]{8}", label: 报告文件名须含学号, severity: error}
+  - {applies: "*.zip", pattern: "202[0-9]{8}", label: 压缩包文件名须含学号, severity: error}
+secret_scan:
+  extensions: [.py, .ipynb, .md, .txt, .json, .yaml, .yml, .toml, .env, .sh]
+  patterns:
+    - {pattern: "sk-inner-[A-Za-z0-9]{10,}", label: 内部平台密钥, severity: error}

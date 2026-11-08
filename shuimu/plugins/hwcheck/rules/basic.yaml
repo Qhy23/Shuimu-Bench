@@ -1,0 +1,7 @@
+# 作业提交自查规则包: 基础规范
+name: 基础规范
+description: "通用作业目录自查: 必交文件齐全 + 内置密钥清单全量扫描."
+required_files:
+  - {pattern: "*.pdf", label: 报告 PDF}
+secret_scan:
+  patterns: []

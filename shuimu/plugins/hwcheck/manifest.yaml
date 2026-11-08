@@ -1,0 +1,38 @@
+# 插件清单: 宿主经 core.pluginman 解析; 未知键容忍并告警
+id: hwcheck
+name: 作业提交自查
+version: "1.0.0"
+api_version: 1
+description: "按规则包检查作业目录: 必交文件是否齐全, 文件名是否合规, 是否疑似泄漏密钥, 是否误放大文件."
+entry: plugin
+permissions: [read]
+applies_to: [dir]
+params:
+  - name: rules
+    type: choice
+    label: 规则包
+    required: true
+    default: basic
+    choices:
+      - [basic, 基础规范]
+      - [strict, 严格规范]
+    help: 选择要套用的提交规范
+  - name: rules_path
+    type: path
+    label: 自定义规则包路径
+    help: 给出外部规则包 YAML 路径时覆盖上面的选择
+  - name: exclude
+    type: str
+    label: 排除模式
+    default: ""
+    help: 逗号分隔的排除 glob, 匹配的文件/目录跳过全部检查, 如 "draft*,notes/*"
+  - name: only_problems
+    type: bool
+    label: 只显示问题
+    default: false
+    help: 勾选后通过项不再逐条列出
+  - name: large_file_mb
+    type: int
+    label: 大文件阈值(MB)
+    default: 200
+    help: 超过该大小的文件给出警告, 0 为关闭
