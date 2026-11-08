@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import date, time
 
 import pytest
+import yaml
 
 from shuimu.core.config import DEFAULTS
 from shuimu.core.controller import Controller, detect_kind
@@ -23,8 +24,43 @@ def ctl(tmp_path, monkeypatch):
                         lambda: str(tmp_path / "no-such-links-template.yaml"))
     storage = Storage(str(tmp_path / "ctl.db"))
     yield Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
-                     links_path=str(tmp_path / "links.yaml"))
+                     links_path=str(tmp_path / "links.yaml"),
+                     plugins_state_path=str(tmp_path / "plugins.yaml"),
+                     external_plugins_dir=str(tmp_path / "ext-plugins"))
     storage.close()
+
+
+@pytest.fixture()
+def ctl_ext(tmp_path, monkeypatch):
+    """带外部插件目录的 controller: 返回 (controller, 外部目录)."""
+    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
+                        lambda: str(tmp_path / "no-such-template.yaml"))
+    monkeypatch.setattr("shuimu.core.controller.template_links_path",
+                        lambda: str(tmp_path / "no-such-links-template.yaml"))
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    storage = Storage(str(tmp_path / "ctl.db"))
+    yield Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
+                     links_path=str(tmp_path / "links.yaml"),
+                     plugins_state_path=str(tmp_path / "plugins.yaml"),
+                     external_plugins_dir=str(ext)), ext
+    storage.close()
+
+
+def make_external_plugin(ext, dirname, *, manifest=None, body=None):
+    """在外部插件目录造一个测试插件(缺省返回空报告)."""
+    directory = ext / dirname
+    directory.mkdir(parents=True)
+    raw = {"id": dirname, "name": dirname, "version": "1.0"}
+    if manifest:
+        raw.update(manifest)
+    (directory / "manifest.yaml").write_text(
+        yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    (directory / "plugin.py").write_text(body or (
+        "from shuimu.core.pluginapi import make_report\n"
+        "def run(job):\n"
+        "    return make_report([], summary='done')\n"), encoding="utf-8")
+    return directory
 
 
 @pytest.fixture()
@@ -642,3 +678,104 @@ class TestQuickLinkActions:
         assert ops[0]["action"] == "remove_quick_link"
         assert ops[0]["path_snapshot"] == "学堂"
         assert not ctl.remove_quick_link("学堂").ok
+
+
+class TestPluginActions:
+    """插件动作: 运行留痕, 权限门禁与启用状态."""
+
+    def test_run_plugin_logs_operation(self, ctl, tmp_path):
+        """成功运行留痕 action=plugin:hwcheck, params/detail 可 JSON 还原."""
+        (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
+        result = ctl.run_plugin("hwcheck", [str(tmp_path)])
+        assert result.ok
+        assert isinstance(result.detail["report"].summary, str)
+        assert result.detail["op_id"] > 0
+        row = ctl.storage.list_operations(1)[0]
+        assert row["action"] == "plugin:hwcheck"
+        assert row["status"] == "ok"
+        assert json.loads(row["params"])["targets"] == [str(tmp_path)]
+        detail = json.loads(row["detail"])
+        assert detail["counts"]["ok"] >= 1
+
+    def test_findings_not_ok_but_status_ok(self, ctl, tmp_path):
+        """检查发现问题: 留痕 status=ok 而 ActionResult.ok=False."""
+        result = ctl.run_plugin("hwcheck", [str(tmp_path)])   # 空目录缺 PDF
+        assert not result.ok
+        assert ctl.storage.list_operations(1)[0]["status"] == "ok"
+
+    def test_unknown_plugin_rejected_no_log(self, ctl, tmp_path):
+        """未知插件拒绝且不留痕."""
+        before = len(ctl.storage.list_operations(200))
+        result = ctl.run_plugin("ghost", [str(tmp_path)])
+        assert not result.ok
+        assert len(ctl.storage.list_operations(200)) == before
+
+    def test_param_error_rejected_no_log(self, ctl, tmp_path):
+        """参数校验失败拒绝且不留痕."""
+        (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
+        result = ctl.run_plugin("hwcheck", [str(tmp_path)], {"ghost": 1})
+        assert not result.ok
+        assert "参数错误" in result.message
+
+    def test_kind_mismatch_rejected(self, ctl, tmp_path):
+        """目标类型不在 applies_to 内拒绝."""
+        target = tmp_path / "a.txt"
+        target.write_text("x", encoding="utf-8")
+        result = ctl.run_plugin("hwcheck", [str(target)])
+        assert not result.ok
+        assert "不适用" in result.message
+
+    def test_disable_enable_roundtrip(self, ctl, tmp_path):
+        """禁用后运行被拒, 启用恢复, 状态切换留痕."""
+        (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
+        ctl.set_plugin_enabled("hwcheck", False)
+        result = ctl.run_plugin("hwcheck", [str(tmp_path)])
+        assert not result.ok
+        assert "已禁用" in result.message
+        assert ctl.set_plugin_enabled("hwcheck", True).ok
+        assert ctl.run_plugin("hwcheck", [str(tmp_path)]).ok
+        actions = [r["action"] for r in ctl.storage.list_operations(200)]
+        assert "plugin_disable" in actions
+        assert "plugin_enable" in actions
+
+    def test_cancel_plugin_logs_cancelled(self, ctl, tmp_path):
+        """取消留痕 status=cancelled."""
+        ctl.cancel_plugin("hwcheck", [str(tmp_path)])
+        row = ctl.storage.list_operations(1)[0]
+        assert row["action"] == "plugin:hwcheck"
+        assert row["status"] == "cancelled"
+
+    def test_write_plugin_confirm_gate(self, ctl_ext, tmp_path):
+        """write 插件: 拒绝确认留痕 cancelled, 同意后运行成功."""
+        ctl, ext = ctl_ext
+        make_external_plugin(ext, "writer",
+                             manifest={"permissions": ["write"]})
+        denied = ctl.run_plugin("writer", [str(tmp_path)],
+                                confirm=lambda m: False)
+        assert not denied.ok
+        assert "已取消" in denied.message
+        assert ctl.storage.list_operations(1)[0]["status"] == "cancelled"
+        allowed = ctl.run_plugin("writer", [str(tmp_path)],
+                                 confirm=lambda m: True)
+        assert allowed.ok
+        assert ctl.storage.list_operations(1)[0]["status"] == "ok"
+
+    def test_write_plugin_without_confirm_cancelled(self, ctl_ext, tmp_path):
+        """write 插件未提供 confirm 回调视为取消."""
+        ctl, ext = ctl_ext
+        make_external_plugin(ext, "writer",
+                             manifest={"permissions": ["write"]})
+        result = ctl.run_plugin("writer", [str(tmp_path)])
+        assert not result.ok
+        assert ctl.storage.list_operations(1)[0]["status"] == "cancelled"
+
+    def test_broken_run_logs_failed(self, ctl_ext, tmp_path):
+        """入口 run 抛异常: 留痕 failed, 宿主不崩."""
+        ctl, ext = ctl_ext
+        make_external_plugin(
+            ext, "badrun",
+            body="def run(job):\n    raise ZeroDivisionError('x')\n")
+        result = ctl.run_plugin("badrun", [str(tmp_path)])
+        assert not result.ok
+        assert "运行失败" in result.message
+        assert ctl.storage.list_operations(1)[0]["status"] == "failed"

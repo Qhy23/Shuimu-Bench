@@ -22,6 +22,12 @@ from shuimu.core.paths import (
     template_links_path,
     template_schedule_path,
 )
+from shuimu.core.pluginapi import PluginJob, PluginReport
+from shuimu.core.pluginman import (
+    PluginError,
+    PluginManager,
+    validate_params,
+)
 from shuimu.core.quicklinks import (
     QuickLink,
     ensure_links_file,
@@ -65,12 +71,17 @@ class Controller:
     """业务动作集合, 持有 Storage 与配置. 无界面状态."""
 
     def __init__(self, storage: Storage, config: dict = None,
-                 schedule_path: str = None, links_path: str = None):
+                 schedule_path: str = None, links_path: str = None,
+                 plugins_state_path: str = None,
+                 external_plugins_dir: str = None):
         self.storage = storage
         self.config = config or load_config()
         self.organize_rules = organize_rules(self.config)
         self.schedule_path = schedule_path or default_schedule_path()
         self.links_path = links_path or default_links_path()
+        self._plugins_state_path = plugins_state_path
+        self._external_plugins_dir = external_plugins_dir
+        self._plugin_manager = None
         self._semester_start = semester_start_date(self.config)
         self._week_count = semester_week_count(self.config)
         self._schedule_seeded = False
@@ -310,6 +321,122 @@ class Controller:
             return
         self._undo_stack.append({"kind": kind, "items": items})
         del self._undo_stack[:-100]
+
+    # ---- 插件 ----
+
+    @property
+    def plugins(self) -> PluginManager:
+        """插件管理器(懒构造一次后缓存; 首次访问触发目录扫描)."""
+        if self._plugin_manager is None:
+            self._plugin_manager = PluginManager(
+                external_dir=self._external_plugins_dir,
+                state_path=self._plugins_state_path)
+        return self._plugin_manager
+
+    def run_plugin(self, plugin_id: str, targets: list,
+                   params: dict = None, confirm=None) -> ActionResult:
+        """运行插件并统一留痕(action 为 plugin:<id>), 不入撤销栈.
+
+        流程: 记录/状态检查 -> applies_to 匹配 -> 参数校验 ->
+        write 权限确认 -> 调入口 run -> 留痕 -> ActionResult.
+        产出经 report.outputs 归档引用, 撤销语义由插件自定义(当前无).
+
+        留痕 status 与 ActionResult.ok 分离: status 记"运行是否成功"
+        (ok/failed/cancelled), ok 记"检查是否通过"(报告含 error 级
+        finding 即 False) -- status="ok" 而 ok=False 是合法组合.
+        """
+        record = self.plugins.get(plugin_id)
+        if record is None:
+            return ActionResult(False, f"插件不存在: {plugin_id}")
+        manifest = record.manifest
+        if record.status == "broken":
+            return ActionResult(False, f"插件损坏: {record.error}")
+        if record.status == "disabled":
+            return ActionResult(False, f"插件已禁用: {manifest.name}")
+        targets = [t for t in targets if t]
+        if not targets:
+            return ActionResult(False, "没有可操作的目标")
+        kinds = {detect_kind(t) for t in targets}
+        if not kinds <= set(manifest.applies_to):
+            return ActionResult(
+                False, f"目标类型不适用: 插件仅适用于 {'/'.join(manifest.applies_to)}")
+        clean, errors = validate_params(manifest, params)
+        if errors:
+            return ActionResult(False, "参数错误: " + "; ".join(errors))
+        snapshot = self._plugin_snapshot(targets)
+        log_params = {"targets": targets, **clean}
+        if "write" in manifest.permissions and not (
+                confirm and confirm(manifest)):
+            self.storage.log_operation(
+                f"plugin:{plugin_id}", status="cancelled",
+                params=log_params, path_snapshot=snapshot)
+            return ActionResult(False, "已取消: 写权限未确认")
+        job = PluginJob(targets=targets, params=clean)
+        try:
+            report = self.plugins.entry(plugin_id)(job)
+            if not isinstance(report, PluginReport):
+                raise PluginError("入口返回值不是 PluginReport")
+        # 插件代码任意异常都不能崩宿主, 此边界必须宽捕获
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.storage.log_operation(
+                f"plugin:{plugin_id}", status="failed",
+                params=log_params, path_snapshot=snapshot,
+                detail={"error": str(exc)})
+            return ActionResult(False, f"插件运行失败: {exc}")
+        op_id = self.storage.log_operation(
+            f"plugin:{plugin_id}", params=log_params,
+            path_snapshot=snapshot, detail=self._plugin_detail(report))
+        return ActionResult(report.ok, f"{manifest.name}: {report.summary}",
+                            {"report": report, "op_id": op_id})
+
+    def cancel_plugin(self, plugin_id: str, targets: list) -> None:
+        """记录一次未运行即取消的插件调用(对齐 cancel_organize)."""
+        targets = [t for t in targets if t]
+        self.storage.log_operation(
+            f"plugin:{plugin_id}", status="cancelled",
+            params={"targets": targets},
+            path_snapshot=self._plugin_snapshot(targets) if targets else None)
+
+    def set_plugin_enabled(self, plugin_id: str,
+                           enabled: bool) -> ActionResult:
+        """启用/禁用插件: 管理器状态切换 + plugins.yaml 写回 + 留痕."""
+        record = self.plugins.get(plugin_id)
+        if record is None:
+            return ActionResult(False, f"插件不存在: {plugin_id}")
+        if record.status == "broken":
+            return ActionResult(False,
+                                f"插件损坏, 无法切换: {record.error}")
+        try:
+            self.plugins.set_enabled(plugin_id, enabled)
+        except PluginError as exc:
+            return ActionResult(False, str(exc))
+        except OSError as exc:
+            return ActionResult(False, f"保存失败: {exc}")
+        action = "plugin_enable" if enabled else "plugin_disable"
+        self.storage.log_operation(action, params={"plugin": plugin_id})
+        verb = "启用" if enabled else "禁用"
+        return ActionResult(True, f"已{verb}插件 {record.manifest.name}")
+
+    @staticmethod
+    def _plugin_snapshot(targets: list) -> str:
+        """插件目标留痕快照(写法对齐 file_delete)."""
+        return targets[0] if len(targets) == 1 \
+            else f"{targets[0]} 等 {len(targets)} 项"
+
+    @staticmethod
+    def _plugin_detail(report: PluginReport) -> dict:
+        """报告转留痕 detail: findings 前 100 条, 超出附 _truncated."""
+        detail = {"summary": report.summary,
+                  "findings": [{"severity": f.severity, "check": f.check,
+                                "title": f.title, "detail": f.detail}
+                               for f in report.findings[:100]],
+                  "outputs": list(report.outputs),
+                  "counts": {sev: sum(1 for f in report.findings
+                                      if f.severity == sev)
+                             for sev in ("error", "warn", "ok")}}
+        if len(report.findings) > 100:
+            detail["_truncated"] = True
+        return detail
 
     # ---- 日程 ----
 
