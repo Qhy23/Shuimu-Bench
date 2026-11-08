@@ -54,6 +54,34 @@ def template_links_path() -> str:
     return os.path.join(project_root(), "data", "links.example.yaml")
 
 
+def builtin_plugins_dir() -> str:
+    """内置插件目录(shuimu/plugins, 每个子目录一个插件).
+
+    frozen 时经 PyInstaller datas 落地为 _MEIPASS/shuimu_plugins;
+    加载统一按文件路径读, dev/frozen 代码路径一致.
+    """
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", "")
+        return os.path.join(base, "shuimu_plugins")
+    return os.path.join(project_root(), "shuimu", "plugins")
+
+
+def external_plugins_dir() -> str:
+    """用户外部插件目录(dev 模式也在用户数据目录, 个人扩展不入仓库).
+
+    不存在视为空(发现层容错).
+    """
+    return os.path.join(user_data_dir(), "plugins")
+
+
+def default_plugins_state_path() -> str:
+    """插件启用状态 YAML 位置. 与 default_links_path 同款分叉:
+    dev 在项目 data/, frozen 在用户数据目录."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(user_data_dir(), "plugins.yaml")
+    return os.path.join(project_root(), "data", "plugins.yaml")
+
+
 def user_data_dir() -> str:
     """平台用户数据目录."""
     if sys.platform == "win32":
