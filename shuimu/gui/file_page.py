@@ -344,8 +344,12 @@ class FileBrowserPage(QWidget):
         box.setIcon(QMessageBox.Icon.Question)
         box.setText(f"“{name}” 在目标文件夹已存在。")
         box.setInformativeText("选择如何处理此项。")
+        check = None
         if remaining > 1:
-            box.setCheckBox(QCheckBox(f"应用于其余 {remaining - 1} 个冲突"))
+            # QCheckBox 须持局部引用: shiboken6 下无父 QObject 由 Python
+            # 包装器拥有, 临时对象在语句结束即被回收, 对话框内成悬空指针
+            check = QCheckBox(f"应用于其余 {remaining - 1} 个冲突")
+            box.setCheckBox(check)
         btn_replace = box.addButton("覆盖(旧的移入回收站)",
                                     QMessageBox.ButtonRole.YesRole)
         btn_skip = box.addButton("跳过", QMessageBox.ButtonRole.NoRole)
@@ -362,7 +366,7 @@ class FileBrowserPage(QWidget):
             choice = "keep_both"
         else:
             choice = "cancel"   # Esc 或关闭框
-        apply_all = bool(box.checkBox() and box.checkBox().isChecked())
+        apply_all = bool(check is not None and check.isChecked())
         return choice, apply_all
 
     def _undo(self) -> None:
