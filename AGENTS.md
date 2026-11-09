@@ -25,8 +25,9 @@
 ## 范围控制
 
 - MVP: 三栏主窗口 + 课程工作区(SQLite 索引) + 文件浏览 + 本地日程 + 操作记录.
+- 插件框架已落地(2026-11-09, plugin-framework 分支): 运行时在 `shuimu/core/pluginman.py`, 内置插件在 `shuimu/plugins/`(与外部插件同一加载路径, 无特权代码路径); 首个内置插件 hwcheck(作业提交自查).
 - 本学期不做: 插件市场, PDF 阅读器, 任何学校网站在线接入(仅网页链接资源), 模拟登录.
-- 插件框架在 MVP 之后开发; 详细规划见 ../.claude/project-proposal.md.
+- 详细规划见 ../.claude/project-proposal.md.
 
 ## 常用命令
 
@@ -44,6 +45,7 @@ pylint --rcfile=../.pylintrc main.py shuimu/ tests/   # lint(配置在课程根�
 - 三表: `courses`(课程), `resources`(索引: kind 为 file/dir/link, 文件类统一存绝对路径 + size/mtime), `operations`(操作留痕, params/detail 为 JSON).
 - 日程数据: `project/data/schedule.yaml`(独立于 SQLite; gitignore), 模板 `data/schedule.example.yaml` 随仓库分发; 纯逻辑在 `shuimu/core/schedule.py`, 页签在 `shuimu/gui/schedule_view.py`.
 - 常用链接: `project/data/links.yaml`(独立于 SQLite; gitignore), 模板 `data/links.example.yaml` 随仓库分发; 条目可带 `group` 分组(平铺字段, 组名不持久化, 显示时由 `grouped_links` 派生: 首现顺序+未分组末尾); 纯逻辑在 `shuimu/core/quicklinks.py`, 分组树页签在 `shuimu/gui/links_page.py`(中栏"链接"页, 经 `core/url_open.py` 分发层调系统浏览器打开, 为未来浏览器插件预留注册口).
+- 插件: 清单/校验/发现/加载在 `shuimu/core/pluginman.py`(manifest YAML: id/权限/applies_to/声明式参数, api_version 版本协商); 契约层 `shuimu/core/pluginapi.py`(PluginJob/PluginFinding/PluginReport + run(job) 签名, 纯数据零 Qt); 内置插件 `shuimu/plugins/`(当前 hwcheck), 外部插件放 `~/.local/share/shuimu/plugins/<目录>/`; 启用状态 `data/plugins.yaml`(gitignore); 插件动作经 `controller.run_plugin` 统一留痕(action 为 `plugin:<id>`, status 记运行成败, ActionResult.ok 记检查是否通过, 二者分离); 插件动作不入 undo 栈. **权限是声明式门禁而非沙箱**: read 默认放行, write 由宿主先确认, network 声明即拒载(运行时零网络), 入口代码在宿主进程内运行, 外部插件放入即视为信任.
 - 索引只存引用, 不复制文件本体; 文件失效保留记录, 由 UI 标灰.
 - 文件页操作(复制/移动/删除/重命名/新建文件夹)经 controller 留痕; 纯逻辑在 `shuimu/core/fileops.py`(find_conflicts 预检/move_back 撤销移动); 粘贴同名冲突逐个弹框决策(覆盖=旧文件先入回收站/跳过/保留两者加 _1, 可"应用于其余全部"); Ctrl+Z 撤销栈在 controller(内存 LIFO, 上限 100, 不跨会话, 无 redo): 复制与新建入回收站, 移动移回原位, 删除从回收站恢复, 重命名改回; 删除移入回收站, 后端在 `shuimu/core/trash.py` — 优先 config.yaml `fileops.trash_dir` 指定目录(WSL 测试用, 布局同 freedesktop: files/ + info/*.trashinfo), 留空用系统回收站(Windows Shell / XDG Trash).
 - 测试伪资料: 课程根目录 `content/`(仓库外), 单元测试一律用 tmp_path 保持隔离.
