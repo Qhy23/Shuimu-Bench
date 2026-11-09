@@ -21,6 +21,7 @@ FG_TEXT = "#e4e4ef"        # 主文字
 FG_DIM = "#8a8a9e"         # 次要文字
 BORDER = "#3a3a4e"         # 边框
 DANGER = "#e5484d"         # 警示: 逾期/失败
+WARN = "#f0a020"           # 警告: 插件报告警告级(结果表格前景色)
 RADIUS = "8px"
 FONT_FAMILY = '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
 MONO_FAMILY = '"JetBrainsMono NFM", "DejaVu Sans Mono", monospace'

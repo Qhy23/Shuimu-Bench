@@ -40,6 +40,7 @@ from shuimu.gui import artwork, theme
 from shuimu.gui.dialogs import LogPreviewDialog, warn
 from shuimu.gui.file_page import FileBrowserPage
 from shuimu.gui.links_page import LinksPage
+from shuimu.gui.plugin_runner import run_plugin_dialogs
 from shuimu.gui.schedule_view import ScheduleTab
 from shuimu.gui.titlebar import TitleBar
 
@@ -202,6 +203,8 @@ class MainWindow(QMainWindow):
         self.file_page.add_requested.connect(self._on_add_requested)
         self.file_page.open_requested.connect(self._on_open_requested)
         self.file_page.status_message.connect(self.statusBar().showMessage)
+        self.file_page.set_plugin_catalog(self.ctl.plugins.catalog())
+        self.file_page.plugin_requested.connect(self._on_plugin_requested)
         self.center_tabs.addTab(self.file_page, "文件")
         self.links_page = LinksPage(self.ctl, self.center_tabs)
         self.center_tabs.addTab(self.links_page, "链接")
@@ -236,6 +239,15 @@ class MainWindow(QMainWindow):
         """文件页请求用系统默认程序打开文件."""
         if not _open_local(path):
             self.statusBar().showMessage(f"无法打开: {path}")
+
+    def _on_plugin_requested(self, plugin_id: str, paths: list) -> None:
+        """文件页请求运行插件: 参数对话框 -> 运行 -> 结果对话框."""
+        record = self.ctl.plugins.get(plugin_id)
+        if record is None or record.status != "ok":
+            self.statusBar().showMessage(f"插件不可用: {plugin_id}")
+            return
+        result = run_plugin_dialogs(self, self.ctl, record, paths)
+        self.statusBar().showMessage(result.message)
 
     def _open_log_dialog(self) -> None:
         """打开操作留痕预览(非模态, 可常开对照)."""

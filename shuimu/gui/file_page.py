@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from shuimu.core.controller import Controller
+from shuimu.core.controller import Controller, detect_kind
 from shuimu.core.fileops import find_conflicts
 from shuimu.core.paths import default_workspace_root
 from shuimu.gui.dialogs import warn
@@ -48,6 +48,7 @@ class FileBrowserPage(QWidget):
 
     add_requested = Signal(str)    # 请求把选中路径登记进当前课程
     open_requested = Signal(str)   # 请求用系统默认程序打开文件
+    plugin_requested = Signal(str, list)  # 请求运行插件(插件 id, 选中路径列表)
     status_message = Signal(str)   # 状态栏提示(工作目录切换/校验失败等)
 
     def __init__(self, controller: Controller = None,
@@ -56,6 +57,7 @@ class FileBrowserPage(QWidget):
         self._ctl = controller
         self._workspace_root = workspace_root or default_workspace_root()
         self._clipboard = {"mode": None, "paths": []}  # 应用内部剪贴板
+        self._plugin_catalog = []  # 可用插件 manifest(主窗口推送)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         # 路径栏: 显示并调整工作目录
@@ -203,6 +205,21 @@ class FileBrowserPage(QWidget):
                 index, QItemSelectionModel.SelectionFlag.ClearAndSelect
                 | QItemSelectionModel.SelectionFlag.Rows)
 
+    def set_plugin_catalog(self, manifests: list) -> None:
+        """主窗口推送可用插件 manifest 列表(状态 ok), 菜单据此过滤."""
+        self._plugin_catalog = list(manifests)
+
+    def _plugin_actions(self, kinds: set) -> list:
+        """适用于当前所选全部类型的插件清单.
+
+        所选每一项的类型都在插件 applies_to 内才显示, 混入不适用
+        类型(如目录+文件多选)时整项隐藏.
+        """
+        if not kinds:
+            return []
+        return [m for m in self._plugin_catalog
+                if kinds <= set(m.applies_to)]
+
     def _build_context_menu(self, on_item: bool, on_dir: bool = False) -> QMenu:
         """构造右键菜单(与弹出分离, 便于测试).
 
@@ -213,6 +230,18 @@ class FileBrowserPage(QWidget):
         if on_item:
             menu.addAction("打开", self._open_current)
             menu.addAction("加入课程", self._request_add)
+            applicable = self._plugin_actions(
+                {detect_kind(p) for p in self.selected_paths()})
+            if applicable:
+                plugin_menu = menu.addMenu("插件")
+                for manifest in applicable:
+                    act = plugin_menu.addAction(manifest.name)
+                    act.setToolTip(manifest.description)
+                    # 默认参绑定 id, 防循环变量闭包陷阱; 路径在触发时现取
+                    act.triggered.connect(
+                        lambda _checked=False, pid=manifest.id:
+                            self.plugin_requested.emit(
+                                pid, self.selected_paths()))
             menu.addSeparator()
             menu.addAction(self.act_copy)
             menu.addAction(self.act_cut)
