@@ -23,3 +23,6 @@ data/schedule.yaml
 data/links.yaml
 data/plugins.yaml
 data/trash/
+data/campus-session.json
+data/campus-fingerprint
+data/campus-debug/

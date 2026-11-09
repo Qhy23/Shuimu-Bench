@@ -82,6 +82,21 @@ def default_plugins_state_path() -> str:
     return os.path.join(project_root(), "data", "plugins.yaml")
 
 
+def default_campus_session_path() -> str:
+    """校园登录会话 JSON 位置(cookies+本人信息缓存; 密码永不落盘).
+    与 default_links_path 同款分叉: dev 在项目 data/, frozen 在用户数据目录."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(user_data_dir(), "campus-session.json")
+    return os.path.join(project_root(), "data", "campus-session.json")
+
+
+def default_campus_fingerprint_path() -> str:
+    """校园登录设备指纹位置(独立于会话, 登出保留以维持信任设备)."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(user_data_dir(), "campus-fingerprint")
+    return os.path.join(project_root(), "data", "campus-fingerprint")
+
+
 def user_data_dir() -> str:
     """平台用户数据目录."""
     if sys.platform == "win32":
