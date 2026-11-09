@@ -126,8 +126,7 @@ class TestUrllibTransport:
                 self.end_headers()
 
             def log_message(self, *_args):
-                """静默访问日志."""
-                pass
+                """静默访问日志(覆写基类)."""
 
         httpd = HTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
