@@ -7,7 +7,16 @@ from copy import deepcopy
 import pytest
 
 from shuimu.cli import main
+from shuimu.core.campus import CHECK_URL, ROAM_FORM_URL
+from shuimu.core.campus_net import MemoryTransport
 from shuimu.core.config import DEFAULTS
+from tests.core.test_campus import (
+    CALLBACK_URL,
+    LOGIN_PAGE,
+    add_login_prelude,
+    add_roam_info_tail,
+    success_page,
+)
 
 # shuimu/cli/__init__.py 把 main 重导出为函数, 遮蔽了同名子模块属性;
 # 经 importlib 直取模块对象以访问 _completions 等实现.
@@ -612,3 +621,66 @@ class TestNetworkPluginEnable:
         """禁用状态下运行被拒绝."""
         code, _out, err = run_full(capsys, db, "plugin-run", "nettool")
         assert code == 2 and "已禁用" in err
+
+
+@pytest.fixture()
+def campus_cli(tmp_path, monkeypatch):
+    """校园 CLI 隔离: 插件状态/外部目录/会话/指纹路径与传输层."""
+    transport = MemoryTransport()
+    monkeypatch.setattr("shuimu.core.pluginman.default_plugins_state_path",
+                        lambda: str(tmp_path / "plugins.yaml"))
+    monkeypatch.setattr("shuimu.core.pluginman.external_plugins_dir",
+                        lambda: str(tmp_path / "ext-plugins"))
+    monkeypatch.setattr("shuimu.core.controller.default_campus_session_path",
+                        lambda: str(tmp_path / "campus-session.json"))
+    monkeypatch.setattr(
+        "shuimu.core.controller.default_campus_fingerprint_path",
+        lambda: str(tmp_path / "campus-fingerprint"))
+    monkeypatch.setattr("shuimu.core.controller.UrllibTransport",
+                        lambda: transport)
+    return transport
+
+
+class TestCampusCommands:
+    """校园账户子命令."""
+
+    @pytest.mark.usefixtures("campus_cli")
+    def test_status_not_logged_in(self, capsys, db):
+        """无会话: campus-status --no-check 退出 2."""
+        code, _out, err = run_full(capsys, db, "campus-status",
+                                   "--no-check")
+        assert code == 2 and "未登录" in err
+
+    @pytest.mark.usefixtures("campus_cli")
+    def test_logout_without_session(self, capsys, db):
+        """本无会话登出成功."""
+        code, out = run(capsys, db, "campus-logout")
+        assert code == 0 and "本无会话" in out
+
+    def test_login_requires_enable(self, capsys, db, campus_cli,
+                                   monkeypatch):
+        """未启用校园插件: 登录被拒且零请求."""
+        monkeypatch.setattr("getpass.getpass", lambda _prompt: "pw")
+        code, _out, err = run_full(capsys, db, "campus-login", "20231234567")
+        assert code == 2 and "未启用" in err
+        assert not campus_cli.requests
+
+    def test_full_roundtrip(self, capsys, db, campus_cli, monkeypatch):
+        """启用 -> 登录 -> 只读状态 -> 登出全链路."""
+        assert run(capsys, db, "plugin-enable", "campus", "--yes")[0] == 0
+        add_login_prelude(campus_cli)
+        campus_cli.add("POST", CHECK_URL, text=success_page(CALLBACK_URL))
+        campus_cli.add("GET", CALLBACK_URL, text="webvpn ok")
+        campus_cli.add("GET", ROAM_FORM_URL, text=LOGIN_PAGE)
+        campus_cli.add("POST", CHECK_URL, text=success_page(
+            "https://info.tsinghua.edu.cn/f/info/gxfw_fg/common/index"))
+        add_roam_info_tail(campus_cli)
+        monkeypatch.setattr("getpass.getpass", lambda _prompt: "pw-secret")
+        code, out = run(capsys, db, "campus-login", "20231234567")
+        assert code == 0 and "已登录" in out and "张三" in out
+        code, out = run(capsys, db, "campus-status", "--no-check")
+        assert code == 0 and "张三" in out
+        code, out = run(capsys, db, "campus-logout")
+        assert code == 0 and "已登出" in out
+        code, out = run(capsys, db, "log")
+        assert "campus_login" in out and "pw-secret" not in out
