@@ -124,6 +124,22 @@ class LoginOutcome:
     profile: CampusProfile = None      # state=success 时
 
 
+class TwoFactorRequired(CampusError):
+    """当前阶段需要二次认证(options 携带可选方式).
+
+    登录与门户漫游两处都可能出现(未信任设备时每个应用授权都会再要一次),
+    由 CampusClient 经注入的 ask_2fa 交互处理; 未注入时上抛给编排层.
+    """
+
+    def __init__(self, options: TwoFactorOptions, stage: str = ""):
+        super().__init__(f"{stage}需要二次认证")
+        self.options = options
+
+
+class TwoFactorCancelled(CampusError):
+    """用户取消了二次认证."""
+
+
 # ---- HTML 解析 (正则, 防御式) ----
 
 def extract_sm2_key(html: str):
@@ -247,14 +263,19 @@ class SessionStore:
 # ---- 协议客户端 ----
 
 class CampusClient:
-    """一次登录事务的协议执行器(每事务新建; cookie 由外部 jar 承载)."""
+    """一次登录事务的协议执行器(每事务新建; cookie 由外部 jar 承载).
+
+    ask_2fa(options, send_code) -> (方式, 验证码, 信任此设备)|None 由
+    构造注入: 登录或漫游任一阶段需要二次认证时调用; 返回 None 视为取消.
+    """
 
     def __init__(self, transport: Transport, jar: CookieJar,
-                 fingerprint: str, on_step=None):
+                 fingerprint: str, on_step=None, ask_2fa=None):
         self._transport = transport
         self._jar = jar
         self._fingerprint = fingerprint
         self._on_step = on_step
+        self._ask_2fa = ask_2fa
 
     def _fetch(self, url: str, method: str = "GET", body: str = None):
         """单跳请求: 注入 Cookie 头, 回收 Set-Cookie, 触发调试钩子."""
@@ -289,14 +310,14 @@ class CampusClient:
     # -- 登录 --
 
     def login(self, username: str, password: str) -> LoginOutcome:
-        """阶段一完整登录; need_2fa 时先取可选方式再返回."""
+        """阶段一完整登录(含可能的二次认证交互)."""
         if not str(username).strip().isdigit():
             return LoginOutcome("bad_credentials", "学号须为纯数字")
         self._jar.clear()
         entry = self._follow(LOGIN_ENTRY_URL)
         response = self._entry_login(entry.text, username, password)
         if TWO_FACTOR_MARK in response:
-            return self._two_factor_options()
+            response = self._handle_two_factor("登录")
         return self._complete_login(response, username, password)
 
     def _entry_login(self, entry_html: str, username: str,
@@ -358,11 +379,11 @@ class CampusClient:
                             profile=profile)
 
     def _roam(self, username: str, password: str) -> None:
-        """阶段二: 漫游进 INFO 门户建立会话."""
+        """阶段二: 漫游进 INFO 门户建立会话(未信任设备时可能再要 2FA)."""
         entry = self._follow(ROAM_FORM_URL)
         response = self._entry_login(entry.text, username, password)
         if TWO_FACTOR_MARK in response:
-            raise ProtocolChangedError("漫游阶段出现二次认证(未预期)")
+            response = self._handle_two_factor("门户漫游")
         if SUCCESS_MARK not in response:
             raise CampusError(extract_msg(response) or "门户漫游失败")
         href = extract_redirect_href(response)
@@ -372,14 +393,40 @@ class CampusClient:
 
     # -- 二次认证 --
 
-    def _two_factor_options(self) -> LoginOutcome:
+    def _handle_two_factor(self, stage: str) -> str:
+        """当前阶段的二次认证: 取可选方式 -> 交互 -> 完成验证.
+
+        返回验证后的响应文本(与 check 响应同形态); 未注入交互回调时
+        上抛 TwoFactorRequired(编排层转 need_2fa 提示), 取消上抛
+        TwoFactorCancelled.
+        """
         data = self._double_auth({"action": "FIND_APPROACHES"})
         info = data.get("object") or {}
         options = TwoFactorOptions(
             has_wechat=bool(info.get("hasWeChatBool")),
             phone_masked=str(info.get("phone", "")),
             has_totp=bool(info.get("hasTotp")))
-        return LoginOutcome("need_2fa", "需要二次认证", options=options)
+        if self._ask_2fa is None:
+            raise TwoFactorRequired(options, stage)
+        answer = self._ask_2fa(options, self.send_code)
+        if answer is None:
+            raise TwoFactorCancelled()
+        method, code, trust = answer
+        return self._finish_two_factor(method, code, trust)
+
+    def _finish_two_factor(self, method: str, code: str,
+                           trust: bool) -> str:
+        """提交验证码(VERITY 拼写为服务端原样), 返回重定向后的响应文本."""
+        action = "VERITY_TOTP_CODE" if method == "totp" else "VERITY_CODE"
+        data = self._double_auth(
+            {"action": action, "vericode": str(code)})
+        redirect = str((data.get("object") or {}).get("redirectUrl", ""))
+        if not redirect:
+            raise ProtocolChangedError("二次认证响应缺 redirectUrl")
+        if trust:
+            self._try_save_finger()
+        response = self._fetch(urljoin(ID_HOST, redirect))
+        return response.text
 
     def _double_auth(self, form: list) -> dict:
         response = self._fetch(DOUBLE_AUTH_URL, "POST", encode_form(form))
@@ -395,20 +442,6 @@ class CampusClient:
     def send_code(self, method: str) -> None:
         """发送验证码(totp 无需发送)."""
         self._double_auth({"action": "SEND_CODE", "type": method})
-
-    def verify_2fa(self, method: str, code: str, trust: bool = False,
-                   username: str = "", password: str = "") -> LoginOutcome:
-        """提交验证码完成登录(VERITY 拼写为服务端原样)."""
-        action = "VERITY_TOTP_CODE" if method == "totp" else "VERITY_CODE"
-        data = self._double_auth(
-            {"action": action, "vericode": str(code)})
-        redirect = str((data.get("object") or {}).get("redirectUrl", ""))
-        if not redirect:
-            raise ProtocolChangedError("二次认证响应缺 redirectUrl")
-        if trust:
-            self._try_save_finger()
-        response = self._fetch(urljoin(ID_HOST, redirect))
-        return self._complete_login(response.text, username, password)
 
     def _try_save_finger(self) -> bool:
         """信任此设备; 失败(含数量上限)容忍, 不阻断登录."""
@@ -467,29 +500,25 @@ class CampusClient:
 def perform_login(store: SessionStore, transport_factory, username: str,
                   password: str, ask_2fa=None,
                   on_step=None) -> LoginOutcome:
-    """完整登录事务; ask_2fa(options, send_code) -> (方式, 验证码, 信任)|None.
+    """完整登录事务(登录与漫游两阶段的二次认证共用 ask_2fa 交互).
 
-    密码与验证码仅存在于本次调用栈, 不落盘不留痕. ask_2fa 实现方自行
+    ask_2fa(options, send_code) -> (方式, 验证码, 信任)|None; 实现方自行
     决定是否调用 send_code(GUI 发送按钮/CLI 选择后发送; totp 无需发送;
-    非交互场景假定验证码已具备).
+    非交互场景假定验证码已具备). 未注入 ask_2fa 而服务端要求二次认证时,
+    返回 need_2fa 结果(附可选方式). 密码与验证码仅存在于本次调用栈.
     """
     jar = CookieJar()
     client = CampusClient(transport_factory(), jar, store.fingerprint(),
-                          on_step)
+                          on_step, ask_2fa=ask_2fa)
     try:
         outcome = client.login(username, password)
-        if outcome.state == "need_2fa":
-            if ask_2fa is None:
-                return outcome
-            answer = ask_2fa(outcome.options, client.send_code)
-            if answer is None:
-                return LoginOutcome("cancelled", "已取消二次认证")
-            method, code, trust = answer
-            outcome = client.verify_2fa(method, code, trust=trust,
-                                        username=username, password=password)
         if outcome.state == "success":
             store.save(client.session_data(username, outcome.profile))
         return outcome
+    except TwoFactorRequired as exc:
+        return LoginOutcome("need_2fa", str(exc), options=exc.options)
+    except TwoFactorCancelled:
+        return LoginOutcome("cancelled", "已取消二次认证")
     except TransportError as exc:
         return LoginOutcome("network_error", f"网络异常: {exc}")
     except ProtocolChangedError as exc:

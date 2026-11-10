@@ -344,6 +344,68 @@ class TestTwoFactor:
         assert outcome.state == "cancelled"
         assert store.load() is None
 
+    def test_2fa_again_at_roam_when_device_untrusted(self, store):
+        """未信任设备: 漫游阶段再要一次二次认证, 两轮交互后成功.
+
+        复刻 2026-11-10 真实登录实测: 阶段一 2FA 后未信任设备,
+        漫游的凭据提交再次返回二次认证页.
+        """
+        transport = MemoryTransport()
+        add_login_prelude(transport)
+        transport.add("POST", CHECK_URL, text="<div>登录需要二次认证</div>")
+        for redirect in ("/do/off/ui/auth/login/finish1",
+                         "/do/off/ui/auth/login/finish2"):
+            transport.add("POST", DOUBLE_AUTH_URL, text=json.dumps(
+                {"result": "success", "object": {
+                    "hasWeChatBool": False, "phone": "138****1234",
+                    "hasTotp": False}}))
+            transport.add("POST", DOUBLE_AUTH_URL,
+                          text=json.dumps({"result": "success"}))
+            transport.add("POST", DOUBLE_AUTH_URL, text=json.dumps(
+                {"result": "success", "object": {"redirectUrl": redirect}}))
+            transport.add(
+                "GET", "https://id.tsinghua.edu.cn" + redirect,
+                text=success_page(
+                    CALLBACK_URL if "1" in redirect else INFO_HREF))
+        transport.add("GET", CALLBACK_URL, text="webvpn ok")
+        transport.add("GET", ROAM_FORM_URL, text=LOGIN_PAGE)
+        transport.add("POST", CHECK_URL, text="<div>登录需要二次认证</div>")
+        add_roam_info_tail(transport)
+        rounds = []
+
+        def ask_2fa(options, send_code):
+            rounds.append(options.phone_masked)
+            send_code("sms")
+            return ("sms", f"12345{len(rounds)}", False)
+
+        outcome = perform_login(store, lambda: transport, USER, "pw",
+                                ask_2fa=ask_2fa)
+        assert outcome.state == "success"
+        assert rounds == ["138****1234", "138****1234"]
+        codes = [dict(form_pairs(p[2])).get("vericode")
+                 for p in posts(transport, DOUBLE_AUTH_URL)
+                 if dict(form_pairs(p[2]))["action"] == "VERITY_CODE"]
+        assert codes == ["123451", "123452"]
+        assert store.load()["username"] == USER
+
+    def test_2fa_at_roam_without_callback_reports_need_2fa(self, store):
+        """漫游需 2FA 而未注入交互: need_2fa 结果附可选方式."""
+        transport = MemoryTransport()
+        add_login_prelude(transport)
+        transport.add("POST", CHECK_URL, text=success_page(CALLBACK_URL))
+        transport.add("GET", CALLBACK_URL, text="webvpn ok")
+        transport.add("GET", ROAM_FORM_URL, text=LOGIN_PAGE)
+        transport.add("POST", CHECK_URL, text="<div>登录需要二次认证</div>")
+        transport.add("POST", DOUBLE_AUTH_URL, text=json.dumps(
+            {"result": "success", "object": {"hasWeChatBool": False,
+                                             "phone": "138****1234",
+                                             "hasTotp": False}}))
+        outcome = perform_login(store, lambda: transport, USER, "pw")
+        assert outcome.state == "need_2fa"
+        assert "门户漫游" in outcome.message
+        assert outcome.options.phone_masked == "138****1234"
+        assert store.load() is None
+
     def test_double_auth_error_message(self, store):
         """FIND_APPROACHES 失败: 服务端 msg 透出."""
         transport = MemoryTransport()
