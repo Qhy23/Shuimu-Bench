@@ -6,6 +6,7 @@
 """
 
 import os
+import time
 from dataclasses import dataclass, field
 
 from shuimu.core.config import (
@@ -16,7 +17,19 @@ from shuimu.core.config import (
 )
 from shuimu.core import fileops, trash
 from shuimu.core.organize import build_plan, execute_plan
+from shuimu.core.campus import (
+    CampusClient,
+    SessionStore,
+    perform_login,
+)
+from shuimu.core.campus_net import (
+    CookieJar,
+    TransportError,
+    UrllibTransport,
+)
 from shuimu.core.paths import (
+    default_campus_fingerprint_path,
+    default_campus_session_path,
     default_links_path,
     default_schedule_path,
     template_links_path,
@@ -73,7 +86,9 @@ class Controller:
     def __init__(self, storage: Storage, config: dict = None,
                  schedule_path: str = None, links_path: str = None,
                  plugins_state_path: str = None,
-                 external_plugins_dir: str = None):
+                 external_plugins_dir: str = None,
+                 campus_session_path: str = None,
+                 campus_transport_factory=None):
         self.storage = storage
         self.config = config or load_config()
         self.organize_rules = organize_rules(self.config)
@@ -81,6 +96,9 @@ class Controller:
         self.links_path = links_path or default_links_path()
         self._plugins_state_path = plugins_state_path
         self._external_plugins_dir = external_plugins_dir
+        self._campus_session_path = campus_session_path
+        self._campus_transport_factory = campus_transport_factory \
+            or UrllibTransport
         self._plugin_manager = None
         self._semester_start = semester_start_date(self.config)
         self._week_count = semester_week_count(self.config)
@@ -455,6 +473,101 @@ class Controller:
         if len(report.findings) > 100:
             detail["_truncated"] = True
         return detail
+
+    # ---- 校园 ----
+
+    def _campus_gate(self):
+        """校园插件门禁: 未启用/不可用时返回失败结果(不发网络), 可用为 None."""
+        record = self.plugins.get("campus")
+        if record is None:
+            return ActionResult(False, "校园插件未安装")
+        if record.status == "broken":
+            return ActionResult(False, f"校园插件损坏: {record.error}")
+        if record.status == "disabled":
+            return ActionResult(False, "校园插件未启用(需网络授权)")
+        return None
+
+    def _campus_store(self) -> SessionStore:
+        """校园会话存储(会话路径可注入; 指纹路径经 paths 分发)."""
+        return SessionStore(
+            self._campus_session_path or default_campus_session_path(),
+            default_campus_fingerprint_path())
+
+    def campus_login(self, username: str, password: str,
+                     ask_2fa=None) -> ActionResult:
+        """登录校园统一认证并留痕(密码/验证码绝不入留痕与结果 detail).
+
+        ask_2fa 交互语义见 core.campus.perform_login.
+        """
+        gate = self._campus_gate()
+        if gate is not None:
+            return gate
+        username = str(username).strip()
+        if not username:
+            return ActionResult(False, "学号不能为空")
+        outcome = perform_login(self._campus_store(),
+                                self._campus_transport_factory,
+                                username, password, ask_2fa=ask_2fa)
+        status = "ok" if outcome.state == "success" else (
+            "cancelled" if outcome.state == "cancelled" else "failed")
+        detail = {"state": outcome.state}
+        if outcome.profile is not None:
+            detail["name"] = outcome.profile.name
+            detail["username"] = outcome.profile.username
+        self.storage.log_operation(
+            "campus_login", status=status,
+            params={"username": username}, detail=detail)
+        return ActionResult(outcome.state == "success", outcome.message,
+                            {"state": outcome.state,
+                             "profile": outcome.profile,
+                             "options": outcome.options})
+
+    def campus_status(self, check: bool = False) -> ActionResult:
+        """读会话状态; check=True 联网校验并刷新本人信息(只读不留痕).
+
+        网络异常与失效区分: 网络异常保留会话仅提示; 失效提示重新登录.
+        """
+        store = self._campus_store()
+        session = store.load()
+        if session is None:
+            return ActionResult(False, "未登录", {"state": "logged_out"})
+        if not check:
+            cached = session.get("profile") or {}
+            message = f"已登录 {session.get('username', '')} " \
+                      f"{cached.get('name', '')}".strip()
+            return ActionResult(True, message, {"state": "cached",
+                                                "session": session})
+        gate = self._campus_gate()
+        if gate is not None:
+            return gate
+        jar = CookieJar()
+        jar.load(session.get("cookies") or {})
+        client = CampusClient(self._campus_transport_factory(), jar,
+                              store.fingerprint())
+        try:
+            profile = client.check_session(session.get("username", ""))
+        except TransportError as exc:
+            return ActionResult(False, f"暂时无法校验(网络异常): {exc}",
+                                {"state": "network_error"})
+        if profile is None:
+            return ActionResult(False, "会话已失效, 请重新登录",
+                                {"state": "expired"})
+        session["profile"] = {"username": profile.username,
+                              "name": profile.name, "raw": profile.raw}
+        session["checked_at"] = time.time()
+        store.save(session)
+        return ActionResult(True, f"会话有效: {profile.name}",
+                            {"state": "valid", "profile": profile})
+
+    def campus_logout(self) -> ActionResult:
+        """清除本机会话(设备指纹保留), 留痕."""
+        store = self._campus_store()
+        existed = store.load() is not None
+        store.clear_session()
+        self.storage.log_operation("campus_logout", status="ok",
+                                   detail={"had_session": existed})
+        message = "已登出, 会话已清除" if existed else "本无会话"
+        return ActionResult(True, message, {"had_session": existed})
 
     # ---- 日程 ----
 
