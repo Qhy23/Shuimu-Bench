@@ -1,0 +1,40 @@
+# 插件清单: network 权限默认禁用, 启用(经确认)即授权联网
+id: campus
+name: 校园账户登录
+version: "0.1.0"
+api_version: 1
+description: "经 WebVPN 与清华统一认证登录, 获取本人信息; 为后续学堂/云盘插件提供会话. 密码仅本次使用不落盘."
+entry: plugin
+permissions: [network]
+applies_to: [app]
+params:
+  - name: action
+    type: choice
+    label: 操作
+    required: true
+    default: status
+    choices:
+      - [status, 查看状态]
+      - [login, 登录]
+      - [logout, 登出]
+  - name: username
+    type: str
+    label: 学号
+    help: action=login 时必填
+  - name: password
+    type: secret
+    label: 密码
+    help: 仅本次使用, 不保存不留痕
+  - name: method
+    type: str
+    label: 二次认证方式
+    help: sms/wechat/totp, 账号开启二次认证时需要
+  - name: code
+    type: secret
+    label: 二次认证验证码
+    help: 与 method 一起提供以非交互完成二次认证
+  - name: trust
+    type: bool
+    label: 信任此设备
+    default: false
+    help: 信任后漫游可免二次认证
