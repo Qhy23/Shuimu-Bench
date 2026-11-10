@@ -28,6 +28,15 @@ def ok_cancel_box(parent, on_accept) -> QDialogButtonBox:
     return buttons
 
 
+def confirm_network_enable(parent, manifest) -> bool:
+    """network 插件启用确认框(启用即授权该插件访问在线服务)."""
+    answer = QMessageBox.question(
+        parent, "网络权限确认",
+        f"插件「{manifest.name}」声明了网络权限.\n"
+        "启用后允许它访问对应的在线服务(如学校统一认证). 启用?")
+    return answer == QMessageBox.StandardButton.Yes
+
+
 def format_operation_line(op) -> str:
     """留痕行格式化: [MM-DD HH:MM:SS] status action path_snapshot detail."""
     ts = time.strftime("%m-%d %H:%M:%S", time.localtime(op["started_at"]))

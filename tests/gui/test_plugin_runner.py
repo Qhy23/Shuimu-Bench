@@ -169,3 +169,27 @@ class TestMainWindowSmoke:
         assert op["action"] == "plugin:hwcheck"
         assert op["status"] == "cancelled"
         storage.close()
+
+
+class TestSecretField:
+    """secret 参数的表单控件."""
+
+    def test_secret_uses_password_echo(self, qtbot):
+        """secret 参数渲染为掩码输入框, 值仍可回读."""
+        manifest = manifest_with([
+            {"name": "password", "type": "secret", "label": "密码",
+             "required": True}])
+        dialog = PluginRunDialog(manifest, ["/tmp/target"])
+        qtbot.addWidget(dialog)
+        field = dialog._fields["password"]
+        assert field.echoMode() == QLineEdit.EchoMode.Password
+        field.setText("hunter2")
+        assert dialog.values()["password"] == "hunter2"
+
+    def test_str_field_normal_echo(self, qtbot):
+        """普通 str 参数不掩码."""
+        manifest = manifest_with(
+            [{"name": "note", "type": "str", "label": "备注"}])
+        dialog = PluginRunDialog(manifest, ["/tmp/target"])
+        qtbot.addWidget(dialog)
+        assert dialog._fields["note"].echoMode() == QLineEdit.EchoMode.Normal

@@ -6,13 +6,22 @@ from copy import deepcopy
 from datetime import date, time
 
 import pytest
-import yaml
 
 from shuimu.core.config import DEFAULTS
 from shuimu.core.controller import Controller, detect_kind
 from shuimu.core.quicklinks import QuickLink
 from shuimu.core.schedule import Event, save_schedule
 from shuimu.core.storage import Storage
+from tests.plugin_util import make_plugin_dir
+
+
+def make_external_plugin(ext, dirname, *, manifest=None, body=None):
+    """在外部插件目录造一个测试插件(缺省返回空报告)."""
+    return make_plugin_dir(
+        ext, dirname, manifest=manifest,
+        body=body or ("from shuimu.core.pluginapi import make_report\n"
+                      "def run(job):\n"
+                      "    return make_report([], summary='done')\n"))
 
 
 @pytest.fixture()
@@ -45,22 +54,6 @@ def ctl_ext(tmp_path, monkeypatch):
                      plugins_state_path=str(tmp_path / "plugins.yaml"),
                      external_plugins_dir=str(ext)), ext
     storage.close()
-
-
-def make_external_plugin(ext, dirname, *, manifest=None, body=None):
-    """在外部插件目录造一个测试插件(缺省返回空报告)."""
-    directory = ext / dirname
-    directory.mkdir(parents=True)
-    raw = {"id": dirname, "name": dirname, "version": "1.0"}
-    if manifest:
-        raw.update(manifest)
-    (directory / "manifest.yaml").write_text(
-        yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
-    (directory / "plugin.py").write_text(body or (
-        "from shuimu.core.pluginapi import make_report\n"
-        "def run(job):\n"
-        "    return make_report([], summary='done')\n"), encoding="utf-8")
-    return directory
 
 
 @pytest.fixture()
@@ -779,3 +772,67 @@ class TestPluginActions:
         assert not result.ok
         assert "运行失败" in result.message
         assert ctl.storage.list_operations(1)[0]["status"] == "failed"
+
+
+class TestPluginFrameworkExtensions:
+    """框架扩展语义: network 启用确认, app 目标, secret 留痕剔除."""
+
+    def test_network_enable_confirm_gate(self, ctl_ext):
+        """network 插件启用: 拒确认留痕 cancelled, 同意后可用."""
+        ctl, ext = ctl_ext
+        make_external_plugin(ext, "nettool",
+                             manifest={"permissions": ["network"]})
+        denied = ctl.set_plugin_enabled("nettool", True,
+                                        confirm=lambda m: False)
+        assert not denied.ok
+        assert "已取消" in denied.message
+        row = ctl.storage.list_operations(1)[0]
+        assert row["action"] == "plugin_enable"
+        assert row["status"] == "cancelled"
+        assert ctl.plugins.get("nettool").status == "disabled"
+        allowed = ctl.set_plugin_enabled("nettool", True,
+                                         confirm=lambda m: True)
+        assert allowed.ok
+        assert ctl.plugins.get("nettool").status == "ok"
+
+    def test_run_plugin_empty_targets_app_kind(self, ctl_ext):
+        """app 类型插件无需目标即可运行."""
+        ctl, ext = ctl_ext
+        make_external_plugin(ext, "apptool", manifest={"applies_to": ["app"]})
+        result = ctl.run_plugin("apptool", [])
+        assert result.ok
+        row = ctl.storage.list_operations(1)[0]
+        assert row["action"] == "plugin:apptool"
+        assert row["path_snapshot"] == "apptool"
+
+    def test_run_plugin_empty_targets_rejected_without_app(self, ctl):
+        """非 app 插件空目标拒绝且不留痕."""
+        before = len(ctl.storage.list_operations(200))
+        result = ctl.run_plugin("hwcheck", [])
+        assert not result.ok
+        assert len(ctl.storage.list_operations(200)) == before
+
+    def test_run_plugin_secret_not_logged(self, ctl_ext):
+        """secret 参数值不入留痕, 只记参数名清单."""
+        ctl, ext = ctl_ext
+        make_external_plugin(ext, "sectool", manifest={
+            "applies_to": ["app"],
+            "params": [
+                {"name": "username", "type": "str", "label": "学号"},
+                {"name": "password", "type": "secret", "label": "密码",
+                 "required": True},
+            ]},
+            body=("from shuimu.core.pluginapi import make_report\n"
+                  "def run(job):\n"
+                  "    assert job.params['password'] == 'hunter2'\n"
+                  "    return make_report([], summary='done')\n"))
+        result = ctl.run_plugin("sectool", [],
+                                {"username": "20231234567",
+                                 "password": "hunter2"})
+        assert result.ok
+        row = ctl.storage.list_operations(1)[0]
+        raw = f"{row['params']}{row['detail']}"
+        assert "hunter2" not in raw
+        params = json.loads(row["params"])
+        assert params["username"] == "20231234567"
+        assert params["secret_params"] == ["password"]

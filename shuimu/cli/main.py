@@ -183,8 +183,8 @@ def _build_plugins_subcommands(sub) -> None:
 
     p_run = sub.add_parser("plugin-run", help="对目标路径运行插件并留痕")
     p_run.add_argument("plugin_id")
-    p_run.add_argument("--path", action="append", required=True,
-                       help="目标路径, 可多次(类型须匹配插件适用类型)")
+    p_run.add_argument("--path", action="append", default=[],
+                       help="目标路径, 可多次(app 型插件可省略)")
     p_run.add_argument("--set", action="append", default=[], metavar="K=V",
                        help="插件参数, 可多次, 如 --set rules=strict")
     p_run.add_argument("--yes", action="store_true",
@@ -192,6 +192,8 @@ def _build_plugins_subcommands(sub) -> None:
 
     p_enable = sub.add_parser("plugin-enable", help="启用插件")
     p_enable.add_argument("plugin_id")
+    p_enable.add_argument("--yes", action="store_true",
+                          help="跳过 network 权限确认(无人值守)")
     p_disable = sub.add_parser("plugin-disable",
                                help="禁用插件(禁用即不加载其代码)")
     p_disable.add_argument("plugin_id")
@@ -517,7 +519,7 @@ def _print_plugins(ctl: Controller) -> int:
                 f" [{origin}] [{_PLUGIN_STATUS_LABEL[record.status]}]"
                 f" 权限:{'/'.join(manifest.permissions)}"
                 f" 适用:{'/'.join(manifest.applies_to)}")
-        if record.status == "broken":
+        if record.status in ("broken", "disabled") and record.error:
             line += f" 原因: {record.error}"
         print(line)
         for warn_text in record.warnings:
@@ -540,6 +542,17 @@ def _confirm_write(manifest) -> bool:
     """CLI 写权限确认(交互输入 y)."""
     answer = input(f"插件 {manifest.name} 声明写权限, 输入 y 确认执行: ")
     return answer.strip().lower() == "y"
+
+
+def _confirm_network_enable(manifest) -> bool:
+    """CLI network 插件启用确认(交互输入 y)."""
+    answer = input(f"插件 {manifest.name} 声明网络权限, 输入 y 确认启用: ")
+    return answer.strip().lower() == "y"
+
+
+def _always_confirm(_manifest) -> bool:
+    """--yes 无人值守: 恒确认."""
+    return True
 
 
 def _cmd_plugin_run(ctl: Controller, args) -> int:
@@ -571,8 +584,15 @@ def _run_plugins_command(ctl: Controller, args) -> int:
         return _print_plugins(ctl)
     if args.command == "plugin-run":
         return _cmd_plugin_run(ctl, args)
-    return _emit(ctl.set_plugin_enabled(
-        args.plugin_id, args.command == "plugin-enable"))
+    if args.command == "plugin-enable":
+        confirm = None
+        record = ctl.plugins.get(args.plugin_id)
+        manifest = record.manifest if record is not None else None
+        if manifest is not None and "network" in manifest.permissions:
+            confirm = _always_confirm if args.yes else _confirm_network_enable
+        return _emit(ctl.set_plugin_enabled(args.plugin_id, True,
+                                            confirm=confirm))
+    return _emit(ctl.set_plugin_enabled(args.plugin_id, False))
 
 
 def _cmd_todo(ctl: Controller, args) -> int:

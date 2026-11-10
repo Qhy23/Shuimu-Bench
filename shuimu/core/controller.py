@@ -354,17 +354,24 @@ class Controller:
         if record.status == "disabled":
             return ActionResult(False, f"插件已禁用: {manifest.name}")
         targets = [t for t in targets if t]
-        if not targets:
+        if not targets and "app" not in manifest.applies_to:
             return ActionResult(False, "没有可操作的目标")
         kinds = {detect_kind(t) for t in targets}
-        if not kinds <= set(manifest.applies_to):
+        if kinds and not kinds <= set(manifest.applies_to):
             return ActionResult(
                 False, f"目标类型不适用: 插件仅适用于 {'/'.join(manifest.applies_to)}")
         clean, errors = validate_params(manifest, params)
         if errors:
             return ActionResult(False, "参数错误: " + "; ".join(errors))
-        snapshot = self._plugin_snapshot(targets)
-        log_params = {"targets": targets, **clean}
+        snapshot = self._plugin_snapshot(targets) if targets else manifest.name
+        secret_names = {p.name for p in manifest.params
+                        if p.type == "secret"}
+        log_params = {"targets": targets}
+        log_params.update({key: value for key, value in clean.items()
+                           if key not in secret_names})
+        secrets_given = sorted(secret_names & clean.keys())
+        if secrets_given:
+            log_params["secret_params"] = secrets_given   # 只记名不记值
         if "write" in manifest.permissions and not (
                 confirm and confirm(manifest)):
             self.storage.log_operation(
@@ -397,15 +404,26 @@ class Controller:
             params={"targets": targets},
             path_snapshot=self._plugin_snapshot(targets) if targets else None)
 
-    def set_plugin_enabled(self, plugin_id: str,
-                           enabled: bool) -> ActionResult:
-        """启用/禁用插件: 管理器状态切换 + plugins.yaml 写回 + 留痕."""
+    def set_plugin_enabled(self, plugin_id: str, enabled: bool,
+                           confirm=None) -> ActionResult:
+        """启用/禁用插件: 管理器状态切换 + plugins.yaml 写回 + 留痕.
+
+        network 插件启用须经 confirm(manifest) 确认(对齐 write 先例),
+        拒绝则留痕 cancelled.
+        """
         record = self.plugins.get(plugin_id)
         if record is None:
             return ActionResult(False, f"插件不存在: {plugin_id}")
         if record.status == "broken":
             return ActionResult(False,
                                 f"插件损坏, 无法切换: {record.error}")
+        if enabled and "network" in record.manifest.permissions \
+                and not (confirm and confirm(record.manifest)):
+            self.storage.log_operation(
+                "plugin_enable", status="cancelled",
+                params={"plugin": plugin_id},
+                detail={"reason": "network 权限未确认"})
+            return ActionResult(False, "已取消: 网络权限未确认")
         try:
             self.plugins.set_enabled(plugin_id, enabled)
         except PluginError as exc:

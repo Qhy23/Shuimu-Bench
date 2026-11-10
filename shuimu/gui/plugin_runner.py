@@ -72,6 +72,11 @@ class PluginRunDialog(QDialog):
 
     def _make_field(self, param) -> tuple:
         """类型 -> (取值控件, 挂表单控件); path 为 输入框+浏览 组合."""
+        if param.type == "secret":
+            edit = QLineEdit(_default_text(param))
+            edit.setEchoMode(QLineEdit.EchoMode.Password)
+            edit.setToolTip(param.help)
+            return edit, edit
         if param.type == "str":
             edit = QLineEdit(_default_text(param))
             edit.setToolTip(param.help)

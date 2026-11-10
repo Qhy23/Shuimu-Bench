@@ -560,3 +560,55 @@ class TestPluginCommands:
         opts = cli_main._subcommand_options(cli_main.build_parser())
         assert cli_main._completions("plugin-", opts) == \
             sorted(["plugin-run", "plugin-enable", "plugin-disable"])
+
+
+@pytest.fixture()
+def network_plugin(tmp_path, monkeypatch):
+    """隔离目录 + 一个外部 network 插件."""
+    ext = tmp_path / "ext"
+    (ext / "nettool").mkdir(parents=True)
+    (ext / "nettool" / "manifest.yaml").write_text(
+        "id: nettool\nname: 网络工具\nversion: '1'\n"
+        "permissions: [network]\napplies_to: [app]\n", encoding="utf-8")
+    (ext / "nettool" / "plugin.py").write_text(
+        "from shuimu.core.pluginapi import make_report\n"
+        "def run(job):\n    return make_report([], summary='ok')\n",
+        encoding="utf-8")
+    monkeypatch.setattr("shuimu.core.pluginman.default_plugins_state_path",
+                        lambda: str(tmp_path / "plugins.yaml"))
+    monkeypatch.setattr("shuimu.core.pluginman.external_plugins_dir",
+                        lambda: str(ext))
+
+
+@pytest.mark.usefixtures("network_plugin")
+class TestNetworkPluginEnable:
+    """network 插件启用确认流."""
+
+    def test_listed_disabled_by_default(self, capsys, db):
+        """默认禁用且原因可见."""
+        code, out = run(capsys, db, "plugins")
+        assert code == 0
+        assert "nettool" in out and "已禁用" in out and "默认禁用" in out
+
+    def test_enable_denied_then_confirmed(self, capsys, db, monkeypatch):
+        """拒绝确认退出 2 且未启用; 输 y 启用成功."""
+        monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+        code, _out, err = run_full(capsys, db, "plugin-enable", "nettool")
+        assert code == 2 and "已取消" in err
+        code, out = run(capsys, db, "plugins")
+        assert "已禁用" in out
+        monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+        code, out = run(capsys, db, "plugin-enable", "nettool")
+        assert code == 0 and "已启用" in out
+        code, out = run(capsys, db, "plugins")
+        assert "可用" in out
+
+    def test_enable_yes_skips_confirm(self, capsys, db):
+        """--yes 跳过交互直接启用."""
+        code, out = run(capsys, db, "plugin-enable", "nettool", "--yes")
+        assert code == 0 and "已启用" in out
+
+    def test_run_disabled_network_plugin(self, capsys, db):
+        """禁用状态下运行被拒绝."""
+        code, _out, err = run_full(capsys, db, "plugin-run", "nettool")
+        assert code == 2 and "已禁用" in err
