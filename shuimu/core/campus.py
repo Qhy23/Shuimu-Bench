@@ -53,9 +53,10 @@ MAX_REDIRECT_HOPS = 10
 SUCCESS_MARK = "登录成功。正在重定向到"
 TWO_FACTOR_MARK = "二次认证"
 
-# grjbxx 已知字段 -> 中文标签 (字段名待真实校准, 未知字段原样展示)
-_PROFILE_LABELS = (("xm", "姓名"), ("ryh", "学号"), ("dwmc", "单位"),
-                   ("yxsmc", "院系"), ("rxnf", "入学年份"))
+# grjbxx 已知字段 -> 中文标签 (2026-11-10 真实登录实测: xm/ryh/dwjc/id;
+# 未知字段原样展示)
+_PROFILE_LABELS = (("xm", "姓名"), ("ryh", "学号"), ("dwjc", "院系"),
+                   ("id", "ID"))
 _PROFILE_MAX_FIELDS = 10
 
 

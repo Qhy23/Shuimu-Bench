@@ -39,7 +39,8 @@ _POINT = _scalar_mul(0x6B7BF, G)
 TEST_PUB = (_POINT[0].to_bytes(32, "big") + _POINT[1].to_bytes(32, "big")).hex()
 
 LOGIN_PAGE = f'<div id="sm2publicKey">{TEST_PUB}</div>'
-PROFILE_JSON = {"object": {"ryh": USER, "xm": "张三", "dwmc": "计算机系"}}
+PROFILE_JSON = {"object": {"ryh": USER, "xm": "张三", "dwjc": "计算机系",
+                           "id": USER}}
 
 
 def success_page(href):
@@ -169,7 +170,7 @@ class TestLoginSuccess:
         assert session["username"] == USER
         assert session["cookies"]["webvpn.tsinghua.edu.cn"] == \
             {"wengine_vpn": "trip"}
-        assert session["profile"]["raw"]["dwmc"] == "计算机系"
+        assert session["profile"]["raw"]["dwjc"] == "计算机系"
 
     def test_credential_form_fields_and_order(self, store):
         """check 表单字段名与顺序逐项符合协议; i_pass 带 04 前缀."""
@@ -481,7 +482,7 @@ class TestCheckSession:
         profile = client.check_session(USER)
         assert profile is not None
         assert profile.name == "张三"
-        assert ("单位", "计算机系") in profile.display_fields()
+        assert ("院系", "计算机系") in profile.display_fields()
 
     def test_invalid_session_returns_none(self, store):
         """会话失效(302 回登录页): 返回 None."""
