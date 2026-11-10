@@ -38,6 +38,7 @@ from shuimu.core.storage import Storage
 from shuimu.core.url_open import wslview_open as _wslview_open
 from shuimu.gui import artwork, theme
 from shuimu.gui.dialogs import LogPreviewDialog, warn
+from shuimu.gui.campus_tab import CampusTab
 from shuimu.gui.file_page import FileBrowserPage
 from shuimu.gui.links_page import LinksPage
 from shuimu.gui.plugin_runner import run_plugin_dialogs
@@ -268,6 +269,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_organize_tab(), "整理")
         self.schedule_tab = ScheduleTab(self.ctl, self.tabs)
         self.tabs.addTab(self.schedule_tab, "日程")
+        self.campus_tab = CampusTab(self.ctl, self.tabs)
+        self.tabs.addTab(self.campus_tab, "校园")
 
     def _build_organize_tab(self) -> QWidget:
         tab = QWidget(self.tabs)

@@ -24,8 +24,9 @@ def test_main_window_structure(qtbot, tmp_path):
     assert window.center_tabs.count() == 2
     assert window.center_tabs.tabText(0) == "文件"
     assert window.center_tabs.tabText(1) == "链接"
-    assert window.tabs.count() == 2
-    assert [window.tabs.tabText(i) for i in range(2)] == ["整理", "日程"]
+    assert window.tabs.count() == 3
+    assert [window.tabs.tabText(i) for i in range(3)] == ["整理", "日程",
+                                                          "校园"]
     storage.close()
 
 
