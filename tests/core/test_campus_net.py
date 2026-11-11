@@ -26,6 +26,11 @@ class TestHttpResponse:
         assert response.headers_all("set-cookie") == ["a=1", "b=2"]
         assert response.header("missing") is None
 
+    def test_content_defaults_empty(self):
+        """旧式 4 位置实参构造兼容; content 默认空字节."""
+        response = HttpResponse(200, [], "ok", "https://x/")
+        assert response.content == b""
+
 
 class TestEncodeForm:
     """表单编码."""
@@ -108,18 +113,40 @@ class TestMemoryTransport:
         with pytest.raises(AssertionError):
             MemoryTransport().fetch("https://nowhere/")
 
+    def test_content_roundtrip(self):
+        """content 注册: 原始字节原样返回, 未显式给 text 时为其解码视图."""
+        transport = MemoryTransport()
+        payload = b"\x89PNG\x00\xff-bin"
+        transport.add("GET", "https://x/f.bin", content=payload)
+        response = transport.fetch("https://x/f.bin")
+        assert response.content == payload
+        assert response.text == payload.decode("utf-8", "replace")
+
+    def test_text_route_carries_encoded_content(self):
+        """只给 text 的路由 content 为其 utf-8 编码(与 urllib 行为一致)."""
+        transport = MemoryTransport()
+        transport.add("GET", "https://x/", text="水木")
+        assert transport.fetch("https://x/").content == "水木".encode("utf-8")
+
 
 class TestUrllibTransport:
     """urllib 单跳行为(本地 http.server)."""
 
     @pytest.fixture
     def server(self):
-        """起一个回 302 + Set-Cookie 的本地服务, 返回 (transport, url)."""
+        """起一个本地服务: /login 回 302 + Set-Cookie, /file 回二进制体."""
         class Handler(BaseHTTPRequestHandler):
-            """任何 GET 都回 302 + Set-Cookie."""
+            """/login 与 /file 两条路由."""
 
             def do_GET(self):  # pylint: disable=invalid-name
                 """http.server 的路由约定名."""
+                if self.path == "/file":
+                    payload = b"\x89PNG-ish\x00\xffbin"
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
                 self.send_response(302)
                 self.send_header("Location", "https://example.invalid/next")
                 self.send_header("Set-Cookie", "SESSION=xyz; Path=/")
@@ -150,3 +177,12 @@ class TestUrllibTransport:
         transport, _ = server
         with pytest.raises(TransportError):
             transport.fetch("https://no-such-host.invalid/x")
+
+    def test_binary_body_as_content(self, server):
+        """二进制响应体经 content 原样返回, text 为其解码视图."""
+        transport, url = server
+        base = url.rsplit("/", 1)[0]
+        response = transport.fetch(f"{base}/file")
+        assert response.status == 200
+        assert response.content == b"\x89PNG-ish\x00\xffbin"
+        assert response.text == response.content.decode("utf-8", "replace")

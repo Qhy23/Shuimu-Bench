@@ -23,12 +23,17 @@ class TransportError(OSError):
 
 @dataclass
 class HttpResponse:
-    """单跳响应; headers 保序保留重复(多个 Set-Cookie)."""
+    """单跳响应; headers 保序保留重复(多个 Set-Cookie).
+
+    content 为响应体原始字节(二进制下载用); text 是同一字节的解码视图,
+    既有按 text 断言的调用方行为不变.
+    """
 
     status: int
     headers: list = field(default_factory=list)
     text: str = ""
     url: str = ""
+    content: bytes = b""
 
     def header(self, name: str):
         """取字段最后值(大小写不敏感); 无则 None."""
@@ -100,7 +105,7 @@ class UrllibTransport(Transport):
         charset = resp.headers.get_content_charset() or "utf-8"
         return HttpResponse(
             status=resp.status, headers=list(resp.headers.items()),
-            text=raw.decode(charset, errors="replace"), url=url)
+            text=raw.decode(charset, errors="replace"), url=url, content=raw)
 
 
 class MemoryTransport(Transport):
@@ -115,13 +120,23 @@ class MemoryTransport(Transport):
         self.requests = []     # [(method, url, body, headers)]
 
     def add(self, method: str, url: str, status: int = 200, text: str = "",
-            headers: list = None, location: str = None) -> None:
-        """注册一条响应; location 非空等价加 Location 头."""
+            headers: list = None, location: str = None,
+            content: bytes = None) -> None:
+        """注册一条响应; location 非空等价加 Location 头.
+
+        content 给定时以原始字节为准: 未显式给 text 时 text 视为其
+        utf-8 解码视图; 只给 text 时 content 为其 utf-8 编码(往返一致).
+        """
         all_headers = list(headers or [])
         if location is not None:
             all_headers.append(("Location", location))
+        if content is None:
+            content = text.encode("utf-8")
+        elif not text:
+            text = content.decode("utf-8", errors="replace")
         self._routes.append(
-            [method, url, HttpResponse(status, all_headers, text, url), False])
+            [method, url, HttpResponse(
+                status, all_headers, text, url, content), False])
 
     def fetch(self, url: str, method: str = "GET",
               body: str = None, headers: dict = None) -> HttpResponse:
@@ -136,7 +151,7 @@ class MemoryTransport(Transport):
         route[3] = True
         stored = route[2]
         return HttpResponse(stored.status, list(stored.headers),
-                            stored.text, url)
+                            stored.text, url, stored.content)
 
 
 class CookieJar:
