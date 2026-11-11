@@ -21,6 +21,7 @@ import base64
 import html as html_lib
 import json
 import re
+import time
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
@@ -40,6 +41,19 @@ WEBVPN_HTTPS = f"https://{WEBVPN_HOST}/https/"
 LEARN_SEGMENT = ("77726476706e69737468656265737421"
                  "fcf2408e297e7c4377068ea48d546d30ca8cc97bcc")
 LEARN_BASE = WEBVPN_HTTPS + LEARN_SEGMENT
+# info.tsinghua.edu.cn 的加密主机段(漫游入口在 INFO 门户应用下)
+INFO_SEGMENT = ("77726476706e69737468656265737421"
+                "f9f9479369247b59700f81b9991b2631506205de")
+INFO_BASE = WEBVPN_HTTPS + INFO_SEGMENT
+# 门户漫游: 取 INFO 的 webvpn XSRF 令牌 -> onlineAppRedirect 拿学堂
+# roamingurl(直连域名, 须 webvpn 化后跟随). 2026-11-12 真实登录实测.
+INFO_XSRF_URL = (f"https://{WEBVPN_HOST}/wengine-vpn/cookie?method=get"
+                 "&host=info.tsinghua.edu.cn&scheme=https"
+                 "&path=/f/info/gxfw_fg/common/index")
+LEARN_APP_ID = "3E401364BDD7AEA7EBF1EDE3F15ED4B7"
+ROAM_URL = (INFO_BASE + "/b/yyfw/vyyfwxx/info/portal_fg/common"
+            "/onlineAppRedirect?yyfwid=" + LEARN_APP_ID
+            + "&_csrf={token}&machine=p")
 
 INDEX_PAGE_PATH = "/f/wlxt/index/course/student/"          # _csrf 抓取页
 SEMESTER_PATH = "/b/kc/zhjw_v_code_xnxq/getCurrentAndNextSemester"
@@ -65,6 +79,9 @@ FILE_CATEGORIES_PATH = "/b/wlxt/kj/wlkc_kjflb/student/pageList"
 FILE_DOWNLOAD_PATH = "/b/wlxt/kj/wlkc_kjxxb/student/downloadFile"
 
 LOGIN_TIMEOUT_MARK = "login_timeout"
+# 学堂应用会话失效页的中文判定串(2026-11-12 实测: title 登录超时,
+# 正文 您未登录或登录失效; 出现即需重新漫游)
+LOGIN_EXPIRED_MARK = "您未登录或登录失效"
 _REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 CSRF_RE = re.compile(r"_csrf=([^\"&\s]+)")
 YES_MARK = "是"
@@ -200,8 +217,22 @@ def extract_query_ids(markup: str, param: str) -> list:
 
 
 def parse_learn_date(text: str):
-    """学堂时间串(如 '2026-11-20 23:59') -> 'YYYY-MM-DD' 或 None."""
-    found = re.search(r"\d{4}-\d{2}-\d{2}", str(text or ""))
+    """学堂时间值 -> 'YYYY-MM-DD' 或 None.
+
+    作业列表的 jzsj/scsj 是 13 位毫秒时间戳, 公告的 fbsj/jzsj 是
+    'YYYY-MM-DD HH:MM' 字符串(2026-11-12 实测), 两种都接.
+    """
+    raw = str(text or "").strip()
+    if raw.isdigit():
+        if len(raw) >= 13:
+            seconds = int(raw[:13]) / 1000
+        elif len(raw) == 10:
+            seconds = int(raw)
+        else:
+            seconds = None
+        if seconds is not None:
+            return time.strftime("%Y-%m-%d", time.localtime(seconds))
+    found = re.search(r"\d{4}-\d{2}-\d{2}", raw)
     return found.group(0) if found else None
 
 
@@ -242,6 +273,12 @@ def _is_webvpn_login(url: str) -> bool:
     return parts.netloc == WEBVPN_HOST and parts.path == "/login"
 
 
+def to_webvpn_learn(url: str) -> str:
+    """learn 直连域名 -> WebVPN 加密前缀形式(浏览器场景由 webvpn 的
+    JS 自动重写, 客户端须手动替换; roamingurl 即此形态)."""
+    return url.replace("https://learn.tsinghua.edu.cn", LEARN_BASE, 1)
+
+
 # ---- 协议客户端 ----
 
 class LearnClient:
@@ -272,7 +309,7 @@ class LearnClient:
 
     @staticmethod
     def _check_expired(url: str, response) -> None:
-        """403 / 重定向落登录页 / 响应带 login_timeout -> 会话失效."""
+        """403 / 重定向落登录页 / 学堂失效页文案 -> 会话失效."""
         if response.status == 403:
             raise SessionExpiredError("校园会话已失效(403), 请重新登录")
         if response.status in _REDIRECT_STATUSES:
@@ -281,8 +318,10 @@ class LearnClient:
                     or _is_webvpn_login(urljoin(url, location))):
                 raise SessionExpiredError(
                     "校园会话已失效(被重定向回登录页), 请重新登录")
-        elif LOGIN_TIMEOUT_MARK in response.text[:4096]:
-            raise SessionExpiredError("校园会话已失效, 请重新登录")
+        elif (LOGIN_TIMEOUT_MARK in response.text[:4096]
+                or LOGIN_EXPIRED_MARK in response.text[:4096]):
+            raise SessionExpiredError(
+                "网络学堂会话未建立或已失效, 请重新进入学堂")
 
     def _url(self, path: str, csrf: str = None) -> str:
         """路径 -> 完整 URL, 追加 _csrf query(令牌缺省自动抓取并缓存)."""
@@ -322,12 +361,57 @@ class LearnClient:
     # -- 学期与课程 --
 
     def csrf(self) -> str:
-        """从学堂首页抓 _csrf 令牌(实例内缓存)."""
+        """从学堂首页抓 _csrf 令牌(实例内缓存).
+
+        学堂应用会话失效(webvpn 总会话仍有效)时先经门户漫游重建,
+        免凭据, 用户无感.
+        """
         if self._csrf:
             return self._csrf
-        response = self._fetch(learn_url(INDEX_PAGE_PATH))
+        try:
+            response = self._fetch(learn_url(INDEX_PAGE_PATH))
+        except SessionExpiredError:
+            response = self.roam()   # 落点即 redirectUrl 指向的学堂首页
         self._csrf = extract_csrf(response.text)
         return self._csrf
+
+    def roam(self):
+        """经 INFO 门户 onlineAppRedirect 漫游建立学堂会话, 返回落点响应.
+
+        依赖 webvpn/INFO 会话有效(否则抛 SessionExpiredError, 需重新
+        campus 登录); 取 INFO 的 XSRF 令牌 -> 拿学堂 roamingurl(直连
+        域名 + HTML 转义) -> webvpn 化后跟随重定向链.
+        """
+        response = self._fetch(INFO_XSRF_URL)
+        found = re.search(r"XSRF-TOKEN=(.+?);", response.text + ";")
+        if found is None:
+            raise SessionExpiredError(
+                "无法获取门户 XSRF 令牌(校园会话可能已失效)")
+        response = self._fetch(ROAM_URL.format(token=found.group(1)))
+        try:
+            data = json.loads(response.text)
+        except ValueError as exc:
+            raise ProtocolChangedError("漫游端点响应不是 JSON") from exc
+        roaming = str((data.get("object") or {}).get("roamingurl")
+                      or "") if isinstance(data, dict) else ""
+        if not roaming:
+            raise ProtocolChangedError("漫游响应缺 roamingurl")
+        return self._follow_learn(html_lib.unescape(roaming))
+
+    def _follow_learn(self, url: str, max_hops: int = 6):
+        """漫游重定向手动跟随: 相对路径拼 webvpn 域, learn 域 webvpn 化."""
+        url = to_webvpn_learn(url)
+        for _hop in range(max_hops):
+            response = self._fetch(url)
+            if response.status not in _REDIRECT_STATUSES:
+                return response
+            location = response.header("Location") or ""
+            if not location:
+                return response
+            if location.startswith("/"):
+                location = f"https://{WEBVPN_HOST}{location}"
+            url = to_webvpn_learn(location)
+        raise ProtocolChangedError(f"漫游重定向超过 {max_hops} 跳")
 
     def current_semester(self) -> LearnSemester:
         """当前学期(getCurrentAndNextSemester 取当前项)."""
@@ -389,10 +473,16 @@ class LearnClient:
         return merged
 
     def homework_detail(self, zyid: str, csrf: str = None) -> str:
-        """作业描述(富文本 HTML)."""
-        data = self._post_json(HOMEWORK_DETAIL_PATH, [("id", zyid)],
-                               csrf=csrf)
-        message = data.get("msg")
+        """作业描述(富文本 HTML; 此端点是简单 id 表单, 非 aoData)."""
+        body = encode_form([("id", zyid)])
+        response = self._fetch(self._url(HOMEWORK_DETAIL_PATH, csrf),
+                               "POST", body)
+        try:
+            data = json.loads(response.text)
+        except ValueError as exc:
+            raise ProtocolChangedError(
+                f"学堂端点响应不是 JSON: {HOMEWORK_DETAIL_PATH}") from exc
+        message = data.get("msg") if isinstance(data, dict) else None
         if not isinstance(message, str):
             raise ProtocolChangedError("作业详情端点响应缺 msg")
         return message

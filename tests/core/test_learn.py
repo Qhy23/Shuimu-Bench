@@ -5,6 +5,7 @@
 
 import base64
 import json
+import time
 from urllib.parse import parse_qsl
 
 import pytest
@@ -15,10 +16,13 @@ from shuimu.core.learn import (
     HOMEWORK_DETAIL_PATH,
     HOMEWORK_PATHS,
     INDEX_PAGE_PATH,
+    INFO_XSRF_URL,
     LEARN_BASE,
+    LEARN_SEGMENT,
     NOTICE_DETAIL_PATH,
     NOTICE_PATHS,
     ProtocolChangedError,
+    ROAM_URL,
     SEMESTER_PATH,
     SessionExpiredError,
     LearnClient,
@@ -32,12 +36,19 @@ from shuimu.core.learn import (
     json_rows,
     learn_url,
     parse_learn_date,
+    to_webvpn_learn,
 )
 from shuimu.core.campus_net import CookieJar, MemoryTransport
 
 WLKCID = "2025-2026-1-00000001"
 CSRF = "tok-a1b2"
 SEMESTER = "2025-2026-1"
+
+# 学堂应用会话失效页(真实服务端 2026-11-12 实测形态的浓缩)
+EXPIRED_PAGE = "<html><title>登录超时</title>您未登录或登录失效</html>"
+ROAMING_URL_RAW = ("https://learn.tsinghua.edu.cn/b/entry"
+                   "?redirectUrl=/f/wlxt/index/course/student/"
+                   "&amp;ticket=T1")
 
 CSRF_PAGE = (f'<script src="/f/wlxt/common/languagejs?lang=zh"></script>'
              f'<a href="/b/kc/xxx?_csrf={CSRF}">link</a>')
@@ -112,6 +123,20 @@ def _and_csrf():
     return f"&_csrf={CSRF}"
 
 
+def add_roam_routes(transport):
+    """漫游链路由: INFO XSRF -> onlineAppRedirect -> 学堂 entry 302 ->
+    学堂首页(带令牌). 学堂首页第一条应已注册为失效页(按序消费)."""
+    transport.add("GET", INFO_XSRF_URL, text="XSRF-TOKEN=info-tok;")
+    transport.add("GET", ROAM_URL.format(token="info-tok"),
+                  text=json.dumps({"result": "success", "object": {
+                      "roamingurl": ROAMING_URL_RAW}}))
+    transport.add("GET", to_webvpn_learn(
+        "https://learn.tsinghua.edu.cn/b/entry"
+        "?redirectUrl=/f/wlxt/index/course/student/&ticket=T1"),
+        status=302, location="/https/" + LEARN_SEGMENT + INDEX_PAGE_PATH)
+    transport.add("GET", learn_url(INDEX_PAGE_PATH), text=CSRF_PAGE)
+
+
 def make_client(transport):
     """带共享 jar 的客户端(jar 预置 webvpn 会话 cookie)."""
     jar = CookieJar()
@@ -169,10 +194,14 @@ class TestParsers:
         assert not extract_query_ids(markup, "wjid")
 
     def test_parse_learn_date(self):
-        """时间串取日期段; 无日期返回 None."""
+        """字符串取日期段; 毫秒/秒时间戳转本地日期; 无日期返回 None."""
         assert parse_learn_date("2026-11-20 23:59") == "2026-11-20"
         assert parse_learn_date("2026-11-20") == "2026-11-20"
         assert parse_learn_date("") is None
+        stamp = 1794758340
+        expected = time.strftime("%Y-%m-%d", time.localtime(stamp))
+        assert parse_learn_date(f"{stamp}000") == expected   # 13 位毫秒
+        assert parse_learn_date(str(stamp)) == expected       # 10 位秒
 
     def test_json_rows_multiple_wrappers(self):
         """resultList / object.aaData / object 数组 / 裸数组都能取."""
@@ -184,12 +213,13 @@ class TestParsers:
 
 
 class TestSessionExpired:
-    """会话失效三触发."""
+    """会话失效三触发(webvpn 总会话失效时漫游同样失败, 失效最终冒出)."""
 
     def _expired(self, transport, **kwargs):
         transport.add("GET", learn_url(INDEX_PAGE_PATH), **kwargs)
+        transport.add("GET", INFO_XSRF_URL, status=403)   # 漫游也不可用
         with pytest.raises(SessionExpiredError):
-            LearnClient(transport, CookieJar()).csrf()
+            make_client(transport).csrf()
 
     def test_403(self):
         """403 -> 失效."""
@@ -203,6 +233,48 @@ class TestSessionExpired:
     def test_login_timeout_in_page(self):
         """200 页面带 login_timeout -> 失效."""
         self._expired(MemoryTransport(), text="some login_timeout page")
+
+
+class TestRoam:
+    """门户漫游: 学堂会话失效 -> 免凭据重建."""
+
+    def test_csrf_auto_roams_after_expired(self):
+        """首页为失效页时 csrf() 自动漫游重建, 全链免凭据."""
+        transport = MemoryTransport()
+        transport.add("GET", learn_url(INDEX_PAGE_PATH), text=EXPIRED_PAGE)
+        add_roam_routes(transport)
+        assert make_client(transport).csrf() == CSRF
+        urls = [url for _m, url, _b, _h in transport.requests]
+        assert urls[0] == learn_url(INDEX_PAGE_PATH)      # 先见失效页
+        assert INFO_XSRF_URL in urls and ROAM_URL.format(
+            token="info-tok") in urls                      # 走了漫游
+        assert urls.count(learn_url(INDEX_PAGE_PATH)) == 2
+
+    def test_data_endpoint_expired_page_raises(self):
+        """数据端点收到中文失效页 -> SessionExpiredError."""
+        transport = MemoryTransport()
+        add_csrf_route(transport)
+        transport.add("POST", _post_url(HOMEWORK_PATHS["pending"]),
+                      text=EXPIRED_PAGE)
+        client = make_client(transport)
+        with pytest.raises(SessionExpiredError):
+            client.homework(WLKCID, "pending")
+
+    def test_roam_requires_info_session(self):
+        """INFO XSRF 端点 403(INFO 会话失效) -> 漫游抛失效, 需重登."""
+        transport = MemoryTransport()
+        transport.add("GET", INFO_XSRF_URL, status=403)
+        with pytest.raises(SessionExpiredError):
+            make_client(transport).roam()
+
+    def test_to_webvpn_learn(self):
+        """直连域名替换为加密前缀; 已是 webvpn 形式的不受影响."""
+        assert to_webvpn_learn(
+            "https://learn.tsinghua.edu.cn/b/x?y=1") == \
+            LEARN_BASE + "/b/x?y=1"
+        assert to_webvpn_learn("https://webvpn.tsinghua.edu.cn/"
+                               "https/other") == \
+            "https://webvpn.tsinghua.edu.cn/https/other"
 
 
 class TestLearnClient:
@@ -268,11 +340,14 @@ class TestLearnClient:
         assert merged[2].cj == "95" and merged[2].pynr == "不错"
 
     def test_homework_detail(self, client):
-        """作业描述 msg 富文本."""
+        """作业描述 msg 富文本; 表单是简单 id= 而非 aoData(真实 400 教训)."""
         transport = client._transport  # pylint: disable=protected-access
         transport.add("POST", _post_url(HOMEWORK_DETAIL_PATH),
                       text=json.dumps({"msg": "<p>提交 PDF</p>"}))
         assert client.homework_detail("Z1") == "<p>提交 PDF</p>"
+        body = transport.requests[-1][2]
+        assert body == "id=Z1"
+        assert "aoData" not in (body or "")
 
     def test_homework_attachments(self, client):
         """viewCj 页抓附件 fileId."""
