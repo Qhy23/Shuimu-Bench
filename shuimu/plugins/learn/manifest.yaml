@@ -1,0 +1,45 @@
+# 插件清单: network 默认禁用, 启用(经确认)即授权联网; write 针对下载落盘
+id: learn
+name: 网络学堂
+version: "0.1.0"
+api_version: 1
+description: "复用校园登录会话读取网络学堂: 本学期课程/作业三态/课件与公告列表与选择性下载. 不支持在线提交作业."
+entry: plugin
+permissions: [network, write]
+applies_to: [app]
+params:
+  - name: action
+    type: choice
+    label: 操作
+    required: true
+    default: status
+    choices:
+      - [status, 缓存状态]
+      - [refresh, 刷新缓存]
+      - [download, 下载文件]
+  - name: kind
+    type: choice
+    label: 文件类别
+    default: file
+    choices:
+      - [file, 课件]
+      - [homework, 作业附件]
+      - [notice, 公告附件]
+    help: action=download 时使用
+  - name: file_id
+    type: str
+    label: 远端 id
+    help: download 时必填(课件 wjid / 作业 zyid / 公告 ggid)
+  - name: wlkcid
+    type: str
+    label: 课程 id
+    help: 下载作业/公告附件时必填(见刷新输出)
+  - name: out_dir
+    type: path
+    label: 下载目录
+    help: 缺省用配置 learn.download_dir 或 data/learn
+  - name: overwrite
+    type: bool
+    label: 重新下载
+    default: false
+    help: 已下载过的文件跳过; 勾选强制重下
