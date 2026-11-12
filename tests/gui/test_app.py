@@ -218,7 +218,9 @@ def test_titlebar_log_button_opens_preview(qtbot, tmp_path):
     dialog = window._log_dialog
     assert dialog is not None and dialog.isVisible()
     assert not dialog.isModal()
-    assert "add_resource" in dialog.view.toPlainText()
+    actions = [dialog.table.item(row, 1).text()
+               for row in range(dialog.table.rowCount())]
+    assert "add_resource" in actions
     dialog.close()
     assert window._log_dialog is None  # 关闭后清引用, 可重建
     storage.close()
