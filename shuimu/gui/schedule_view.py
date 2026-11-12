@@ -400,8 +400,7 @@ class ScheduleTab(QWidget):
         self.today_btn = QPushButton("回到今天", panel)
         self.import_btn = QPushButton("导入课程...", panel)
         self.add_btn = QPushButton("添加日程...", panel)
-        for btn in (self.import_btn, self.add_btn):
-            btn.setProperty("primary", True)
+        self.add_btn.setProperty("primary", True)
         self.prev_btn.clicked.connect(lambda: self._shift_week(-1))
         self.next_btn.clicked.connect(lambda: self._shift_week(1))
         self.week_btn.clicked.connect(self._pick_week)
@@ -440,6 +439,12 @@ class ScheduleTab(QWidget):
         self.todo_tree = QTreeWidget(panel)
         self.todo_tree.setHeaderLabels(["事项", "截止", "课程"])
         self.todo_tree.setRootIsDecorated(False)
+        header = self.todo_tree.header()
+        header.setSectionResizeMode(0, header.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, header.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, header.ResizeMode.Fixed)
+        self.todo_tree.setColumnWidth(1, 90)
+        self.todo_tree.setColumnWidth(2, 110)
         self.todo_tree.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.todo_tree)
 

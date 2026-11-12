@@ -235,7 +235,7 @@ class WeekGridWidget(QWidget):
     # ---- 卡片 ----
 
     def _make_card(self, entry: DayEntry) -> QFrame:
-        """一张条目卡片: 左侧稳定配色条 + 时段/标题/地点三行."""
+        """一张条目卡片: 左侧稳定配色条 + 课程色淡底 + 时段/标题/地点三行."""
         card = QFrame(self)
         card.setObjectName("slotcard-manual" if entry.is_manual else "slotcard")
         outer = QHBoxLayout(card)
@@ -243,9 +243,14 @@ class WeekGridWidget(QWidget):
         outer.setSpacing(0)
         color = (theme.ACCENT if entry.is_manual
                  else theme.course_color(entry.title))
+        # 课程色淡底提升课程辨识度(主题无关, alpha 叠色)
+        tint = QColor(color)
+        tint.setAlpha(26)
+        card.setStyleSheet(
+            f"background-color: {tint.name(QColor.NameFormat.HexArgb)};")
         color_bar = QFrame(card)
         color_bar.setObjectName("cardbar")
-        color_bar.setFixedWidth(3)
+        color_bar.setFixedWidth(4)
         color_bar.setStyleSheet(f"background:{color};")
         outer.addWidget(color_bar)
         body = QWidget(card)

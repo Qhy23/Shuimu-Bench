@@ -35,6 +35,7 @@ from shuimu import APP_VERSION
 from shuimu.core import url_open
 from shuimu.core.config import font_size_value, theme_name_value
 from shuimu.core.controller import Controller
+from shuimu.core.paths import user_themes_dir
 from shuimu.core.storage import Storage
 from shuimu.core.url_open import wslview_open as _wslview_open
 from shuimu.gui import artwork, theme
@@ -151,7 +152,6 @@ class MainWindow(QMainWindow):
     def _show_settings_menu(self, btn) -> None:
         """标题栏齿轮菜单: 主题单选切换 + 打开用户主题目录."""
         menu = QMenu(self)
-        labels = dict(theme.theme_choices())
         current = theme.current_name()
         for name, label in theme.theme_choices():
             action = menu.addAction(label)
@@ -167,7 +167,6 @@ class MainWindow(QMainWindow):
 
     def _open_themes_dir(self) -> None:
         """用系统文件管理器打开用户主题目录(不存在则先建)."""
-        from shuimu.core.paths import user_themes_dir
         os.makedirs(user_themes_dir(), exist_ok=True)
         path = user_themes_dir()
         via_wsl = _wslview_open(path)
@@ -347,8 +346,13 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
         row2 = QHBoxLayout()
         row2.addWidget(_button("用中栏选中目录", self._use_browser_dir))
-        row2.addWidget(_button("生成预览", self._preview_plan))
-        row2.addWidget(_button("执行整理", self._execute_plan))
+        preview_btn = _button("生成预览", self._preview_plan)
+        preview_btn.setProperty("primary", True)
+        row2.addWidget(preview_btn)
+        execute_btn = _button("执行整理", self._execute_plan)
+        execute_btn.setProperty("danger", True)
+        row2.addWidget(execute_btn)
+        row2.addStretch(1)
         layout.addLayout(row2)
         self.plan_table = QTableWidget(0, 2)
         self.plan_table.setHorizontalHeaderLabels(["源文件", "目标位置"])
