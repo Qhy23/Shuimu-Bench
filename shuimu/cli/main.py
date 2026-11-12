@@ -22,6 +22,8 @@
   python cli.py plugin-run hwcheck --path ./hw3 --set rules=strict
   python cli.py campus-login            (交互输入学号密码; 需先 plugin-enable campus)
   python cli.py campus-status
+  python cli.py learn-refresh           (需先 plugin-enable learn 并校园登录)
+  python cli.py learn-download --id <wjid>
 """
 
 import argparse
@@ -40,6 +42,11 @@ except ImportError:  # Windows 无标准库 readline, REPL 降级为无补全无
 
 from shuimu.core import url_open
 from shuimu.core.controller import KIND_LABEL, Controller
+from shuimu.plugins.learn.cli import (
+    LEARN_COMMANDS,
+    build_learn_subcommands,
+    run_learn_command,
+)
 from shuimu.core.paths import (
     cli_history_path,
     default_db_path,
@@ -107,6 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     _build_schedule_subcommands(sub)
     _build_plugins_subcommands(sub)
     _build_campus_subcommands(sub)
+    build_learn_subcommands(sub)
     return parser
 
 
@@ -434,6 +442,8 @@ def run_command(ctl: Controller, args) -> int:
         return _run_plugins_command(ctl, args)
     if args.command in _CAMPUS_COMMANDS:
         return _run_campus_command(ctl, args)
+    if args.command in LEARN_COMMANDS:
+        return run_learn_command(ctl, args)
     if args.command:
         return _run_schedule_command(ctl, args)
     return 0

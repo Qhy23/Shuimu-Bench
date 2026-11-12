@@ -1,6 +1,7 @@
 """cli.py 单元测试: 子命令行为与退出码."""
 
 import importlib
+import json
 import os
 from copy import deepcopy
 
@@ -8,14 +9,33 @@ import pytest
 
 from shuimu.cli import main
 from shuimu.core.campus import CHECK_URL, ROAM_FORM_URL
+from shuimu.core.learn import (
+    LearnCourse,
+    LearnFile,
+    LearnHomework,
+    LearnNotice,
+    download_course_file_url,
+)
 from shuimu.core.campus_net import MemoryTransport
 from shuimu.core.config import DEFAULTS
+from shuimu.core.storage import Storage
 from tests.core.test_campus import (
     CALLBACK_URL,
     LOGIN_PAGE,
     add_login_prelude,
     add_roam_info_tail,
     success_page,
+)
+from tests.core.test_learn import (
+    SEMESTER,
+    WLKCID,
+    add_csrf_route,
+    add_download_route,
+)
+from tests.core.test_learn_sync import (
+    COURSE_A,
+    add_course_detail_routes,
+    add_refresh_prelude,
 )
 
 # shuimu/cli/__init__.py 把 main 重导出为函数, 遮蔽了同名子模块属性;
@@ -684,3 +704,130 @@ class TestCampusCommands:
         assert code == 0 and "已登出" in out
         code, out = run(capsys, db, "log")
         assert "campus_login" in out and "pw-secret" not in out
+
+
+@pytest.fixture()
+def learn_cli(tmp_path, monkeypatch):
+    """学堂 CLI 隔离: 插件状态/外部目录/会话/指纹路径与传输层, 预写会话."""
+    transport = MemoryTransport()
+    monkeypatch.setattr("shuimu.core.pluginman.default_plugins_state_path",
+                        lambda: str(tmp_path / "plugins.yaml"))
+    monkeypatch.setattr("shuimu.core.pluginman.external_plugins_dir",
+                        lambda: str(tmp_path / "ext-plugins"))
+    session = str(tmp_path / "campus-session.json")
+    monkeypatch.setattr("shuimu.core.controller.default_campus_session_path",
+                        lambda: session)
+    monkeypatch.setattr(
+        "shuimu.core.controller.default_campus_fingerprint_path",
+        lambda: str(tmp_path / "campus-fingerprint"))
+    monkeypatch.setattr("shuimu.core.controller.UrllibTransport",
+                        lambda: transport)
+    session_data = {"version": 1, "username": "20231234567",
+                    "cookies": {"webvpn.tsinghua.edu.cn":
+                                {"wengine_vpn_ticket": "t1"}},
+                    "profile": {}, "checked_at": 0, "saved_at": 0}
+    with open(session, "w", encoding="utf-8") as f:
+        json.dump(session_data, f)
+    return transport
+
+
+def seed_learn_cli(db_path):
+    """预置学堂缓存(课/作业三态/课件/公告), 返回本地课程 id."""
+    storage = Storage(db_path)
+    try:
+        local = storage.add_course("AI 编程")
+        storage.learn_sync_courses(SEMESTER, [LearnCourse(**COURSE_A)])
+        storage.learn_sync_homework([
+            LearnHomework(wlkcid=COURSE_A["wlkcid"], zyid="Z1",
+                          state="pending", bt="作业一",
+                          jzsj="1794758340000"),
+            LearnHomework(wlkcid=COURSE_A["wlkcid"], zyid="Z2",
+                          state="graded", bt="作业二", cj="95"),
+        ])
+        storage.learn_sync_files([
+            LearnFile(wlkcid=COURSE_A["wlkcid"], kjxxid="K1", wjid="WJ1",
+                      bt="讲义.pdf", wjdx=2048, kjflid="C1")],
+            {"C1": "电子教案"})
+        storage.learn_sync_notices([
+            LearnNotice(wlkcid=COURSE_A["wlkcid"], ggid="G1", bt="公告一",
+                        fbsj="2026-10-16 16:46", sfyd=True)])
+        storage.learn_set_course_link(COURSE_A["wlkcid"], local)
+        return local
+    finally:
+        storage.close()
+
+
+def enable_learn(capsys, db):
+    """启用 learn 插件(--yes 跳过确认)."""
+    code, out = run(capsys, db, "plugin-enable", "learn", "--yes")
+    assert code == 0 and "已启用" in out
+
+
+class TestLearnCommands:
+    """网络学堂子命令."""
+
+    def test_status_empty(self, capsys, db):
+        """空缓存概况, 退出 0."""
+        code, out = run(capsys, db, "learn-status")
+        assert code == 0 and "0 课" in out
+
+    def test_refresh_requires_enable(self, capsys, db, learn_cli):
+        """未启用: 退出 2 且零请求."""
+        code, _out, err = run_full(capsys, db, "learn-refresh")
+        assert code == 2 and "未启用" in err
+        assert not learn_cli.requests
+
+    def test_refresh_ok_then_courses(self, capsys, db, learn_cli):
+        """启用后刷新成功, learn-courses 显示课名与关联."""
+        enable_learn(capsys, db)
+        code, _ = run(capsys, db, "add-course", "AI 编程")   # 供自动匹配
+        assert code == 0
+        add_refresh_prelude(learn_cli)
+        add_course_detail_routes(learn_cli, WLKCID,
+                                 homework=[{"zyid": "Z1", "bt": "作业一"}])
+        add_course_detail_routes(learn_cli, "2025-2026-1-00000002")
+        code, out = run(capsys, db, "learn-refresh")
+        assert code == 0 and "新作业 1" in out
+        code, out = run(capsys, db, "learn-courses")
+        assert code == 0 and "AI 编程" in out and "-> AI 编程" in out
+
+    def test_homework_grouping(self, capsys, db):
+        """三态分组与截止日期."""
+        seed_learn_cli(db)
+        code, out = run(capsys, db, "learn-homework")
+        assert code == 0
+        assert "[未交] 1" in out and "[已批] 1" in out
+        assert "作业一" in out and "作业二" in out
+        code, out = run(capsys, db, "learn-homework", WLKCID)
+        assert code == 0 and "[未交] 1" in out
+
+    def test_files_and_notices(self, capsys, db):
+        """课件与公告列表."""
+        seed_learn_cli(db)
+        code, out = run(capsys, db, "learn-files", WLKCID)
+        assert code == 0 and "讲义.pdf" in out and "电子教案" in out
+        assert "2 KB" in out
+        code, out = run(capsys, db, "learn-notices", WLKCID)
+        assert code == 0 and "公告一" in out and "已读" in out
+
+    def test_download_ok(self, capsys, db, learn_cli, tmp_path):
+        """下载落盘并登记(未关联的课程文件仍落盘)."""
+        enable_learn(capsys, db)
+        seed_learn_cli(db)
+        add_csrf_route(learn_cli)
+        add_download_route(learn_cli, download_course_file_url("WJ1"),
+                           b"pdf-bytes")
+        out_dir = str(tmp_path / "out")
+        code, out = run(capsys, db, "learn-download", "--id", "WJ1",
+                        "--out", out_dir)
+        assert code == 0 and "已下载" in out
+        path = os.path.join(out_dir, "AI 编程", "讲义.pdf")
+        assert os.path.exists(path)
+        storage = Storage(db)
+        try:
+            local = next(c["id"] for c in storage.list_courses()
+                         if c["name"] == "AI 编程")
+            assert any(r["path_or_url"] == path
+                       for r in storage.list_resources(local))
+        finally:
+            storage.close()
