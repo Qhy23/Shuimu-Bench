@@ -1,9 +1,16 @@
-"""storage.py 单元测试: 课程, 资源索引, 失效/变更检测, 操作留痕."""
+"""storage.py 单元测试: 课程, 资源索引, 失效/变更检测, 操作留痕, 学堂缓存."""
 
 import os
+import sqlite3
 
 import pytest
 
+from shuimu.core.learn import (
+    LearnCourse,
+    LearnFile,
+    LearnHomework,
+    LearnNotice,
+)
 from shuimu.core.storage import Storage
 
 
@@ -206,3 +213,114 @@ class TestOperations:
         """取消状态可正常记录."""
         storage.log_operation("organize", status="cancelled")
         assert storage.list_operations()[0]["status"] == "cancelled"
+
+
+class TestLearnCache:
+    """网络学堂缓存表: 差分同步与保留列."""
+
+    def _courses(self):
+        return [LearnCourse(wlkcid="W1", kcm="AI 编程", kch="CS1"),
+                LearnCourse(wlkcid="W2", kcm="核仪器", kch="CS2")]
+
+    def test_course_sync_new_then_upsert_keeps_link(self, storage):
+        """首刷入库; 二刷更新字段且保留本地课程关联; 消失课程移除."""
+        local_id = storage.add_course("本地课")
+        diff = storage.learn_sync_courses("2026-2027-1", self._courses())
+        assert [item[0] for item in diff["new"]] == ["W1", "W2"]
+        assert not diff["removed"]
+        storage.learn_set_course_link("W1", local_id)
+        diff = storage.learn_sync_courses("2026-2027-1", self._courses()[:1])
+        assert not diff["new"] and diff["removed"] == ["W2"]
+        rows = {row["wlkcid"]: row for row in storage.learn_list_courses()}
+        assert rows["W1"]["course_id"] == local_id   # 关联保留
+        assert set(rows) == {"W1"}
+
+    def test_course_removal_cascades_children(self, storage):
+        """删除学堂课程时级联清理其作业/公告/课件."""
+        storage.learn_sync_courses("2026-2027-1", self._courses())
+        storage.learn_sync_homework(
+            [LearnHomework(wlkcid="W2", zyid="Z1", state="pending")])
+        storage.learn_sync_courses("2026-2027-1", self._courses()[:1])
+        assert storage.learn_list_homework(wlkcid="W2") == []
+        assert storage.learn_list_homework(wlkcid="W1") == []
+
+    def test_semester_switch_clears_old(self, storage):
+        """学期切换后旧学期行全部移除(表内只保留最新学期)."""
+        storage.learn_sync_courses("2026-2027-1", self._courses())
+        diff = storage.learn_sync_courses(
+            "2027-2028-1", self._courses()[:1])
+        assert diff["removed"] == ["W2"]
+        rows = storage.learn_list_courses()
+        assert len(rows) == 1 and rows[0]["semester_id"] == "2027-2028-1"
+
+    def test_homework_diff_and_kept_columns(self, storage):
+        """新作业入 new; 状态变化入 changed; 描述缓存与待办映射保留."""
+        storage.learn_sync_courses("2026-2027-1", self._courses()[:1])
+        diff = storage.learn_sync_homework(
+            [LearnHomework(wlkcid="W1", zyid="Z1", state="pending",
+                           bt="作业一")])
+        assert diff["new"] == [("W1", "Z1", "作业一")]
+        storage.learn_save_homework_detail("W1", "Z1", "<p>x</p>")
+        storage.learn_set_homework_todo("W1", "Z1", 7)
+        diff = storage.learn_sync_homework(
+            [LearnHomework(wlkcid="W1", zyid="Z1", state="submitted",
+                           bt="作业一")])
+        assert diff["changed"] == [("W1", "Z1", "作业一",
+                                    "pending", "submitted")]
+        row = storage.learn_list_homework(wlkcid="W1")[0]
+        assert row["state"] == "submitted"
+        assert row["detail_html"] == "<p>x</p>"   # 保留
+        assert row["todo_tid"] == 7               # 保留
+
+    def test_notice_and_file_upsert(self, storage):
+        """公告/课件 upsert 与课件分类回填."""
+        storage.learn_sync_courses("2026-2027-1", self._courses()[:1])
+        diff = storage.learn_sync_notices(
+            [LearnNotice(wlkcid="W1", ggid="G1", bt="公告",
+                         body_html="<p>hi</p>", sfyd=True)])
+        assert diff["new"] == [("W1", "G1", "公告")]
+        assert storage.learn_sync_notices(
+            [LearnNotice(wlkcid="W1", ggid="G1", bt="公告",
+                         sfyd=True)])["new"] == []
+        notice = storage.learn_list_notices("W1")[0]
+        assert notice["ggnr"] == "<p>hi</p>" and notice["sfyd"] == "1"
+
+        diff = storage.learn_sync_files(
+            [LearnFile(wlkcid="W1", kjxxid="K1", wjid="WJ1", bt="讲义",
+                       wjdx=10, kjflid="C1")], {"C1": "电子教案"})
+        assert diff["new"] == [("W1", "K1", "讲义")]
+        row = storage.learn_find_file("WJ1")
+        assert row["category"] == "电子教案"
+        assert storage.learn_sync_files(
+            [LearnFile(wlkcid="W1", kjxxid="K1", wjid="WJ1", bt="讲义")])[
+                "new"] == []
+
+    def test_download_record_and_meta(self, storage):
+        """下载记录 upsert; 元信息键值."""
+        local = storage.ensure_default_course()
+        rid = storage.add_resource(local, "file", "/tmp/a.pdf")
+        storage.learn_record_download("file", "WJ1", "W1", "/tmp/a.pdf", rid)
+        storage.learn_record_download("file", "WJ1", "W1", "/tmp/b.pdf")
+        row = storage.learn_find_download("file", "WJ1")
+        assert row["path"] == "/tmp/b.pdf" and row["resource_id"] is None
+        assert storage.learn_find_download("file", "WJX") is None
+        assert storage.learn_meta_get("k") is None
+        storage.learn_meta_set("k", "v")
+        storage.learn_meta_set("k", "v2")
+        assert storage.learn_meta_get("k") == "v2"
+
+    def test_old_db_migrates(self, tmp_path):
+        """旧三表库打开后自动建学堂表, 原数据不受影响."""
+        db = str(tmp_path / "old.db")
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            "CREATE TABLE courses (id INTEGER PRIMARY KEY, name TEXT"
+            " NOT NULL UNIQUE, created_at REAL NOT NULL);"
+            "INSERT INTO courses (name, created_at) VALUES ('旧课', 0);")
+        conn.commit()
+        conn.close()
+        store = Storage(db)
+        assert store.learn_meta_get("k") is None    # 新表可用
+        store.learn_meta_set("k", "v")
+        assert [row["name"] for row in store.list_courses()] == ["旧课"]
+        store.close()

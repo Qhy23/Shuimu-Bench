@@ -10,6 +10,12 @@ import sqlite3
 import time
 
 from shuimu.core.config import load_config
+from shuimu.core.learn import (
+    LearnCourse,
+    LearnFile,
+    LearnHomework,
+    LearnNotice,
+)
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -38,6 +44,75 @@ CREATE TABLE IF NOT EXISTS operations (
   started_at REAL NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('ok', 'failed', 'cancelled')),
   detail TEXT
+);
+CREATE TABLE IF NOT EXISTS learn_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+CREATE TABLE IF NOT EXISTS learn_courses (
+  wlkcid TEXT PRIMARY KEY,
+  semester_id TEXT NOT NULL,
+  kcm TEXT NOT NULL,
+  kch TEXT,
+  kxh TEXT,
+  jsm TEXT,
+  course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+  first_seen_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS learn_homework (
+  wlkcid TEXT NOT NULL REFERENCES learn_courses(wlkcid) ON DELETE CASCADE,
+  zyid TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','submitted','graded')),
+  xszyid TEXT,
+  bt TEXT,
+  jzsj TEXT,
+  bjjzsj TEXT,
+  sfbj TEXT,
+  scsj TEXT,
+  cj TEXT,
+  pynr TEXT,
+  detail_html TEXT,
+  todo_tid INTEGER,
+  first_seen_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY (wlkcid, zyid)
+);
+CREATE TABLE IF NOT EXISTS learn_notices (
+  wlkcid TEXT NOT NULL REFERENCES learn_courses(wlkcid) ON DELETE CASCADE,
+  ggid TEXT NOT NULL,
+  bt TEXT,
+  ggnr TEXT,
+  fbsj TEXT,
+  jzsj TEXT,
+  sfyd TEXT,
+  fjmc TEXT,
+  first_seen_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY (wlkcid, ggid)
+);
+CREATE TABLE IF NOT EXISTS learn_files (
+  wlkcid TEXT NOT NULL REFERENCES learn_courses(wlkcid) ON DELETE CASCADE,
+  kjxxid TEXT NOT NULL,
+  wjid TEXT,
+  bt TEXT,
+  ms TEXT,
+  scsj TEXT,
+  wjdx INTEGER,
+  kjflid TEXT,
+  category TEXT,
+  first_seen_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY (wlkcid, kjxxid)
+);
+CREATE TABLE IF NOT EXISTS learn_downloads (
+  kind TEXT NOT NULL CHECK (kind IN ('file','homework','notice')),
+  remote_id TEXT NOT NULL,
+  wlkcid TEXT NOT NULL,
+  path TEXT NOT NULL,
+  resource_id INTEGER REFERENCES resources(id) ON DELETE SET NULL,
+  downloaded_at REAL NOT NULL,
+  PRIMARY KEY (kind, remote_id)
 );
 """
 
@@ -196,3 +271,234 @@ class Storage:
         return self._conn.execute(
             "SELECT * FROM operations ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
+
+    # ---- 网络学堂缓存 (差分同步, 保留用户标注列) ----
+
+    def learn_sync_courses(self, semester_id: str,
+                           rows: list[LearnCourse]) -> dict:
+        """课程列表差分入库(表内只保留最新学期的当前列表).
+
+        已关联行保留 course_id; 返回 {"new": [(wlkcid, kcm)],
+        "removed": [wlkcid]}. 消失的课程级联清理其作业/公告/课件.
+        """
+        now = time.time()
+        existing = {row["wlkcid"]: row for row in self._conn.execute(
+            "SELECT * FROM learn_courses").fetchall()}
+        keep = {course.wlkcid for course in rows}
+        removed = []
+        for wlkcid in existing:
+            # 只删"本次列表里没有的"(学期切换时旧 wlkcid 自然不在新列表,
+            # 留存的行随后被 UPDATE 换上新学期 id)
+            if wlkcid not in keep:
+                self._conn.execute(
+                    "DELETE FROM learn_courses WHERE wlkcid = ?", (wlkcid,))
+                removed.append(wlkcid)
+        new = []
+        for course in rows:
+            if course.wlkcid in existing:
+                self._conn.execute(
+                    "UPDATE learn_courses SET semester_id = ?, kcm = ?,"
+                    " kch = ?, kxh = ?, jsm = ?, updated_at = ?"
+                    " WHERE wlkcid = ?",
+                    (semester_id, course.kcm, course.kch, course.kxh,
+                     course.jsm, now, course.wlkcid))
+                continue
+            self._conn.execute(
+                "INSERT INTO learn_courses (wlkcid, semester_id, kcm, kch,"
+                " kxh, jsm, first_seen_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (course.wlkcid, semester_id, course.kcm, course.kch,
+                 course.kxh, course.jsm, now, now))
+            new.append((course.wlkcid, course.kcm))
+        self._conn.commit()
+        return {"new": new, "removed": removed}
+
+    def learn_set_course_link(self, wlkcid: str, course_id) -> None:
+        """设置/清除学堂课程与本地课程的关联(手动或自动匹配)."""
+        self._conn.execute(
+            "UPDATE learn_courses SET course_id = ?, updated_at = ?"
+            " WHERE wlkcid = ?",
+            (course_id, time.time(), wlkcid))
+        self._conn.commit()
+
+    def learn_sync_homework(self, rows: list[LearnHomework]) -> dict:
+        """作业差分入库(保留 detail_html 与 todo_tid).
+
+        返回 {"new": [(wlkcid, zyid, bt)],
+        "changed": [(wlkcid, zyid, bt, 旧state, 新state)]}.
+        """
+        now = time.time()
+        new, changed = [], []
+        for hw in rows:
+            row = self._conn.execute(
+                "SELECT state FROM learn_homework"
+                " WHERE wlkcid = ? AND zyid = ?",
+                (hw.wlkcid, hw.zyid)).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO learn_homework (wlkcid, zyid, state,"
+                    " xszyid, bt, jzsj, bjjzsj, sfbj, scsj, cj, pynr,"
+                    " first_seen_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (hw.wlkcid, hw.zyid, hw.state, hw.xszyid, hw.bt,
+                     hw.jzsj, hw.bjjzsj, "1" if hw.sfbj else "0",
+                     hw.scsj, hw.cj, hw.pynr, now, now))
+                new.append((hw.wlkcid, hw.zyid, hw.bt))
+                continue
+            self._conn.execute(
+                "UPDATE learn_homework SET state = ?, xszyid = ?, bt = ?,"
+                " jzsj = ?, bjjzsj = ?, sfbj = ?, scsj = ?, cj = ?,"
+                " pynr = ?, updated_at = ? WHERE wlkcid = ? AND zyid = ?",
+                (hw.state, hw.xszyid, hw.bt, hw.jzsj, hw.bjjzsj,
+                 "1" if hw.sfbj else "0", hw.scsj, hw.cj, hw.pynr, now,
+                 hw.wlkcid, hw.zyid))
+            if row["state"] != hw.state:
+                changed.append((hw.wlkcid, hw.zyid, hw.bt,
+                                row["state"], hw.state))
+        self._conn.commit()
+        return {"new": new, "changed": changed}
+
+    def learn_save_homework_detail(self, wlkcid: str, zyid: str,
+                                   detail_html: str) -> None:
+        """缓存作业描述富文本."""
+        self._conn.execute(
+            "UPDATE learn_homework SET detail_html = ?, updated_at = ?"
+            " WHERE wlkcid = ? AND zyid = ?",
+            (detail_html, time.time(), wlkcid, zyid))
+        self._conn.commit()
+
+    def learn_set_homework_todo(self, wlkcid: str, zyid: str,
+                                tid) -> None:
+        """记录作业与日程待办 id 的映射."""
+        self._conn.execute(
+            "UPDATE learn_homework SET todo_tid = ?, updated_at = ?"
+            " WHERE wlkcid = ? AND zyid = ?",
+            (tid, time.time(), wlkcid, zyid))
+        self._conn.commit()
+
+    def learn_sync_notices(self, rows: list[LearnNotice]) -> dict:
+        """公告差分入库; 返回 {"new": [(wlkcid, ggid, bt)]}."""
+        now = time.time()
+        new = []
+        for notice in rows:
+            row = self._conn.execute(
+                "SELECT ggid FROM learn_notices"
+                " WHERE wlkcid = ? AND ggid = ?",
+                (notice.wlkcid, notice.ggid)).fetchone()
+            if row is None:
+                new.append((notice.wlkcid, notice.ggid, notice.bt))
+            self._conn.execute(
+                "INSERT INTO learn_notices (wlkcid, ggid, bt, ggnr, fbsj,"
+                " jzsj, sfyd, fjmc, first_seen_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(wlkcid, ggid) DO UPDATE SET"
+                " bt = excluded.bt,"
+                " ggnr = CASE WHEN excluded.ggnr = ''"
+                "  THEN learn_notices.ggnr ELSE excluded.ggnr END,"
+                " fbsj = excluded.fbsj, jzsj = excluded.jzsj,"
+                " sfyd = excluded.sfyd, fjmc = excluded.fjmc,"
+                " updated_at = excluded.updated_at",
+                (notice.wlkcid, notice.ggid, notice.bt, notice.body_html,
+                 notice.fbsj, notice.jzsj, "1" if notice.sfyd else "0",
+                 notice.fjmc, now, now))
+        self._conn.commit()
+        return {"new": new}
+
+    def learn_sync_files(self, rows: list[LearnFile],
+                         categories: dict = None) -> dict:
+        """课件差分入库(分类 id 回填名称); 返回 {"new": [(wlkcid, kjxxid, bt)]}."""
+        categories = categories or {}
+        now = time.time()
+        new = []
+        for item in rows:
+            row = self._conn.execute(
+                "SELECT kjxxid FROM learn_files"
+                " WHERE wlkcid = ? AND kjxxid = ?",
+                (item.wlkcid, item.kjxxid)).fetchone()
+            if row is None:
+                new.append((item.wlkcid, item.kjxxid, item.bt))
+            self._conn.execute(
+                "INSERT INTO learn_files (wlkcid, kjxxid, wjid, bt, ms,"
+                " scsj, wjdx, kjflid, category, first_seen_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(wlkcid, kjxxid) DO UPDATE SET"
+                " wjid = excluded.wjid, bt = excluded.bt, ms = excluded.ms,"
+                " scsj = excluded.scsj, wjdx = excluded.wjdx,"
+                " kjflid = excluded.kjflid, category = excluded.category,"
+                " updated_at = excluded.updated_at",
+                (item.wlkcid, item.kjxxid, item.wjid, item.bt, item.ms,
+                 item.scsj, item.wjdx, item.kjflid,
+                 categories.get(item.kjflid, ""), now, now))
+        self._conn.commit()
+        return {"new": new}
+
+    def learn_list_courses(self) -> list:
+        """缓存的学堂课程(按课名排序)."""
+        return self._conn.execute(
+            "SELECT * FROM learn_courses ORDER BY kcm").fetchall()
+
+    def learn_list_homework(self, wlkcid: str = None,
+                            state: str = None) -> list:
+        """缓存的作业(可按课/状态过滤, 按标题排序)."""
+        query = "SELECT * FROM learn_homework"
+        conditions, args = [], []
+        if wlkcid is not None:
+            conditions.append("wlkcid = ?")
+            args.append(wlkcid)
+        if state is not None:
+            conditions.append("state = ?")
+            args.append(state)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        return self._conn.execute(
+            query + " ORDER BY bt", args).fetchall()
+
+    def learn_list_notices(self, wlkcid: str) -> list:
+        """某课缓存的公告(按发布时间倒序)."""
+        return self._conn.execute(
+            "SELECT * FROM learn_notices WHERE wlkcid = ?"
+            " ORDER BY fbsj DESC, ggid", (wlkcid,)).fetchall()
+
+    def learn_list_files(self, wlkcid: str) -> list:
+        """某课缓存的课件(按标题排序)."""
+        return self._conn.execute(
+            "SELECT * FROM learn_files WHERE wlkcid = ?"
+            " ORDER BY bt, kjxxid", (wlkcid,)).fetchall()
+
+    def learn_find_file(self, wjid: str):
+        """按文件 id 找课件行(下载入口用)."""
+        return self._conn.execute(
+            "SELECT * FROM learn_files WHERE wjid = ?", (wjid,)).fetchone()
+
+    def learn_record_download(self, kind: str, remote_id: str,
+                              wlkcid: str, path: str, resource_id=None) -> None:
+        """记录一次下载(路径与登记的资源 id)."""
+        self._conn.execute(
+            "INSERT INTO learn_downloads (kind, remote_id, wlkcid, path,"
+            " resource_id, downloaded_at) VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(kind, remote_id) DO UPDATE SET"
+            " path = excluded.path, resource_id = excluded.resource_id,"
+            " downloaded_at = excluded.downloaded_at",
+            (kind, remote_id, wlkcid, path, resource_id, time.time()))
+        self._conn.commit()
+
+    def learn_find_download(self, kind: str, remote_id: str):
+        """查已下载记录; 无则 None."""
+        return self._conn.execute(
+            "SELECT * FROM learn_downloads"
+            " WHERE kind = ? AND remote_id = ?",
+            (kind, remote_id)).fetchone()
+
+    def learn_meta_get(self, key: str):
+        """学堂元信息(学期 id/刷新时间等); 无则 None."""
+        row = self._conn.execute(
+            "SELECT value FROM learn_meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def learn_meta_set(self, key: str, value: str) -> None:
+        """写学堂元信息."""
+        self._conn.execute(
+            "INSERT INTO learn_meta (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)))
+        self._conn.commit()
