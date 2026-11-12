@@ -1,25 +1,111 @@
-"""theme.py 单元测试: 设计 token 与样式表应用."""
+"""theme.py 单元测试: 主题 token, 内置双主题, 用户主题扩展与样式表应用."""
 
-from shuimu.gui import theme
+import pytest
+
+from shuimu.gui import artwork, theme
 
 
 class TestTokens:
     """设计 token 完整性."""
 
-    def test_colors_are_hex(self):
-        """配色均为合法 hex 颜色."""
-        for name in ("PRIMARY", "PRIMARY_LIGHT", "PRIMARY_DARK", "BG_BASE",
-                     "BG_PANEL", "BG_HOVER", "FG_TEXT", "FG_DIM", "BORDER",
-                     "DANGER", "ACCENT"):
-            value = getattr(theme, name)
-            assert value.startswith("#") and len(value) == 7, name
+    def test_builtin_themes_colors_are_hex(self):
+        """内置双主题全部颜色 token 均为 #rrggbb."""
+        for tk in theme.BUILTIN_THEMES.values():
+            for field in theme.COLOR_FIELDS:
+                value = getattr(tk, field)
+                assert value.startswith("#") and len(value) == 7, \
+                    f"{tk.name}.{field}={value}"
+                int(value[1:], 16)
+
+    def test_dark_light_distinct(self):
+        """亮暗两套主题底/面板/文字色可区分."""
+        dark, light = theme.DARK_TOKENS, theme.LIGHT_TOKENS
+        assert dark.base != light.base
+        assert dark.panel != light.panel
+        assert dark.fg != light.fg
 
     def test_qss_contains_tokens(self):
         """样式表中引用了核心 token 且无明显占位残留."""
-        assert theme.PRIMARY in theme.QSS
-        assert theme.BG_BASE in theme.QSS
+        tk = theme.tokens()
+        assert tk.accent in theme.QSS
+        assert tk.base in theme.QSS
         assert "{" in theme.QSS and "}" in theme.QSS
-        assert "{FG_TEXT}" not in theme.QSS  # f-string 未渲染残留
+        assert "{fg}" not in theme.QSS  # f-string 未渲染残留
+
+
+class TestUserThemes:
+    """用户主题文件加载与容错."""
+
+    def _write(self, tmp_path, filename, content):
+        path = tmp_path / filename
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def test_valid_override(self, tmp_path):
+        """合法用户主题: 继承 dark 覆盖 accent, id 用文件名."""
+        self._write(tmp_path, "ocean.yaml",
+                    'name: 海蓝\nextends: dark\ncolors:\n'
+                    '  accent: "#0b5cad"\n  selection: "#123456"\n')
+        themes, warnings = theme.load_user_themes(str(tmp_path))
+        assert warnings == []
+        assert themes["ocean"].accent == "#0b5cad"
+        assert themes["ocean"].selection == "#123456"
+        # 未覆盖的 token 继承基主题
+        assert themes["ocean"].base == theme.DARK_TOKENS.base
+        assert themes["ocean"].label == "海蓝"
+
+    def test_short_hex_normalized(self, tmp_path):
+        """#rgb 短写法归一化为 #rrggbb."""
+        self._write(tmp_path, "t.yaml", "colors:\n  accent: \"#abc\"\n")
+        themes, _w = theme.load_user_themes(str(tmp_path))
+        assert themes["t"].accent == "#aabbcc"
+
+    def test_unknown_key_warns_and_ignored(self, tmp_path):
+        """未知 token 键告警并忽略, 主题仍可用."""
+        self._write(tmp_path, "t.yaml", "colors:\n  nosuch: \"#ffffff\"\n")
+        themes, warnings = theme.load_user_themes(str(tmp_path))
+        assert "t" in themes
+        assert any("nosuch" in w for w in warnings)
+
+    def test_bad_extends_skipped(self, tmp_path):
+        """extends 非内置主题时整个文件跳过."""
+        self._write(tmp_path, "t.yaml",
+                    'extends: solarized\ncolors:\n  accent: "#0b5cad"\n')
+        themes, warnings = theme.load_user_themes(str(tmp_path))
+        assert "t" not in themes
+        assert any("extends" in w for w in warnings)
+
+    def test_invalid_color_warns_and_ignored(self, tmp_path):
+        """非法颜色值告警并忽略该键."""
+        self._write(tmp_path, "t.yaml",
+                    'colors:\n  accent: "blue"\n  fg: "#112233"\n')
+        themes, warnings = theme.load_user_themes(str(tmp_path))
+        assert themes["t"].accent == theme.DARK_TOKENS.accent
+        assert themes["t"].fg == "#112233"
+        assert any("accent" in w for w in warnings)
+
+    def test_corrupt_and_non_mapping_skipped(self, tmp_path):
+        """损坏 YAML 与非映射内容跳过并告警, 不影响同目录其他主题."""
+        self._write(tmp_path, "bad.yaml", "colors: [unclosed\n")
+        self._write(tmp_path, "list.yaml", "- just\n- a list\n")
+        self._write(tmp_path, "good.yaml", "colors:\n  accent: \"#0b5cad\"\n")
+        themes, warnings = theme.load_user_themes(str(tmp_path))
+        assert list(themes) == ["good"]
+        assert len(warnings) == 2
+
+    def test_missing_dir_empty(self, tmp_path):
+        """主题目录缺失返回空清单."""
+        themes, warnings = theme.load_user_themes(
+            str(tmp_path / "nope"))
+        assert themes == {} and warnings == []
+
+    def test_theme_choices_builtin_first(self, tmp_path):
+        """清单内置在前, 用户主题随后."""
+        self._write(tmp_path, "mine.yaml", "colors:\n  accent: \"#0b5cad\"\n")
+        choices = theme.theme_choices(str(tmp_path))
+        names = [n for n, _label in choices]
+        assert names[:2] == ["dark", "light"]
+        assert "mine" in names
 
 
 class TestApplyTheme:
@@ -27,8 +113,33 @@ class TestApplyTheme:
 
     def test_apply_sets_stylesheet(self, qapp):
         """apply_theme 后 QApplication 持有非空样式表."""
-        theme.apply_theme(qapp)
-        assert theme.PRIMARY in qapp.styleSheet()
+        theme.theme_choices()  # 同步用户主题快照
+        theme.apply_theme(qapp, theme="dark")
+        assert theme.tokens().accent in qapp.styleSheet()
+        theme.apply_theme(qapp, theme="dark")
+
+    def test_switch_theme_updates_tokens_and_clears_artwork(self, qapp):
+        """切换主题更新 token 并清空 artwork 缓存."""
+        theme.theme_choices()  # 同步用户主题快照
+        theme.apply_theme(qapp, theme="dark")
+        artwork.bench_icon(32)  # 填充母版缓存
+        assert artwork._cache["master"] is not None  # noqa: SLF001
+        theme.apply_theme(qapp, theme="light")
+        assert theme.current_name() == "light"
+        assert theme.tokens().base == theme.LIGHT_TOKENS.base
+        assert artwork._cache["master"] is None  # noqa: SLF001
+        artwork.bench_icon(32)
+        theme.apply_theme(qapp, theme="dark")
+        assert theme.current_name() == "dark"
+        assert artwork._cache["master"] is None  # noqa: SLF001
+
+    def test_unknown_theme_raises(self, qapp):
+        """未知主题 id 抛 ValueError, 当前主题不变."""
+        theme.theme_choices()  # 同步用户主题快照
+        theme.apply_theme(qapp, theme="dark")
+        with pytest.raises(ValueError):
+            theme.apply_theme(qapp, theme="nosuch")
+        assert theme.current_name() == "dark"
 
 
 class TestScaling:
@@ -39,7 +150,7 @@ class TestScaling:
         qss = theme.build_qss(16)
         assert "font-size: 16px" in qss
         assert "Noto Sans CJK SC" in qss
-        assert theme.PRIMARY in qss
+        assert theme.tokens().accent in qss
 
     def test_build_qss_scales_text_paddings_only(self):
         """文字邻近 padding 随 k 缩放, chrome(圆角/滚动条)固定."""
@@ -54,28 +165,33 @@ class TestScaling:
 
     def test_apply_theme_updates_current(self, qapp):
         """apply_theme 写入当前字号并更新 QApplication 样式表."""
-        theme.apply_theme(qapp, 16)
+        theme.theme_choices()  # 同步用户主题快照
+        theme.apply_theme(qapp, font_px=16, theme="dark")
         assert theme.current_font_px() == 16
         assert "font-size: 16px" in qapp.styleSheet()
-        theme.apply_theme(qapp)  # 恢复默认, 避免影响其他测试
+        theme.apply_theme(qapp, font_px=13, theme="dark")
         assert theme.current_font_px() == 13
 
 
-class TestGradientTheme:
-    """渐变轻质感主题."""
+class TestButtonTiers:
+    """按钮层级进入 QSS."""
 
-    def test_qss_contains_gradients(self):
-        """QSS 含渐变与主按钮层级."""
+    def test_primary_and_danger_in_qss(self):
+        """primary/danger/tool 三级按钮样式在 QSS 中."""
         qss = theme.build_qss(13)
-        assert "qlineargradient" in qss
         assert 'QPushButton[primary="true"]' in qss
-        assert "QFrame#cardbar" in qss  # 周历卡片色条(课程稳定配色)
+        assert 'QPushButton[danger="true"]' in qss
+        assert 'QPushButton[tool="true"]' in qss
 
-    def test_gradient_tokens_reference_colors(self):
-        """渐变 token 由色板 token 组合而来; 课程色板稳定取色."""
-        assert theme.PRIMARY in theme.GRADIENT_PRIMARY
+
+class TestCoursePalette:
+    """课程色板与主题无关."""
+
+    def test_course_color_stable(self):
+        """同名课全学期同色且落在色板内."""
         assert len(theme.COURSE_PALETTE) == 11
-        assert theme.course_color("AI 编程进阶") == theme.course_color("AI 编程进阶")
+        assert theme.course_color("AI 编程进阶") == \
+            theme.course_color("AI 编程进阶")
         assert theme.course_color("AI 编程进阶") in theme.COURSE_PALETTE
 
 

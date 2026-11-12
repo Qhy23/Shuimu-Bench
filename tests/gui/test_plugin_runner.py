@@ -84,19 +84,21 @@ class TestResultDialog:
         qtbot.addWidget(dialog)
         assert dialog.table.rowCount() == 3
         assert dialog.table.item(0, 0).text() == "错误"
+        tk = theme.tokens()
         assert dialog.table.item(0, 0).foreground().color() == QColor(
-            theme.DANGER)
+            tk.danger)
         assert dialog.table.item(1, 0).foreground().color() == QColor(
-            theme.WARN)
+            tk.warn)
         assert dialog.table.item(2, 0).foreground().color() == QColor(
-            theme.FG_DIM)
+            tk.fg_dim)
         assert dialog.table.item(0, 3).text() == "a.py:1"
 
     def test_severity_color_map(self):
-        """三档严重度色映射."""
-        assert _severity_color("error") == QColor(theme.DANGER)
-        assert _severity_color("warn") == QColor(theme.WARN)
-        assert _severity_color("ok") == QColor(theme.FG_DIM)
+        """三档严重度色映射取自当前主题 token."""
+        tk = theme.tokens()
+        assert _severity_color("error") == QColor(tk.danger)
+        assert _severity_color("warn") == QColor(tk.warn)
+        assert _severity_color("ok") == QColor(tk.fg_dim)
 
 
 class TestFilePagePluginMenu:

@@ -20,7 +20,7 @@ from shuimu.gui.schedule_view import (
     WeekPickerPopup,
 )
 from shuimu.core.storage import Storage
-from shuimu.gui.theme import DANGER
+from shuimu.gui import theme
 
 
 @pytest.fixture()
@@ -134,7 +134,7 @@ class TestTodoActions:
         tab._render_all()
         item = tab.todo_tree.topLevelItem(0)
         assert "逾期" in item.text(1)
-        assert item.foreground(1).color() == QColor(DANGER)
+        assert item.foreground(1).color() == QColor(theme.tokens().danger)
 
 
 class TestWatcher:

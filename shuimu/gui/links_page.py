@@ -149,6 +149,10 @@ class LinksPage(QWidget):
             for li in range(group_node.childCount()):
                 group_node.child(li).setIcon(0, link_icon)
 
+    def refresh_theme(self) -> None:
+        """主题切换后重建分组树(图标颜色随缓存清除重建)."""
+        self.reload()
+
     def _current_link(self):
         """当前选中链接叶子, 选中组节点或无选中返回 None."""
         item = self.tree.currentItem()

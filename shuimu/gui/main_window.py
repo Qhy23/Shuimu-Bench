@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizeGrip,
@@ -32,7 +33,7 @@ from PySide6.QtWidgets import (
 
 from shuimu import APP_VERSION
 from shuimu.core import url_open
-from shuimu.core.config import font_size_value
+from shuimu.core.config import font_size_value, theme_name_value
 from shuimu.core.controller import KIND_LABEL, Controller
 from shuimu.core.storage import Storage
 from shuimu.core.url_open import wslview_open as _wslview_open
@@ -99,13 +100,22 @@ class MainWindow(QMainWindow):
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
+        # config 指定的主题在构建任何子部件前生效(会话级, 运行时齿轮菜单可换)
+        theme.theme_choices()  # 扫描用户主题刷新切换快照
+        try:
+            theme.apply_theme(QApplication.instance(),
+                              theme=theme_name_value(self.ctl.config))
+        except ValueError:
+            pass  # 未知主题 id 保持默认深色
+
         container = QWidget(self)
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
         self.title_bar = TitleBar(self, self.ctl.config["app"]["title"],
                                   on_about=self._show_about,
-                                  on_log=self._open_log_dialog)
+                                  on_log=self._open_log_dialog,
+                                  on_settings=self._show_settings_menu)
         self.setWindowIcon(QIcon(artwork.bench_icon(256)))
         container_layout.addWidget(self.title_bar)
 
@@ -135,6 +145,48 @@ class MainWindow(QMainWindow):
             "本地优先的课程学习工作台\n"
             "清华大学《AI 编程进阶: 方法与实践》课程项目")
         box.exec()
+
+    # ---- 主题 ----
+
+    def _show_settings_menu(self, btn) -> None:
+        """标题栏齿轮菜单: 主题单选切换 + 打开用户主题目录."""
+        menu = QMenu(self)
+        labels = dict(theme.theme_choices())
+        current = theme.current_name()
+        for name, label in theme.theme_choices():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(name == current)
+            action.triggered.connect(
+                lambda _checked=False, n=name: self.set_app_theme(n))
+        menu.addSeparator()
+        open_action = menu.addAction("打开主题目录...")
+        open_action.setToolTip("用户主题 YAML 文件放这里, 重启后出现在列表")
+        open_action.triggered.connect(self._open_themes_dir)
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _open_themes_dir(self) -> None:
+        """用系统文件管理器打开用户主题目录(不存在则先建)."""
+        from shuimu.core.paths import user_themes_dir
+        os.makedirs(user_themes_dir(), exist_ok=True)
+        path = user_themes_dir()
+        via_wsl = _wslview_open(path)
+        if via_wsl is None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def set_app_theme(self, name: str) -> None:
+        """切换全局主题并联动全部自绘/缓存部件."""
+        if name == theme.current_name():
+            return
+        theme.apply_theme(QApplication.instance(), theme=name)
+        self.title_bar.refresh_theme()
+        self.schedule_tab.refresh_theme()
+        self.links_page.refresh_theme()
+        self.campus_tab.refresh_theme()
+        self._log_dialog = None  # 下次打开按新主题重建
+        self.reload_courses()  # 课程树图标随主题重建
+        label = dict(theme.theme_choices()).get(name, name)
+        self.statusBar().showMessage(f"主题: {label} (重启后保持需写入 config.yaml)")
 
     # ---- 界面缩放 ----
 

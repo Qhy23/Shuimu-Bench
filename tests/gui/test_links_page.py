@@ -99,7 +99,8 @@ class TestLinksPage:
         leaf = page.tree.topLevelItem(0).child(0)
         small = max(s.width() for s in leaf.icon(0).availableSizes())
         bigger_px = theme.current_font_px() + 7
-        monkeypatch.setattr(theme, "_state", {"font_px": bigger_px})
+        monkeypatch.setattr(theme, "_state",
+                            {**theme._state, "font_px": bigger_px})
         page.set_font_px(bigger_px)
         big = max(s.width() for s in leaf.icon(0).availableSizes())
         assert big > small

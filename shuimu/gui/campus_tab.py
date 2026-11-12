@@ -153,7 +153,8 @@ class CampusTab(QWidget):
         self.profile_label.setWordWrap(True)
         column.addWidget(self.profile_label)
         self.notice_label = QLabel("")
-        self.notice_label.setStyleSheet(f"color: {theme.DANGER};")
+        self.notice_label.setStyleSheet(
+            f"color: {theme.tokens().danger};")
         self.notice_label.hide()
         column.addWidget(self.notice_label)
         row = QHBoxLayout()
@@ -208,6 +209,11 @@ class CampusTab(QWidget):
         self.relogin_button.hide()
 
     # ---- 动作 ----
+
+    def refresh_theme(self) -> None:
+        """主题切换后刷新内联颜色(其余由全局 QSS 接管)."""
+        self.notice_label.setStyleSheet(
+            f"color: {theme.tokens().danger};")
 
     def _enable_plugin(self) -> None:
         """启用校园插件(经网络权限确认框)."""

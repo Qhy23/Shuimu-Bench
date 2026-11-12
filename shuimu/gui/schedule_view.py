@@ -524,7 +524,7 @@ class ScheduleTab(QWidget):
                 due_text = todo.due.strftime("%m-%d")
                 if status == "overdue":
                     due_text += " · 逾期"
-                    item.setForeground(1, QBrush(QColor(theme.DANGER)))
+                    item.setForeground(1, QBrush(QColor(theme.tokens().danger)))
                 elif status == "today":
                     due_text += " · 今天"
                 item.setText(1, due_text)
@@ -532,7 +532,7 @@ class ScheduleTab(QWidget):
                 font = QFont(item.font(0))
                 font.setStrikeOut(True)
                 item.setFont(0, font)
-                item.setForeground(0, QBrush(QColor(theme.FG_DIM)))
+                item.setForeground(0, QBrush(QColor(theme.tokens().fg_dim)))
             self.todo_tree.addTopLevelItem(item)
         self.todo_tree.blockSignals(False)
         self.todo_empty.resize(self.todo_tree.viewport().size())
@@ -544,6 +544,10 @@ class ScheduleTab(QWidget):
     def set_font_px(self, font_px: int) -> None:
         """转发全局字号到周历网格."""
         self.week_grid.set_font_px(font_px)
+
+    def refresh_theme(self) -> None:
+        """主题切换后全量重渲染(待办着色与周历取色随主题更新)."""
+        self._render_all()
 
     # ---- 交互 ----
 

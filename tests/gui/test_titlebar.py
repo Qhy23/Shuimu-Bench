@@ -7,14 +7,14 @@ from shuimu.gui.titlebar import TitleBar
 
 
 def test_titlebar_has_three_buttons(qtbot):
-    """标题栏有最小化/最大化/关闭按钮且高度固定."""
+    """标题栏有最小化/最大化/关闭按钮且高度固定(图标化)."""
     win = QMainWindow()
     qtbot.addWidget(win)
     title_bar = TitleBar(win, "测试标题")
     assert title_bar.height() == TitleBar.HEIGHT
-    assert title_bar.btn_min.text() == "—"
-    assert title_bar.btn_max.text() == "▢"
-    assert title_bar.btn_close.text() == "✕"
+    for btn in (title_bar.btn_min, title_bar.btn_max, title_bar.btn_close):
+        assert not btn.icon().isNull()
+        assert btn.text() == ""
     assert title_bar.btn_close.objectName() == "close"
 
 
