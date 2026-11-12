@@ -97,6 +97,13 @@ def default_campus_fingerprint_path() -> str:
     return os.path.join(project_root(), "data", "campus-fingerprint")
 
 
+def default_learn_download_dir() -> str:
+    """学堂下载默认目录(课件/附件按课程名建子目录). 同款 dev/frozen 分叉."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(user_data_dir(), "learn")
+    return os.path.join(project_root(), "data", "learn")
+
+
 def user_data_dir() -> str:
     """平台用户数据目录."""
     if sys.platform == "win32":

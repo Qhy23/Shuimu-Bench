@@ -1,19 +1,23 @@
-"""学堂缓存编排: 全量刷新差分入库, 本地课程匹配, 汇总结果.
+"""学堂缓存编排: 全量刷新差分入库, 本地课程匹配, 下载落盘登记.
 
 controller(留痕动作)与插件壳共用的业务层, 仿 campus.perform_login 的
 共享定位: 协议在 core/learn.py, 存取在 core/storage.py, 本模块负责
-一次刷新事务的顺序与差分汇总(下载与待办同步在后续提交加入).
+一次刷新/下载事务的顺序与差分汇总(待办同步在后续提交加入).
 """
 
+import os
 import time
 from dataclasses import dataclass, field
 
 from shuimu.core.campus_net import TransportError
+from shuimu.core.fileops import dedupe_path
 from shuimu.core.learn import (
     LearnClient,
     LearnCourse,
     LearnError,
     SessionExpiredError,
+    download_course_file_url,
+    download_homework_file_url,
 )
 
 
@@ -143,3 +147,71 @@ def refresh_learn_cache(storage, client: LearnClient,
     storage.learn_meta_set("semester_id", semester.semester_id)
     storage.learn_meta_set("refreshed_at", str(time.time()))
     return outcome
+
+
+# ---- 下载落盘 ----
+
+def sanitize_filename(name: str) -> str:
+    """服务端给的文件名不可信: 强制 basename, 去控制符与路径分隔符."""
+    text = os.path.basename(str(name or "").strip())
+    cleaned = "".join(ch if ch.isprintable() and ch not in "/\\:" else "_"
+                      for ch in text)
+    return cleaned.strip() or "learn_file"
+
+
+def download_learn_file(storage, client: LearnClient, kind: str,
+                        remote_id: str, wlkcid: str, out_dir: str,
+                        name: str, overwrite: bool = False) -> dict:
+    """下载一个学堂文件并落盘登记(引用式), 返回结果 dict.
+
+    kind: file(课件, remote_id=wjid) | homework(作业附件, remote_id=zyid,
+    自动抓第一个附件) | notice(公告附件, remote_id=ggid, 自动抓附件).
+    已下载且文件还在时跳过(overwrite 强制重下); 关联了本地课程时
+    登记进 resources.
+    """
+    course_row = None
+    for row in storage.learn_list_courses():
+        if row["wlkcid"] == wlkcid:
+            course_row = row
+            break
+    kcm = course_row["kcm"] if course_row is not None else ""
+
+    if kind == "file":
+        url = download_course_file_url(remote_id)
+    elif kind == "homework":
+        attachments = client.homework_attachments(wlkcid, remote_id)
+        if not attachments:
+            raise LearnError("该作业没有可下载的附件")
+        url = download_homework_file_url(wlkcid, attachments[0])
+    elif kind == "notice":
+        attachments = client.notice_attachments(wlkcid, remote_id)
+        if not attachments:
+            raise LearnError("该公告没有附件")
+        url = download_course_file_url(attachments[0])
+    else:
+        raise LearnError(f"未知下载类别: {kind}")
+
+    record = storage.learn_find_download(kind, remote_id)
+    if (record is not None and not overwrite
+            and os.path.exists(record["path"])):
+        return {"path": record["path"], "resource_id": record["resource_id"],
+                "skipped": True}
+
+    data = client.download_bytes(url)
+    directory = os.path.join(out_dir, sanitize_filename(kcm))
+    os.makedirs(directory, exist_ok=True)
+    dst = os.path.join(directory, sanitize_filename(name))
+    if not overwrite:
+        dst = dedupe_path(dst)
+    tmp = dst + ".part"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, dst)
+
+    resource_id = None
+    if course_row is not None and course_row["course_id"] is not None:
+        resource_id = storage.add_resource(
+            course_row["course_id"], "file", dst)
+    storage.learn_record_download(kind, remote_id, wlkcid, dst,
+                                  resource_id)
+    return {"path": dst, "resource_id": resource_id, "skipped": False}

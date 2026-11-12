@@ -7,7 +7,6 @@
 
 import os
 import time
-from dataclasses import dataclass, field
 
 from shuimu.core.config import (
     load_config,
@@ -27,6 +26,7 @@ from shuimu.core.campus_net import (
     TransportError,
     UrllibTransport,
 )
+from shuimu.core.learn_actions import LearnActions
 from shuimu.core.paths import (
     default_campus_fingerprint_path,
     default_campus_session_path,
@@ -61,16 +61,7 @@ from shuimu.core.schedule_import import parse_calendar_html
 from shuimu.core.storage import Storage
 
 
-@dataclass
-class ActionResult:
-    """动作结果: ok 是否成功, message 给用户看的摘要, detail 留痕详情."""
-
-    ok: bool
-    message: str
-    detail: dict = field(default_factory=dict)
-
-
-KIND_LABEL = {"file": "文件", "dir": "目录", "link": "链接"}
+from shuimu.core.actions import ActionResult, KIND_LABEL  # noqa: F401
 
 
 def detect_kind(target: str) -> str:
@@ -80,7 +71,7 @@ def detect_kind(target: str) -> str:
     return "dir" if os.path.isdir(target) else "file"
 
 
-class Controller:
+class Controller(LearnActions):
     """业务动作集合, 持有 Storage 与配置. 无界面状态."""
 
     def __init__(self, storage: Storage, config: dict = None,

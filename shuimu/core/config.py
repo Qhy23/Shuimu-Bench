@@ -48,6 +48,9 @@ DEFAULTS = {
     "fileops": {
         "trash_dir": "",  # 文件页删除的回收站目录; 空用系统回收站(见 core/trash.py)
     },
+    "learn": {
+        "download_dir": "",  # 学堂课件/附件下载根目录; 空用 data/learn(见 core/paths.py)
+    },
 }
 
 
