@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFileSystemModel,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLineEdit,
     QMenu,
@@ -74,7 +75,16 @@ class FileBrowserPage(QWidget):
         self.file_view = QTreeView(self)
         self.file_view.setModel(self.file_model)
         self.file_view.setRootIndex(self.file_model.index(self._workspace_root))
-        self.file_view.setColumnWidth(0, 260)
+        self.file_view.setColumnHidden(2, True)  # Type 列截断难看, 隐藏
+        self.file_view.setColumnWidth(0, 280)
+        self.file_view.setColumnWidth(1, 80)   # Size
+        self.file_view.setColumnWidth(3, 150)  # Modified
+        self.file_view.header().setStretchLastSection(True)
+        self.file_view.setSortingEnabled(False)
+        header = self.file_view.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in (1, 3):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
         # 多选 + 整行选中; 关闭内联编辑, 重命名一律走对话框+controller 留痕
         self.file_view.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -88,7 +98,19 @@ class FileBrowserPage(QWidget):
         self.file_view.doubleClicked.connect(self._on_double_clicked)
         self._build_actions()
         layout.addWidget(self.file_view)
-        layout.addWidget(_button("加入选中课程", self._request_add))
+        # 底部工具行: 主操作 + 工具小按钮(操作可发现性, 不再只依赖右键)
+        row2 = QHBoxLayout()
+        add_btn = _button("加入选中课程", self._request_add)
+        add_btn.setProperty("primary", True)
+        row2.addWidget(add_btn)
+        row2.addStretch(1)
+        undo_btn = _button("撤销", self._undo)
+        undo_btn.setProperty("tool", True)
+        row2.addWidget(undo_btn)
+        mkdir_btn = _button("新建文件夹", self._mkdir)
+        mkdir_btn.setProperty("tool", True)
+        row2.addWidget(mkdir_btn)
+        layout.addLayout(row2)
 
     @property
     def workspace_root(self) -> str:

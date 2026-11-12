@@ -6,7 +6,7 @@ URL 分发层(默认系统浏览器, 未来浏览器插件可注册内嵌方式�
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QBrush, QColor, QIcon
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -110,14 +110,22 @@ class LinksPage(QWidget):
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.tree = QTreeWidget(self)
+        self.tree.setColumnCount(2)
         self.tree.setHeaderHidden(True)
         self.tree.itemDoubleClicked.connect(self._on_double_clicked)
+        header = self.tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, header.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, header.ResizeMode.Stretch)
         layout.addWidget(self.tree)
         row = QHBoxLayout()
         row.addWidget(_button("打开", self._open_current))
         row.addWidget(_button("添加", self._add))
         row.addWidget(_button("编辑", self._edit))
-        row.addWidget(_button("删除", self._remove))
+        remove_btn = _button("删除", self._remove)
+        remove_btn.setProperty("danger", True)
+        row.addWidget(remove_btn)
+        row.addStretch(1)
         layout.addLayout(row)
         self.reload()
 
@@ -127,15 +135,22 @@ class LinksPage(QWidget):
         link_icon = QIcon(artwork.kind_icon("link", size=_link_icon_size()))
         group_icon = QIcon(artwork.kind_icon("dir", size=_link_icon_size()))
         for group, links in grouped_links(self.controller.list_quick_links()):
-            node = QTreeWidgetItem(self.tree,
-                                   [group or UNGROUPED_LABEL])
+            node = QTreeWidgetItem(
+                self.tree, [(group or UNGROUPED_LABEL)
+                            + f" ({len(links)})"])
             node.setData(0, ROLE_GROUP, group)
             node.setIcon(0, group_icon)
+            font = node.font(0)
+            font.setBold(True)
+            node.setFont(0, font)
             for link in links:
-                item = QTreeWidgetItem(node, [f"{link.name} - {link.url}"])
+                item = QTreeWidgetItem(node, [link.name, link.url])
                 item.setToolTip(0, link.url)
+                item.setToolTip(1, link.url)
                 item.setData(0, ROLE_LINK, link)
                 item.setIcon(0, link_icon)
+                item.setForeground(
+                    1, QBrush(QColor(theme.tokens().fg_dim)))
         self.tree.expandAll()
 
     def set_font_px(self, _font_px: int) -> None:
