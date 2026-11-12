@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 from shuimu import APP_VERSION
 from shuimu.core import url_open
 from shuimu.core.config import font_size_value, theme_name_value
-from shuimu.core.controller import KIND_LABEL, Controller
+from shuimu.core.controller import Controller
 from shuimu.core.storage import Storage
 from shuimu.core.url_open import wslview_open as _wslview_open
 from shuimu.gui import artwork, theme
@@ -240,14 +240,22 @@ class MainWindow(QMainWindow):
         self.course_tree.setHeaderLabel("课程空间")
         self.course_tree.itemDoubleClicked.connect(self._on_resource_activated)
         layout.addWidget(self.course_tree)
+        # 主操作行(渐变主按钮)与危险操作行(危险按钮)分层
         row = QHBoxLayout()
-        row.addWidget(_button("新建课程", self._add_course))
-        row.addWidget(_button("添加链接", self._add_link))
+        for text, slot in (("新建课程", self._add_course),
+                           ("添加链接", self._add_link)):
+            btn = _button(text, slot)
+            btn.setProperty("primary", True)
+            row.addWidget(btn)
         layout.addLayout(row)
         row2 = QHBoxLayout()
-        row2.addWidget(_button("删除课程", self._delete_course))
-        row2.addWidget(_button("移除选中", self._remove_selected))
         row2.addWidget(_button("刷新", self.reload_courses))
+        for text, slot in (("删除课程", self._delete_course),
+                           ("移除选中", self._remove_selected)):
+            btn = _button(text, slot)
+            btn.setProperty("danger", True)
+            row2.addWidget(btn)
+        row2.addStretch(1)
         layout.addLayout(row2)
 
     def _build_center(self) -> None:
@@ -350,25 +358,31 @@ class MainWindow(QMainWindow):
     # ---- 左栏: 课程与资源索引 ----
 
     def reload_courses(self) -> None:
-        """从索引重建课程树, 失效资源标灰."""
+        """从索引重建课程树, 失效资源标灰, 课程节点用课程稳定配色."""
         self.course_tree.clear()
+        icon_size = tree_icon_size()
         for course in self.storage.list_courses():
             node = QTreeWidgetItem(self.course_tree, [course["name"]])
             node.setData(0, ROLE_COURSE_ID, course["id"])
             node.setIcon(0, QIcon(artwork.kind_icon(
-                "course", size=tree_icon_size())))
+                "course", size=icon_size,
+                color=theme.course_color(course["name"]))))
+            font = node.font(0)
+            font.setBold(True)
+            node.setFont(0, font)
             for res in self.storage.list_resources(course["id"]):
                 exists, changed = Storage.check_resource(res)
-                label = "[" + KIND_LABEL[res["kind"]] + "] " + res["display_name"]
+                label = res["display_name"]
                 if not exists:
                     label += " (失效)"
                 elif changed:
                     label += " (已变更)"
                 item = QTreeWidgetItem(node, [label])
+                if res["kind"] == "link":
+                    item.setToolTip(0, res["path_or_url"])
                 item.setData(0, ROLE_RESOURCE_ID, res["id"])
                 item.setIcon(0, QIcon(artwork.kind_icon(
-                    res["kind"], failed=not exists,
-                    size=tree_icon_size())))
+                    res["kind"], failed=not exists, size=icon_size)))
                 if not exists:
                     item.setForeground(0, QBrush(Qt.GlobalColor.gray))
             node.setExpanded(True)

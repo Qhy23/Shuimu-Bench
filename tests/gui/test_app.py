@@ -52,7 +52,9 @@ def test_add_link_via_controller_shows_in_tree(qtbot, tmp_path):
     window.reload_courses()
     course_node = window.course_tree.topLevelItem(0)
     assert course_node.childCount() == 1
-    assert "[链接]" in course_node.child(0).text(0)
+    leaf = course_node.child(0)
+    assert "learn.tsinghua.edu.cn" in leaf.text(0)
+    assert leaf.toolTip(0) == "https://learn.tsinghua.edu.cn"
     storage.close()
 
 
