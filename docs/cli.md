@@ -67,6 +67,13 @@ python cli.py plugin-disable campus          # 禁用(禁用即不加载其代�
 python cli.py plugin-run <id> --path <目标> --set K=V   # 运行并留痕
 ```
 
+服务型插件的专属子命令(用法见各插件文档: [campus](plugin-campus.md) / [learn](plugin-learn.md) / [cloud](plugin-cloud.md)):
+
+```bash
+python cli.py cloud-browse "https://cloud.tsinghua.edu.cn/d/<分享id>/"   # 云盘分享库浏览预览(只读)
+python cli.py cloud-mount  "https://cloud.tsinghua.edu.cn/d/<分享id>/"   # 挂载: 同名目录登记为课程链接资源
+```
+
 ## 常用链接
 
 链接保存在 `data/links.yaml`, 打开走系统浏览器(WSL 下自动优先 wslview):

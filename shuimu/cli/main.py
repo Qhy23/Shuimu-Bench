@@ -24,6 +24,7 @@
   python cli.py campus-status
   python cli.py learn-refresh           (需先 plugin-enable learn 并校园登录)
   python cli.py learn-download --id <wjid>
+  python cli.py cloud-mount "https://cloud.tsinghua.edu.cn/d/<分享id>/"   (需先 plugin-enable cloud)
 """
 
 import argparse
@@ -46,6 +47,11 @@ from shuimu.plugins.learn.cli import (
     LEARN_COMMANDS,
     build_learn_subcommands,
     run_learn_command,
+)
+from shuimu.plugins.cloud.cli import (
+    CLOUD_COMMANDS,
+    build_cloud_subcommands,
+    run_cloud_command,
 )
 from shuimu.core.paths import (
     cli_history_path,
@@ -115,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     _build_plugins_subcommands(sub)
     _build_campus_subcommands(sub)
     build_learn_subcommands(sub)
+    build_cloud_subcommands(sub)
     return parser
 
 
@@ -444,6 +451,8 @@ def run_command(ctl: Controller, args) -> int:
         return _run_campus_command(ctl, args)
     if args.command in LEARN_COMMANDS:
         return run_learn_command(ctl, args)
+    if args.command in CLOUD_COMMANDS:
+        return run_cloud_command(ctl, args)
     if args.command:
         return _run_schedule_command(ctl, args)
     return 0

@@ -25,8 +25,8 @@
 ## 范围控制
 
 - MVP: 三栏主窗口 + 课程工作区(SQLite 索引) + 文件浏览 + 本地日程 + 操作记录.
-- 插件框架已落地(2026-11-09, plugin-framework 分支): 运行时在 `shuimu/core/pluginman.py`, 内置插件在 `shuimu/plugins/`(与外部插件同一加载路径, 无特权代码路径); 内置插件: hwcheck(占位待重设计, 见 HANDOFF §5), campus(校园账户登录, 2026-11-11 经真实登录校准), learn(网络学堂, 2026-11-12 经真实登录校准).
-- **在线接入边界**(2026-11-08 经助教确认放开): 学校服务以可选 network 插件形态提供, 插件默认禁用, 启用时经确认授权联网; 核心功能保持零网络. 校园服务四件: 校园账户登录(已完成) / 网络学堂(已完成) / 清华云盘 / AI 工具.
+- 插件框架已落地(2026-11-09, plugin-framework 分支): 运行时在 `shuimu/core/pluginman.py`, 内置插件在 `shuimu/plugins/`(与外部插件同一加载路径, 无特权代码路径); 内置插件: hwcheck(占位待重设计, 见 HANDOFF §5), campus(校园账户登录, 2026-11-11 经真实登录校准), learn(网络学堂, 2026-11-12 经真实登录校准), cloud(清华云盘分享链接挂载, 2026-11-13 经真实分享链接校准).
+- **在线接入边界**(2026-11-08 经助教确认放开): 学校服务以可选 network 插件形态提供, 插件默认禁用, 启用时经确认授权联网; 核心功能保持零网络. 校园服务四件: 校园账户登录(已完成) / 网络学堂(已完成) / 清华云盘(已完成) / AI 工具.
 - 本学期不做: 插件市场, PDF 阅读器.
 - 详细规划见 ../.claude/project-proposal.md.
 
@@ -42,6 +42,7 @@ python cli.py plugins                         # 插件清单(含 network 状态)
 python cli.py plugin-enable campus --yes      # 启用校园插件(联网授权)
 python cli.py campus-login                    # 校园登录(密码交互输入)
 python cli.py learn-refresh                   # 学堂全量刷新(需先启用 learn 并校园登录)
+python cli.py cloud-mount "https://cloud.tsinghua.edu.cn/d/<分享id>/"   # 挂载云盘分享库(需先启用 cloud)
 ```
 
 ## 数据组织
@@ -53,6 +54,7 @@ python cli.py learn-refresh                   # 学堂全量刷新(需先启用 
 - 插件: 清单/校验/发现/加载在 `shuimu/core/pluginman.py`(manifest YAML: id/权限/applies_to/声明式参数 str|bool|int|choice|path|secret, api_version 版本协商); 契约层 `shuimu/core/pluginapi.py`(PluginJob/PluginFinding/PluginReport + run(job) 签名, 纯数据零 Qt); 内置插件 `shuimu/plugins/`(hwcheck 与 campus), 外部插件放 `~/.local/share/shuimu/plugins/<目录>/`; 启用状态 `data/plugins.yaml`(gitignore; disabled 与 network_enabled 两清单, disabled 优先); 插件动作经 `controller.run_plugin` 统一留痕(action 为 `plugin:<id>`, status 记运行成败, ActionResult.ok 记检查是否通过, 二者分离; **secret 参数值不入留痕**, 只记参数名); applies_to 含 `app` 表示无文件目标动作型(空 targets 放行); 插件动作不入 undo 栈. **权限是声明式门禁而非沙箱**: read 默认放行, write 由宿主先确认, **network 默认禁用, 启用经确认即授权联网**, 入口代码在宿主进程内运行, 外部插件放入即视为信任.
 - 校园登录: 协议在 `shuimu/core/campus.py`(WebVPN+新统一认证两阶段, SM2 加密密码, 2FA 登录与漫游均可能出现, INFO 门户漫游), 传输层 `shuimu/core/campus_net.py`(单跳 Transport 抽象 + urllib 实现 + MemoryTransport 假 transport 离线测试), 国密实现 `shuimu/core/sm2.py`(纯标准库, 国标向量 + gmssl 双向互通 + 真实服务端验证); GUI 入口 = 右栏"校园"页签(`gui/campus_tab.py` 三态 + 2FA 对话框), CLI 入口 campus-login/status/logout(密码 getpass 交互, 绝不走 argv); controller 动作 campus_login/status/logout 留痕(不含密码/验证码). **凭据安全: 密码与验证码永不落盘不留痕**, 只持久化会话 `data/campus-session.json`(gitignored, 0o600) 与设备指纹 `data/campus-fingerprint`(登出保留); 登录为同步调用(网络慢时 UI 短暂冻结, 线程化留后续).
 - 网络学堂: 协议在 `shuimu/core/learn.py`(WebVPN 加密主机段直连复用校园会话, 学堂会话失效自动经 INFO 门户漫游重建, 判定串集中常量区), 编排 `core/learn_sync.py`(差分刷新/课程匹配/下载/待办同步), controller 动作在 `core/learn_actions.py`(LearnActions 混入, ActionResult 在 `core/actions.py`); 缓存为 storage 的 6 张 learn 表(差分保留关联/描述缓存/待办映射), 下载落 `learn.download_dir`(默认 data/learn/<课名>/, 关联课程引用式登记); 未交作业同步日程待办([学堂] 前缀 + DB todo_tid 映射, 手动待办永不碰); GUI = 中栏"学堂"页签(`gui/learn_page.py` 三态), CLI = learn-* 子命令(`plugins/learn/cli.py`, 学堂专属逻辑跟插件包走, 主 CLI 仅接线). 用户文档在 `docs/`(README 只留介绍与用法, 开发约定归本文件, 进度归 HANDOFF).
+- 清华云盘: 协议在 `shuimu/core/cloud.py`(匿名读分享链接, 目录列举 API + og:title 抓取 + ?p= 子目录链接, 判定串集中常量区), 编排 `core/cloud_sync.py`(目录树收集/课程名三级匹配/引用式登记, 重复挂载因 UNIQUE 转 skipped 幂等), controller 动作在 `core/cloud_actions.py`(CloudActions 混入, 浏览只读不留痕/挂载登记留痕); 免登录免凭据, 不整库下载(只登记 kind=link 资源, display_name=目录名, storage.add_resource 因此带 display_name 可选参); GUI = 中栏"云盘"页签(`gui/cloud_page.py` 两态: 未启用引导/主视图, 无登录态), CLI = cloud-* 子命令(`plugins/cloud/cli.py`); 校准探针 `test/workspace/cloud_probe.py`(2026-11-13 实测: dirents 参数名是 path 非 p, 无效 token 404+error_msg).
 - 索引只存引用, 不复制文件本体; 文件失效保留记录, 由 UI 标灰.
 - 文件页操作(复制/移动/删除/重命名/新建文件夹)经 controller 留痕; 纯逻辑在 `shuimu/core/fileops.py`(find_conflicts 预检/move_back 撤销移动); 粘贴同名冲突逐个弹框决策(覆盖=旧文件先入回收站/跳过/保留两者加 _1, 可"应用于其余全部"); Ctrl+Z 撤销栈在 controller(内存 LIFO, 上限 100, 不跨会话, 无 redo): 复制与新建入回收站, 移动移回原位, 删除从回收站恢复, 重命名改回; 删除移入回收站, 后端在 `shuimu/core/trash.py` — 优先 config.yaml `fileops.trash_dir` 指定目录(WSL 测试用, 布局同 freedesktop: files/ + info/*.trashinfo), 留空用系统回收站(Windows Shell / XDG Trash).
 - 测试伪资料: 课程根目录 `content/`(仓库外), 单元测试一律用 tmp_path 保持隔离.

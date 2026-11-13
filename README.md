@@ -19,6 +19,7 @@
 
 - [校园账户登录 campus](docs/plugin-campus.md): 经 WebVPN 与统一认证登录, 支持二次认证与信任设备
 - [网络学堂 learn](docs/plugin-learn.md): 复用校园会话拉取课程/作业/课件/公告, 选择性下载并自动归档进课程, 未交作业自动同步进日程待办
+- [清华云盘 cloud](docs/plugin-cloud.md): 粘贴分享链接(免登录)浏览多课程资料库, 同名目录一键挂载为课程链接资源
 
 涉及联网的功能全部以插件形式提供, 启用时需明确授权; 核心功能离线完全可用.
 
@@ -49,3 +50,4 @@ CLI 完整用法见 [docs/cli.md](docs/cli.md); 两种形态: `python cli.py <�
 - [CLI 使用说明](docs/cli.md): 全部核心子命令, REPL, 配置与退出码
 - [插件: 校园账户登录](docs/plugin-campus.md)
 - [插件: 网络学堂](docs/plugin-learn.md)
+- [插件: 清华云盘](docs/plugin-cloud.md)
