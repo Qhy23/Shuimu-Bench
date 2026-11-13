@@ -40,6 +40,7 @@ from shuimu.gui import artwork, theme
 from shuimu.gui.dialogs import LogPreviewDialog, warn
 from shuimu.gui.campus_tab import CampusTab
 from shuimu.gui.file_page import FileBrowserPage
+from shuimu.gui.learn_page import LearnPage
 from shuimu.gui.links_page import LinksPage
 from shuimu.gui.plugin_runner import run_plugin_dialogs
 from shuimu.gui.schedule_view import ScheduleTab
@@ -209,12 +210,20 @@ class MainWindow(QMainWindow):
         self.center_tabs.addTab(self.file_page, "文件")
         self.links_page = LinksPage(self.ctl, self.center_tabs)
         self.center_tabs.addTab(self.links_page, "链接")
+        self.learn_page = LearnPage(self.ctl, self.center_tabs)
+        self.learn_page.status_message.connect(self.statusBar().showMessage)
+        self.learn_page.campus_requested.connect(
+            lambda: self.tabs.setCurrentWidget(self.campus_tab))
+        self.learn_page.resources_changed.connect(self.reload_courses)
+        self.center_tabs.addTab(self.learn_page, "学堂")
         self.center_tabs.currentChanged.connect(self._on_center_tab_changed)
 
     def _on_center_tab_changed(self, index: int) -> None:
-        """切到链接页时刷新列表(兜底 data/links.yaml 被外部编辑)."""
+        """切页兜底: 链接页重读 YAML, 学堂页重估三态(零联网)."""
         if self.center_tabs.widget(index) is self.links_page:
             self.links_page.reload()
+        if self.center_tabs.widget(index) is self.learn_page:
+            self.learn_page.refresh_state()
 
     @property
     def workspace_root(self) -> str:

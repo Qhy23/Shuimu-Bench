@@ -21,9 +21,10 @@ def test_main_window_structure(qtbot, tmp_path):
     qtbot.addWidget(window)
     assert window.splitter.count() == 3
     assert window.course_tree.topLevelItemCount() == 1  # 默认课程"未分组"
-    assert window.center_tabs.count() == 2
+    assert window.center_tabs.count() == 3
     assert window.center_tabs.tabText(0) == "文件"
     assert window.center_tabs.tabText(1) == "链接"
+    assert window.center_tabs.tabText(2) == "学堂"
     assert window.tabs.count() == 3
     assert [window.tabs.tabText(i) for i in range(3)] == ["整理", "日程",
                                                           "校园"]
