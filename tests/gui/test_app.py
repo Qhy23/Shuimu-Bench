@@ -14,17 +14,18 @@ from shuimu.core.storage import Storage
 
 
 def test_main_window_structure(qtbot, tmp_path):
-    """窗口有三栏, 默认课程已建立, 中栏文件/链接页签, 右栏整理/日程页签."""
+    """窗口有三栏, 默认课程已建立, 中栏文件/链接/学堂/云盘页签, 右栏整理/日程页签."""
     storage = Storage(str(tmp_path / "ui.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"),
                         links_path=str(tmp_path / "links.yaml"))
     qtbot.addWidget(window)
     assert window.splitter.count() == 3
     assert window.course_tree.topLevelItemCount() == 1  # 默认课程"未分组"
-    assert window.center_tabs.count() == 3
+    assert window.center_tabs.count() == 4
     assert window.center_tabs.tabText(0) == "文件"
     assert window.center_tabs.tabText(1) == "链接"
     assert window.center_tabs.tabText(2) == "学堂"
+    assert window.center_tabs.tabText(3) == "云盘"
     assert window.tabs.count() == 3
     assert [window.tabs.tabText(i) for i in range(3)] == ["整理", "日程",
                                                           "校园"]
