@@ -41,6 +41,7 @@ from shuimu.gui.dialogs import LogPreviewDialog, warn
 from shuimu.gui.campus_tab import CampusTab
 from shuimu.gui.file_page import FileBrowserPage
 from shuimu.gui.learn_page import LearnPage
+from shuimu.gui.cloud_page import CloudPage
 from shuimu.gui.links_page import LinksPage
 from shuimu.gui.plugin_runner import run_plugin_dialogs
 from shuimu.gui.schedule_view import ScheduleTab
@@ -216,14 +217,20 @@ class MainWindow(QMainWindow):
             lambda: self.tabs.setCurrentWidget(self.campus_tab))
         self.learn_page.resources_changed.connect(self.reload_courses)
         self.center_tabs.addTab(self.learn_page, "学堂")
+        self.cloud_page = CloudPage(self.ctl, self.center_tabs)
+        self.cloud_page.status_message.connect(self.statusBar().showMessage)
+        self.cloud_page.resources_changed.connect(self.reload_courses)
+        self.center_tabs.addTab(self.cloud_page, "云盘")
         self.center_tabs.currentChanged.connect(self._on_center_tab_changed)
 
     def _on_center_tab_changed(self, index: int) -> None:
-        """切页兜底: 链接页重读 YAML, 学堂页重估三态(零联网)."""
+        """切页兜底: 链接页重读 YAML, 学堂/云盘页重估状态(零联网)."""
         if self.center_tabs.widget(index) is self.links_page:
             self.links_page.reload()
         if self.center_tabs.widget(index) is self.learn_page:
             self.learn_page.refresh_state()
+        if self.center_tabs.widget(index) is self.cloud_page:
+            self.cloud_page.refresh_state()
 
     @property
     def workspace_root(self) -> str:
