@@ -27,6 +27,7 @@ from shuimu.core.campus_net import (
     UrllibTransport,
 )
 from shuimu.core.learn_actions import LearnActions
+from shuimu.core.cloud_actions import CloudActions
 from shuimu.core.paths import (
     default_campus_fingerprint_path,
     default_campus_session_path,
@@ -71,7 +72,7 @@ def detect_kind(target: str) -> str:
     return "dir" if os.path.isdir(target) else "file"
 
 
-class Controller(LearnActions):
+class Controller(LearnActions, CloudActions):
     """业务动作集合, 持有 Storage 与配置. 无界面状态."""
 
     def __init__(self, storage: Storage, config: dict = None,

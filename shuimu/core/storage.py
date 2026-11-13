@@ -180,15 +180,24 @@ class Storage:
 
     # ---- 资源 ----
 
-    def add_resource(self, course_id: int, kind: str, path_or_url: str) -> int:
-        """把文件/目录/链接登记进课程. 文件类资源统一存绝对路径并记录 size+mtime."""
+    def add_resource(self, course_id: int, kind: str, path_or_url: str,
+                     display_name: str = None) -> int:
+        """把文件/目录/链接登记进课程. 文件类资源统一存绝对路径并记录 size+mtime.
+
+        display_name 缺省时: 文件/目录取 basename, 链接取完整 URL; 云盘等
+        场景可显式传入显示名.
+        """
         if kind != "link":
             path_or_url = os.path.abspath(path_or_url)
         size, mtime = None, None
         if kind in ("file", "dir") and os.path.exists(path_or_url):
             stat = os.stat(path_or_url)
             size, mtime = stat.st_size, stat.st_mtime
-        name = os.path.basename(path_or_url.rstrip("/")) if kind != "link" else path_or_url
+        if display_name is not None:
+            name = display_name
+        else:
+            name = os.path.basename(path_or_url.rstrip("/")) \
+                if kind != "link" else path_or_url
         cur = self._conn.execute(
             "INSERT INTO resources (course_id, kind, path_or_url, display_name,"
             " size, mtime, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
