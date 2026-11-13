@@ -786,10 +786,26 @@ class TestLearnCommands:
         add_course_detail_routes(learn_cli, WLKCID,
                                  homework=[{"zyid": "Z1", "bt": "作业一"}])
         add_course_detail_routes(learn_cli, "2025-2026-1-00000002")
-        code, out = run(capsys, db, "learn-refresh")
-        assert code == 0 and "新作业 1" in out
+        sched_path = os.path.join(os.path.dirname(db), "s.yaml")
+        code, out = run(capsys, db, "learn-refresh", schedule=sched_path)
+        assert code == 0 and "新作业 1" in out and "待办同步" in out
+        with open(sched_path, encoding="utf-8") as f:
+            assert "[学堂] 作业一" in f.read()
         code, out = run(capsys, db, "learn-courses")
         assert code == 0 and "AI 编程" in out and "-> AI 编程" in out
+
+    def test_refresh_no_todos(self, capsys, db, learn_cli, tmp_path):
+        """--no-todos: 刷新不写日程."""
+        enable_learn(capsys, db)
+        add_refresh_prelude(learn_cli)
+        add_course_detail_routes(learn_cli, WLKCID,
+                                 homework=[{"zyid": "Z1", "bt": "作业一"}])
+        add_course_detail_routes(learn_cli, "2025-2026-1-00000002")
+        sched_path = str(tmp_path / "no.yaml")
+        code, out = run(capsys, db, "learn-refresh", "--no-todos",
+                        schedule=sched_path)
+        assert code == 0 and "待办同步" not in out
+        assert not os.path.exists(sched_path)
 
     def test_homework_grouping(self, capsys, db):
         """三态分组与截止日期."""

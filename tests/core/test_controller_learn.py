@@ -15,6 +15,7 @@ from shuimu.core.learn import (
     download_course_file_url,
     learn_url,
 )
+from shuimu.core.schedule import load_schedule
 from shuimu.core.storage import Storage
 from tests.core.test_learn import (
     INFO_XSRF_URL,
@@ -296,3 +297,44 @@ class TestCourseLink:
         seed_cache(controller)
         result = controller.learn_set_course_link(WLKCID, 999)
         assert not result.ok
+
+
+class TestSyncTodos:
+    """待办同步动作与刷新串联."""
+
+    def test_sync_todos_action(self, ctl_learn):
+        """动作同步 + 留痕."""
+        controller, _transport, _tmp = ctl_learn
+        enable_learn(controller)
+        seed_cache(controller)
+        result = controller.learn_sync_todos()
+        assert result.ok and result.detail["added"] == 1
+        todos = load_schedule(controller.schedule_path).todos
+        assert any(t.title == "[学堂] 作业一" for t in todos)
+        assert any(row["action"] == "learn_sync_todos"
+                   for row in controller.storage.list_operations())
+
+    def test_refresh_chains_todos(self, ctl_learn):
+        """刷新出新作业后默认串联同步."""
+        controller, transport, _tmp = ctl_learn
+        enable_learn(controller)
+        add_refresh_prelude(transport)
+        add_course_detail_routes(
+            transport, WLKCID, homework=[{"zyid": "Z1", "bt": "作业一"}])
+        add_course_detail_routes(transport, "2025-2026-1-00000002")
+        result = controller.learn_refresh()
+        assert result.ok and "待办同步" in result.message
+        todos = load_schedule(controller.schedule_path).todos
+        assert any(t.title == "[学堂] 作业一" for t in todos)
+
+    def test_refresh_without_todos(self, ctl_learn):
+        """sync_todos=False 不写日程."""
+        controller, transport, _tmp = ctl_learn
+        enable_learn(controller)
+        add_refresh_prelude(transport)
+        add_course_detail_routes(
+            transport, WLKCID, homework=[{"zyid": "Z1", "bt": "作业一"}])
+        add_course_detail_routes(transport, "2025-2026-1-00000002")
+        result = controller.learn_refresh(sync_todos=False)
+        assert result.ok
+        assert not load_schedule(controller.schedule_path).todos

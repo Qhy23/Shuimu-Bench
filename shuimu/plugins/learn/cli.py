@@ -22,8 +22,11 @@ _HOMEWORK_STATE_LABELS = (("pending", "未交"), ("submitted", "已交未批"),
 def build_learn_subcommands(sub) -> None:
     """注册网络学堂相关子命令(controller 学堂动作的薄封装)."""
     sub.add_parser("learn-status", help="学堂缓存概况(零联网)")
-    sub.add_parser("learn-refresh",
-                   help="全量刷新学堂缓存(需启用 learn 插件并已校园登录)")
+    p_refresh = sub.add_parser(
+        "learn-refresh",
+        help="全量刷新学堂缓存(需启用 learn 插件并已校园登录)")
+    p_refresh.add_argument("--no-todos", action="store_true",
+                           help="刷新后不同步未交作业进日程待办")
     sub.add_parser("learn-courses", help="列出缓存的学堂课程(含关联状态)")
 
     p_hw = sub.add_parser("learn-homework", help="列出作业三态")
@@ -52,7 +55,7 @@ def run_learn_command(ctl: Controller, args) -> int:
     if args.command == "learn-status":
         return _emit(ctl.learn_status())
     if args.command == "learn-refresh":
-        result = ctl.learn_refresh()
+        result = ctl.learn_refresh(sync_todos=not args.no_todos)
         code = _emit(result)
         for err in result.detail.get("errors") or []:
             print(f"  失败: {err}", file=sys.stderr)

@@ -9,12 +9,17 @@ import time
 from shuimu.core.campus import SessionStore
 from shuimu.core.campus_net import CookieJar, TransportError, UrllibTransport
 from shuimu.core.learn import LearnClient, LearnError, SessionExpiredError
-from shuimu.core.learn_sync import download_learn_file, refresh_learn_cache
+from shuimu.core.learn_sync import (
+    download_learn_file,
+    refresh_learn_cache,
+    sync_learn_todos,
+)
 from shuimu.core.paths import (
     default_campus_fingerprint_path,
     default_campus_session_path,
     default_db_path,
     default_learn_download_dir,
+    default_schedule_path,
 )
 from shuimu.core.pluginapi import (
     PluginJob,
@@ -44,12 +49,14 @@ def _storage() -> Storage:
 
 
 def run(job: PluginJob) -> PluginReport:
-    """按 params.action 分派: status(只读) / refresh / download."""
+    """按 params.action 分派: status(只读) / refresh / download / todos."""
     action = job.params.get("action", "status")
     if action == "refresh":
         return _refresh()
     if action == "download":
         return _download(job.params)
+    if action == "todos":
+        return _todos()
     return _status()
 
 
@@ -126,6 +133,19 @@ def _refresh() -> PluginReport:
             findings.append(finding("warn", "course",
                                     f"课程刷新失败: {err.kcm}", err.message))
         return make_report(findings, summary=outcome.summary())
+    finally:
+        storage.close()
+
+
+def _todos() -> PluginReport:
+    """未交作业同步进日程待办."""
+    storage = _storage()
+    try:
+        counts = sync_learn_todos(storage, default_schedule_path())
+        summary = (f"待办同步: 新增 {counts['added']}, "
+                   f"更新 {counts['updated']}, 自动完成 {counts['completed']}")
+        findings = [finding("ok", "todos", summary)]
+        return make_report(findings, summary=summary)
     finally:
         storage.close()
 

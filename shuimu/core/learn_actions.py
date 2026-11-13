@@ -9,7 +9,11 @@ import time
 from shuimu.core.campus_net import CookieJar, TransportError
 from shuimu.core.actions import ActionResult
 from shuimu.core.learn import LearnClient, LearnError, SessionExpiredError
-from shuimu.core.learn_sync import download_learn_file, refresh_learn_cache
+from shuimu.core.learn_sync import (
+    download_learn_file,
+    refresh_learn_cache,
+    sync_learn_todos,
+)
 from shuimu.core.paths import default_learn_download_dir
 
 
@@ -77,8 +81,9 @@ class LearnActions:
         detail["campus"] = self._campus_store().load() is not None
         return ActionResult(True, message, detail)
 
-    def learn_refresh(self, on_progress=None) -> ActionResult:
-        """全量刷新学堂缓存并留痕; 会话失效区分三态."""
+    def learn_refresh(self, on_progress=None,
+                      sync_todos: bool = True) -> ActionResult:
+        """全量刷新学堂缓存并留痕; 有新作业/状态变化时串联待办同步."""
         gate = self._learn_gate()
         if gate is not None:
             return gate
@@ -107,7 +112,18 @@ class LearnActions:
             "learn_refresh", status="ok" if not outcome.errors else "failed",
             detail=detail)
         message = outcome.summary()
+        if sync_todos and (outcome.homework_new or outcome.homework_changed):
+            todo_result = self.learn_sync_todos()
+            message = f"{message}; {todo_result.message}"
         return ActionResult(True, message, detail)
+
+    def learn_sync_todos(self) -> ActionResult:
+        """未交作业同步进日程待办(DB 映射, 不碰手动待办), 留痕."""
+        counts = sync_learn_todos(self.storage, self.schedule_path)
+        self.storage.log_operation("learn_sync_todos", detail=counts)
+        message = (f"待办同步: 新增 {counts['added']}, "
+                   f"更新 {counts['updated']}, 自动完成 {counts['completed']}")
+        return ActionResult(True, message, counts)
 
     def learn_homework_detail(self, wlkcid: str, zyid: str) -> ActionResult:
         """作业描述: 优先读缓存(零联网), 缺失时拉取并缓存. 不留痕."""

@@ -37,6 +37,7 @@ class FakeController:
         self.logged_in = logged_in
         self.refresh_ok = refresh_ok
         self.plugins = SimpleNamespace(get=lambda _pid: self.record)
+        self.todo_calls = 0
         self.refresh_calls = []
         self.download_calls = []
         self.enabled_calls = []
@@ -61,6 +62,11 @@ class FakeController:
         """描述替身."""
         return ActionResult(True, "ok", {"html": f"<p>{zyid}</p>",
                                          "cached": True})
+
+    def learn_sync_todos(self):
+        """待办同步替身."""
+        self.todo_calls += 1
+        return ActionResult(True, "待办同步: 新增 1", {"added": 1})
 
     def learn_download(self, kind, remote_id, **_kwargs):
         """下载替身."""
@@ -219,4 +225,18 @@ class TestActions:
         page.homework_tree.setCurrentItem(leaf)
         page._download_homework_attachment()  # pylint: disable=protected-access
         assert ctl.download_calls == [("homework", "Z1")]
+        storage.close()
+
+
+class TestSyncTodosButton:
+    """同步待办按钮."""
+
+    def test_button_invokes_action(self, qtbot, tmp_path):
+        """点击按钮调用 controller 并提示."""
+        page, ctl, storage = make_page(qtbot, tmp_path)
+        messages = []
+        page.status_message.connect(messages.append)
+        page.todos_button.click()
+        assert ctl.todo_calls == 1
+        assert messages and "待办同步" in messages[0]
         storage.close()

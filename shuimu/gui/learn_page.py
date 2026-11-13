@@ -158,8 +158,8 @@ class LearnPage(QWidget):
         self.progress_label.hide()
         top.addWidget(self.progress_label)
         self.todos_button = QPushButton("同步待办")
-        self.todos_button.setEnabled(False)
-        self.todos_button.setToolTip("未交作业同步进日程待办(下一版本提供)")
+        self.todos_button.setToolTip("未交作业同步进日程待办([学堂] 前缀, 已交自动勾完成)")
+        self.todos_button.clicked.connect(self._sync_todos)
         top.addWidget(self.todos_button)
         self.refresh_button = QPushButton("刷新")
         self.refresh_button.clicked.connect(self._refresh)
@@ -419,6 +419,11 @@ class LearnPage(QWidget):
         if not result.ok:
             warn(self, "未能启用学堂插件", result.message)
         self.refresh_state()
+
+    def _sync_todos(self) -> None:
+        """未交作业同步进日程待办."""
+        result = self._ctl.learn_sync_todos()
+        self.status_message.emit(result.message)
 
     def _refresh(self) -> None:
         """同步全量刷新; 按课推进进度文本; 失效切登录引导."""

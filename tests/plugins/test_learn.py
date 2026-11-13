@@ -186,3 +186,20 @@ class TestDownload:
         report = run_plugin(action="download", kind="file", file_id="NOPE")
         assert not report.ok
         assert any("找不到" in f.title for f in report.findings)
+
+
+class TestTodos:
+    """action=todos 待办同步."""
+
+    @pytest.mark.usefixtures("session_path", "transport")
+    def test_todos_syncs(self, db_path, tmp_path, monkeypatch):
+        """同步未交作业并汇总."""
+        sched = str(tmp_path / "s.yaml")
+        monkeypatch.setattr(learn_plugin, "default_schedule_path",
+                            lambda: sched)
+        seed(db_path)
+        report = run_plugin(action="todos")
+        assert report.ok
+        assert "新增 1" in report.summary
+        with open(sched, encoding="utf-8") as f:
+            assert "[学堂] 作业一" in f.read()

@@ -17,6 +17,7 @@ params:
       - [status, 缓存状态]
       - [refresh, 刷新缓存]
       - [download, 下载文件]
+      - [todos, 同步待办]
   - name: kind
     type: choice
     label: 文件类别
