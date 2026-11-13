@@ -29,7 +29,6 @@
 
 import argparse
 import atexit
-import getpass
 import glob
 import os
 import shlex
@@ -52,6 +51,11 @@ from shuimu.plugins.cloud.cli import (
     CLOUD_COMMANDS,
     build_cloud_subcommands,
     run_cloud_command,
+)
+from shuimu.plugins.campus.cli import (
+    CAMPUS_COMMANDS,
+    build_campus_subcommands,
+    run_campus_command,
 )
 from shuimu.core.paths import (
     cli_history_path,
@@ -119,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
     _build_links_subcommands(sub)
     _build_schedule_subcommands(sub)
     _build_plugins_subcommands(sub)
-    _build_campus_subcommands(sub)
+    build_campus_subcommands(sub)
     build_learn_subcommands(sub)
     build_cloud_subcommands(sub)
     return parser
@@ -216,25 +220,6 @@ def _build_plugins_subcommands(sub) -> None:
     p_disable = sub.add_parser("plugin-disable",
                                help="禁用插件(禁用即不加载其代码)")
     p_disable.add_argument("plugin_id")
-
-
-def _build_campus_subcommands(sub) -> None:
-    """注册校园账户相关子命令(controller 校园动作的薄封装)."""
-    p_login = sub.add_parser(
-        "campus-login", help="登录校园统一认证(密码交互输入, 不落盘)")
-    p_login.add_argument("username", nargs="?", help="学号(缺省交互输入)")
-    p_login.add_argument("--method",
-                         help="二次认证方式 sms/wechat/totp(非交互)")
-    p_login.add_argument("--code", help="二次认证验证码(非交互)")
-    p_login.add_argument("--trust", action="store_true",
-                         help="信任此设备(漫游免二次认证)")
-
-    p_status = sub.add_parser(
-        "campus-status", help="校园会话状态与本人信息(默认联网校验)")
-    p_status.add_argument("--no-check", action="store_true",
-                          help="只读本机会话, 不联网")
-
-    sub.add_parser("campus-logout", help="清除本机会话(设备指纹保留)")
 
 
 def _resource_status(row) -> str:
@@ -436,8 +421,6 @@ _LINKS_COMMANDS = ("links", "add-link", "edit-link", "rm-link", "open-link")
 _PLUGIN_COMMANDS = ("plugins", "plugin-run", "plugin-enable",
                     "plugin-disable")
 
-_CAMPUS_COMMANDS = ("campus-login", "campus-status", "campus-logout")
-
 
 def run_command(ctl: Controller, args) -> int:
     """执行一条已解析的命令, 返回退出码. 不持有连接, 由调用方管理."""
@@ -447,8 +430,8 @@ def run_command(ctl: Controller, args) -> int:
         return _run_links_command(ctl, args)
     if args.command in _PLUGIN_COMMANDS:
         return _run_plugins_command(ctl, args)
-    if args.command in _CAMPUS_COMMANDS:
-        return _run_campus_command(ctl, args)
+    if args.command in CAMPUS_COMMANDS:
+        return run_campus_command(ctl, args)
     if args.command in LEARN_COMMANDS:
         return run_learn_command(ctl, args)
     if args.command in CLOUD_COMMANDS:
@@ -641,77 +624,7 @@ def _run_plugins_command(ctl: Controller, args) -> int:
     return _emit(ctl.set_plugin_enabled(args.plugin_id, False))
 
 
-# ---- 校园 ----
-
-
-def _campus_ask_2fa(options, send_code):
-    """CLI 二次认证交互: 列方式 -> 选择 -> (发码) -> 输码 -> 问信任."""
-    methods = options.methods()
-    if not methods:
-        print("服务端未提供可用的二次认证方式", file=sys.stderr)
-        return None
-    for i, (_value, label) in enumerate(methods, 1):
-        print(f"  {i}. {label}")
-    pick = input("选择验证方式(序号, 直接回车取消): ").strip()
-    if not pick.isdigit() or not 1 <= int(pick) <= len(methods):
-        return None
-    method = methods[int(pick) - 1][0]
-    if method != "totp":
-        send_code(method)
-        print("  验证码已发送")
-    code = getpass.getpass("验证码(输入不回显): ").strip()
-    trust = input("信任此设备? (y/N): ").strip().lower() == "y"
-    return method, code, trust
-
-
-def _print_profile(result) -> None:
-    """本人信息逐行打印(有则打印)."""
-    profile = result.detail.get("profile")
-    if profile is not None:
-        for label, value in profile.display_fields():
-            print(f"  {label}: {value}")
-
-
-def _cmd_campus_login(ctl: Controller, args) -> int:
-    """campus-login: 学号/密码交互输入(密码绝不走 argv)."""
-    username = args.username or input("学号: ").strip()
-    password = getpass.getpass("密码(输入不回显): ")
-    if args.method and args.code:
-        answer = (args.method, args.code, args.trust)
-
-        def preset_2fa(_options, _send):
-            """非交互: 直接用预置答案."""
-            return answer
-
-        ask_2fa = preset_2fa
-    else:
-        ask_2fa = _campus_ask_2fa
-    result = ctl.campus_login(username, password, ask_2fa=ask_2fa)
-    exit_code = _emit(result)
-    _print_profile(result)
-    options = result.detail.get("options")
-    if result.detail.get("state") == "need_2fa" and options is not None:
-        labels = " / ".join(label for _, label in options.methods())
-        print(f"可选方式: {labels}")
-        print("带 --method 与 --code 重跑, 或在 GUI 校园页签交互完成")
-    return exit_code
-
-
-def _cmd_campus_status(ctl: Controller, args) -> int:
-    """campus-status: 默认联网校验, --no-check 只读本机会话."""
-    result = ctl.campus_status(check=not args.no_check)
-    exit_code = _emit(result)
-    _print_profile(result)
-    return exit_code
-
-
-def _run_campus_command(ctl: Controller, args) -> int:
-    """执行校园相关子命令(controller 校园动作的薄封装)."""
-    if args.command == "campus-login":
-        return _cmd_campus_login(ctl, args)
-    if args.command == "campus-status":
-        return _cmd_campus_status(ctl, args)
-    return _emit(ctl.campus_logout())
+# ---- 校园已迁至 shuimu/plugins/campus/cli.py(campus 的归插件) ----
 
 
 def _cmd_todo(ctl: Controller, args) -> int:

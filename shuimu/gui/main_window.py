@@ -38,14 +38,14 @@ from shuimu.core.storage import Storage
 from shuimu.core.url_open import wslview_open as _wslview_open
 from shuimu.gui import artwork, theme
 from shuimu.gui.dialogs import LogPreviewDialog, warn
-from shuimu.gui.campus_tab import CampusTab
 from shuimu.gui.file_page import FileBrowserPage
-from shuimu.gui.learn_page import LearnPage
-from shuimu.gui.cloud_page import CloudPage
 from shuimu.gui.links_page import LinksPage
 from shuimu.gui.plugin_runner import run_plugin_dialogs
 from shuimu.gui.schedule_view import ScheduleTab
 from shuimu.gui.titlebar import TitleBar
+from shuimu.plugins.campus.campus_tab import CampusTab
+from shuimu.plugins.learn.learn_page import LearnPage
+from shuimu.plugins.cloud.cloud_page import CloudPage
 
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1

@@ -10,7 +10,7 @@ from shuimu.core.learn import (
     LearnNotice,
 )
 from shuimu.core.storage import Storage
-from shuimu.gui.learn_page import (
+from shuimu.plugins.learn.learn_page import (
     PAGE_DISABLED,
     PAGE_MAIN,
     PAGE_LOGIN,
@@ -194,7 +194,7 @@ class TestActions:
     def test_refresh_expired_switches_page(self, qtbot, tmp_path,
                                            monkeypatch):
         """刷新遇会话失效: 切登录引导并保留提示(warn 打桩防模态挂起)."""
-        monkeypatch.setattr("shuimu.gui.learn_page.warn",
+        monkeypatch.setattr("shuimu.plugins.learn.learn_page.warn",
                             lambda *_args, **_kwargs: None)
         page, _ctl, storage = make_page(qtbot, tmp_path,
                                         refresh_ok=False)

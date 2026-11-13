@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from shuimu.core.actions import ActionResult
 from shuimu.core.storage import Storage
-from shuimu.gui.cloud_page import (
+from shuimu.plugins.cloud.cloud_page import (
     PAGE_DISABLED,
     PAGE_MAIN,
     CloudPage,
@@ -45,6 +45,7 @@ class FakeController:
         self.storage = storage
         self.record = make_record(status)
         self.browse_ok = browse_ok
+        self.confirm = None
         self.plugins = SimpleNamespace(get=lambda _pid: self.record)
         self.browse_calls = []
         self.mount_calls = []

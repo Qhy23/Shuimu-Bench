@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QLineEdit
 
 from shuimu.core.campus import TwoFactorOptions
 from shuimu.core.controller import ActionResult
-from shuimu.gui.campus_tab import (
+from shuimu.plugins.campus.campus_tab import (
     PAGE_DISABLED,
     PAGE_LOGGED,
     PAGE_LOGIN,
@@ -115,7 +115,7 @@ class TestCampusTabStates:
     def test_enable_button_flow(self, qtbot, monkeypatch):
         """启用按钮 -> 确认回调 -> 切到登录页."""
         confirmed = []
-        monkeypatch.setattr("shuimu.gui.campus_tab.confirm_network_enable",
+        monkeypatch.setattr("shuimu.plugins.campus.campus_tab.confirm_network_enable",
                             lambda parent, manifest:
                             confirmed.append(manifest.name) or True)
         ctl = FakeController(status="disabled")
