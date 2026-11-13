@@ -14,7 +14,7 @@ from shuimu.core.storage import Storage
 
 
 def test_main_window_structure(qtbot, tmp_path):
-    """窗口有三栏, 默认课程已建立, 中栏文件/链接/学堂/云盘页签, 右栏整理/日程页签."""
+    """窗口有三栏; 中栏四页签/右栏三页签, 服务型插件页签默认隐藏."""
     storage = Storage(str(tmp_path / "ui.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"),
                         links_path=str(tmp_path / "links.yaml"))
@@ -26,9 +26,15 @@ def test_main_window_structure(qtbot, tmp_path):
     assert window.center_tabs.tabText(1) == "链接"
     assert window.center_tabs.tabText(2) == "学堂"
     assert window.center_tabs.tabText(3) == "云盘"
+    assert window.center_tabs.isTabVisible(0)
+    assert not window.center_tabs.isTabVisible(2)   # 学堂: 未启用隐藏
+    assert not window.center_tabs.isTabVisible(3)   # 云盘: 未启用隐藏
     assert window.tabs.count() == 3
     assert [window.tabs.tabText(i) for i in range(3)] == ["整理", "日程",
                                                           "校园"]
+    assert not window.tabs.isTabVisible(2)          # 校园: 未启用隐藏
+    # 左栏插件面板: 内置插件全部列出(含未启用)
+    assert window.plugin_tree.topLevelItemCount() == 4
     storage.close()
 
 
