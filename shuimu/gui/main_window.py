@@ -37,15 +37,15 @@ from shuimu.core.controller import KIND_LABEL, Controller
 from shuimu.core.storage import Storage
 from shuimu.core.url_open import wslview_open as _wslview_open
 from shuimu.gui import artwork, theme
-from shuimu.gui.dialogs import LogPreviewDialog, warn
+from shuimu.gui.dialogs import LogPreviewDialog, confirm_network_enable, warn
 from shuimu.gui.file_page import FileBrowserPage
 from shuimu.gui.links_page import LinksPage
-from shuimu.gui.plugin_runner import run_plugin_dialogs
-from shuimu.gui.schedule_view import ScheduleTab
-from shuimu.gui.titlebar import TitleBar
 from shuimu.plugins.campus.campus_tab import CampusTab
 from shuimu.plugins.learn.learn_page import LearnPage
 from shuimu.plugins.cloud.cloud_page import CloudPage
+from shuimu.gui.plugin_runner import run_plugin_dialogs
+from shuimu.gui.schedule_view import ScheduleTab
+from shuimu.gui.titlebar import TitleBar
 
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1
@@ -119,6 +119,14 @@ class MainWindow(QMainWindow):
         self._build_right()
         self.splitter.setSizes(self.ctl.config["app"]["splitter_sizes"])
         self._install_zoom_shortcuts()
+        # 服务型插件页签注册: (插件 id, 页签容器, 页签部件)
+        self._plugin_tabs = (
+            ("learn", self.center_tabs, self.learn_page),
+            ("cloud", self.center_tabs, self.cloud_page),
+            ("campus", self.tabs, self.campus_tab),
+        )
+        self.reload_plugins()
+        self._apply_plugin_tabs()
 
         grip = QSizeGrip(self)
         grip.setStyleSheet("background: transparent;")
@@ -199,6 +207,78 @@ class MainWindow(QMainWindow):
         row2.addWidget(_button("移除选中", self._remove_selected))
         row2.addWidget(_button("刷新", self.reload_courses))
         layout.addLayout(row2)
+        layout.addWidget(QLabel("插件"))
+        self.plugin_tree = QTreeWidget(panel)
+        self.plugin_tree.setHeaderLabels(["插件", ""])
+        self.plugin_tree.setRootIsDecorated(False)
+        self.plugin_tree.setMaximumHeight(160)
+        layout.addWidget(self.plugin_tree)
+
+    # ---- 左栏: 插件管理 ----
+
+    def reload_plugins(self) -> None:
+        """插件面板重建: 全部插件记录 + 启用/禁用按钮."""
+        self.plugin_tree.clear()
+        for record in self.ctl.plugins.records():
+            if record.manifest is None:
+                continue
+            manifest = record.manifest
+            item = QTreeWidgetItem([manifest.name, ""])
+            item.setToolTip(
+                0, f"{manifest.id} v{manifest.version}\n"
+                   f"权限: {'/'.join(manifest.permissions)}\n"
+                   f"{manifest.description}")
+            self.plugin_tree.addTopLevelItem(item)
+            if record.status == "broken":
+                item.setForeground(0, QBrush(Qt.GlobalColor.gray))
+                item.setText(1, "损坏")
+                continue
+            enabled = record.status == "ok"
+            if not enabled:
+                item.setForeground(0, QBrush(Qt.GlobalColor.gray))
+            button = _button("禁用" if enabled else "启用",
+                             lambda _checked=False, pid=manifest.id,
+                             en=not enabled: self._toggle_plugin(pid, en))
+            self.plugin_tree.setItemWidget(item, 1, button)
+
+    def _toggle_plugin(self, plugin_id: str, enable: bool) -> None:
+        """启用/禁用插件(网络权限经确认), 随后刷新面板与相关页签."""
+
+        def ask_network(manifest):
+            return confirm_network_enable(self, manifest)
+
+        confirm = None
+        if enable:
+            record = self.ctl.plugins.get(plugin_id)
+            manifest = record.manifest if record is not None else None
+            if manifest is not None and "network" in manifest.permissions:
+                confirm = ask_network
+        result = self.ctl.set_plugin_enabled(plugin_id, enable,
+                                             confirm=confirm)
+        self.statusBar().showMessage(result.message)
+        self.file_page.set_plugin_catalog(self.ctl.plugins.catalog())
+        self.reload_plugins()
+        self._apply_plugin_tabs()
+
+    def _apply_plugin_tabs(self) -> None:
+        """服务型插件页签随启用状态显隐(禁用即隐藏, 状态保留)."""
+        for plugin_id, tabs, widget in self._plugin_tabs:
+            record = self.ctl.plugins.get(plugin_id)
+            visible = record is not None and record.status == "ok"
+            index = tabs.indexOf(widget)
+            if index < 0:
+                continue
+            if not visible and tabs.currentWidget() is widget:
+                tabs.setCurrentIndex(0)
+            tabs.setTabVisible(index, visible)
+            if visible:
+                widget.refresh_state()
+
+    def _show_campus_tab(self) -> None:
+        """学堂页请求前往校园页签(仅在其可见时切换)."""
+        index = self.tabs.indexOf(self.campus_tab)
+        if index >= 0 and self.tabs.isTabVisible(index):
+            self.tabs.setCurrentWidget(self.campus_tab)
 
     def _build_center(self) -> None:
         self.center_tabs = QTabWidget(self.splitter)
@@ -213,8 +293,7 @@ class MainWindow(QMainWindow):
         self.center_tabs.addTab(self.links_page, "链接")
         self.learn_page = LearnPage(self.ctl, self.center_tabs)
         self.learn_page.status_message.connect(self.statusBar().showMessage)
-        self.learn_page.campus_requested.connect(
-            lambda: self.tabs.setCurrentWidget(self.campus_tab))
+        self.learn_page.campus_requested.connect(self._show_campus_tab)
         self.learn_page.resources_changed.connect(self.reload_courses)
         self.center_tabs.addTab(self.learn_page, "学堂")
         self.cloud_page = CloudPage(self.ctl, self.center_tabs)
