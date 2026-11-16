@@ -49,6 +49,7 @@ from shuimu.gui.titlebar import TitleBar
 
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1
+ROLE_DIR_PATH = Qt.UserRole + 2
 
 
 def tree_icon_size() -> int:
@@ -85,6 +86,60 @@ def _open_url(url: str) -> bool:
 url_open.set_default(_open_url)
 
 
+def _display_forest(resources: list) -> list:
+    """课程资源 -> 显示树节点列表(纯数据, 无 Qt, 便于单测).
+
+    文件/目录资源按绝对路径组件嵌套, 连续单子虚拟目录折叠为最深节点;
+    链接无层级, 随加入顺序平铺。节点形如 {"kind": "dir"|"resource",
+    "path": 完整路径|None, "resource": 资源行|None, "children": [...]};
+    输出保持资源加入顺序, 文件/目录的顶层组在其首个资源出现处整组发射.
+    """
+    root = {"resource": None, "children": {}}
+    for res in resources:
+        if res["kind"] == "link":
+            continue
+        node = root
+        for part in res["path_or_url"].split("/")[1:]:
+            node = node["children"].setdefault(
+                part, {"resource": None, "children": {}})
+        node["resource"] = res
+    out: list = []
+    emitted: set = set()
+    for res in resources:
+        if res["kind"] == "link":
+            out.append({"kind": "resource", "path": None,
+                        "resource": res, "children": []})
+            continue
+        parts = res["path_or_url"].split("/")[1:]
+        if not parts:  # 根目录本身被登记的病态情况: 不参与分组
+            if "root" not in emitted:
+                emitted.add("root")
+                out.append({"kind": "resource", "path": None,
+                            "resource": res, "children": []})
+            continue
+        if parts[0] in emitted:
+            continue
+        emitted.add(parts[0])
+        out.append(_emit_group(root["children"][parts[0]], ["", parts[0]]))
+    return out
+
+
+def _emit_group(node: dict, path: list) -> dict:
+    """从 trie 节点发射显示子树: 先折叠单链, 虚拟节点记录完整路径."""
+    while node["resource"] is None and len(node["children"]) == 1:
+        name, node = next(iter(node["children"].items()))
+        path = path + [name]
+    base = (path if node["resource"] is None
+            else node["resource"]["path_or_url"].split("/"))
+    children = [_emit_group(child, base + [name])
+                for name, child in node["children"].items()]
+    if node["resource"] is None:
+        return {"kind": "dir", "path": "/".join(path),
+                "resource": None, "children": children}
+    return {"kind": "resource", "path": None,
+            "resource": node["resource"], "children": children}
+
+
 class MainWindow(QMainWindow):
     """三栏主窗口(无边框, 自绘标题栏)."""
 
@@ -98,6 +153,8 @@ class MainWindow(QMainWindow):
         self.dir_edit = None
         self.plan_table = None
         self._log_dialog = None
+        # 课程树展开状态记忆(会话内, 键见 _tree_state_key); 重建树后恢复
+        self._tree_expanded: dict = {}
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
@@ -199,6 +256,10 @@ class MainWindow(QMainWindow):
         self.course_tree = QTreeWidget(course_panel)
         self.course_tree.setHeaderLabel("课程空间")
         self.course_tree.itemDoubleClicked.connect(self._on_resource_activated)
+        self.course_tree.itemExpanded.connect(
+            lambda item: self._remember_tree_state(item, True))
+        self.course_tree.itemCollapsed.connect(
+            lambda item: self._remember_tree_state(item, False))
         layout.addWidget(self.course_tree)
         row = QHBoxLayout()
         row.addWidget(_button("新建课程", self._add_course))
@@ -399,28 +460,76 @@ class MainWindow(QMainWindow):
     # ---- 左栏: 课程与资源索引 ----
 
     def reload_courses(self) -> None:
-        """从索引重建课程树, 失效资源标灰."""
+        """从索引重建课程树: 资源按目录层级嵌套, 失效标灰, 展开状态记忆."""
         self.course_tree.clear()
         for course in self.storage.list_courses():
             node = QTreeWidgetItem(self.course_tree, [course["name"]])
             node.setData(0, ROLE_COURSE_ID, course["id"])
+            node.setToolTip(0, f"课程: {course['name']}")
             node.setIcon(0, QIcon(artwork.kind_icon(
                 "course", size=tree_icon_size())))
-            for res in self.storage.list_resources(course["id"]):
-                exists, changed = Storage.check_resource(res)
-                label = "[" + KIND_LABEL[res["kind"]] + "] " + res["display_name"]
-                if not exists:
-                    label += " (失效)"
-                elif changed:
-                    label += " (已变更)"
-                item = QTreeWidgetItem(node, [label])
-                item.setData(0, ROLE_RESOURCE_ID, res["id"])
-                item.setIcon(0, QIcon(artwork.kind_icon(
-                    res["kind"], failed=not exists,
-                    size=tree_icon_size())))
-                if not exists:
-                    item.setForeground(0, QBrush(Qt.GlobalColor.gray))
-            node.setExpanded(True)
+            for dnode in _display_forest(self.storage.list_resources(course["id"])):
+                self._append_tree_node(node, dnode, course["id"])
+            node.setExpanded(self._tree_expanded.get(
+                ("course", course["id"]), False))
+
+    def _append_tree_node(self, parent_item, dnode: dict,
+                          course_id: int) -> None:
+        """把显示树节点挂为 Qt 项: 虚拟目录或资源两态."""
+        if dnode["kind"] == "dir":
+            item = QTreeWidgetItem(parent_item,
+                                   [os.path.basename(dnode["path"])])
+            item.setData(0, ROLE_DIR_PATH, dnode["path"])
+            item.setToolTip(0, dnode["path"])
+            item.setIcon(0, QIcon(artwork.kind_icon(
+                "dir", size=tree_icon_size())))
+            key = ("dir", course_id, dnode["path"])
+        else:
+            res = dnode["resource"]
+            exists, changed = Storage.check_resource(res)
+            label = res["display_name"]
+            if res["kind"] == "link":
+                label = f"[{KIND_LABEL['link']}] " + label
+            if not exists:
+                label += " (失效)"
+            elif changed:
+                label += " (已变更)"
+            item = QTreeWidgetItem(parent_item, [label])
+            item.setData(0, ROLE_RESOURCE_ID, res["id"])
+            item.setToolTip(0, res["path_or_url"])
+            item.setIcon(0, QIcon(artwork.kind_icon(
+                res["kind"], failed=not exists,
+                size=tree_icon_size())))
+            if not exists:
+                item.setForeground(0, QBrush(Qt.GlobalColor.gray))
+            key = ("res", res["id"])
+        item.setExpanded(self._tree_expanded.get(key, False))
+        for child in dnode["children"]:
+            self._append_tree_node(item, child, course_id)
+
+    @staticmethod
+    def _tree_state_key(item) -> tuple:
+        """树项 -> 展开状态记忆键(课程/资源/虚拟目录三类)."""
+        course_id = item.data(0, ROLE_COURSE_ID)
+        if course_id is not None:
+            return ("course", course_id)
+        rid = item.data(0, ROLE_RESOURCE_ID)
+        if rid is not None:
+            return ("res", rid)
+        path = item.data(0, ROLE_DIR_PATH)
+        if path is None:
+            return None
+        parent = item.parent()
+        while parent is not None and parent.data(0, ROLE_COURSE_ID) is None:
+            parent = parent.parent()
+        course_id = parent.data(0, ROLE_COURSE_ID) if parent else None
+        return ("dir", course_id, path)
+
+    def _remember_tree_state(self, item, expanded: bool) -> None:
+        """记录用户展开/收起的节点, 重建树后恢复."""
+        key = self._tree_state_key(item)
+        if key is not None:
+            self._tree_expanded[key] = expanded
 
     def _current_course_id(self):
         item = self.course_tree.currentItem()
@@ -482,7 +591,12 @@ class MainWindow(QMainWindow):
             return
         rid = item.data(0, ROLE_RESOURCE_ID)
         if rid is None:
-            self.statusBar().showMessage("选中的是课程节点, 请用「删除课程」按钮")
+            if item.data(0, ROLE_DIR_PATH) is not None:
+                self.statusBar().showMessage(
+                    "选中的是目录层级节点(未登记), 请选中具体资源移除")
+            else:
+                self.statusBar().showMessage(
+                    "选中的是课程节点, 请用「删除课程」按钮")
             return
         res = self.storage.get_resource(rid)
         if res is None:
@@ -500,6 +614,13 @@ class MainWindow(QMainWindow):
         """双击资源: 链接用浏览器打开, 文件用系统默认程序打开, 目录在中栏定位."""
         rid = item.data(0, ROLE_RESOURCE_ID)
         if rid is None:
+            # 虚拟目录节点: 与目录资源一致, 双击在中栏定位
+            path = item.data(0, ROLE_DIR_PATH)
+            if path is not None:
+                if not os.path.exists(path):
+                    self.statusBar().showMessage(f"已失效: {path}")
+                else:
+                    self.set_workspace_root(path)
             return
         res = self.storage.get_resource(rid)
         if res is None:
