@@ -1,6 +1,6 @@
 """主窗口与三栏 UI.
 
-左栏: 课程空间树(SQLite 索引) | 中栏: 工作区页签(文件/链接) |
+左栏: 课程/插件页签(课程空间树 + 插件面板) | 中栏: 工作区页签(文件/链接) |
 右栏: 整理/日程面板; 操作留痕经标题栏按钮弹出预览.
 浏览不等于登记: 中栏选中后点"加入课程"才入索引; 整理先预览再执行.
 """
@@ -191,10 +191,12 @@ class MainWindow(QMainWindow):
     # ---- 界面构建 ----
 
     def _build_left(self) -> None:
-        panel = QWidget(self.splitter)
-        layout = QVBoxLayout(panel)
+        """左栏与中/右栏同款上部页签: 课程空间 / 插件."""
+        self.left_tabs = QTabWidget(self.splitter)
+        course_panel = QWidget(self.left_tabs)
+        layout = QVBoxLayout(course_panel)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.course_tree = QTreeWidget(panel)
+        self.course_tree = QTreeWidget(course_panel)
         self.course_tree.setHeaderLabel("课程空间")
         self.course_tree.itemDoubleClicked.connect(self._on_resource_activated)
         layout.addWidget(self.course_tree)
@@ -207,12 +209,15 @@ class MainWindow(QMainWindow):
         row2.addWidget(_button("移除选中", self._remove_selected))
         row2.addWidget(_button("刷新", self.reload_courses))
         layout.addLayout(row2)
-        layout.addWidget(QLabel("插件"))
-        self.plugin_tree = QTreeWidget(panel)
+        self.left_tabs.addTab(course_panel, "课程")
+        plugin_panel = QWidget(self.left_tabs)
+        plugin_layout = QVBoxLayout(plugin_panel)
+        plugin_layout.setContentsMargins(0, 0, 0, 0)
+        self.plugin_tree = QTreeWidget(plugin_panel)
         self.plugin_tree.setHeaderLabels(["插件", ""])
         self.plugin_tree.setRootIsDecorated(False)
-        self.plugin_tree.setMaximumHeight(160)
-        layout.addWidget(self.plugin_tree)
+        plugin_layout.addWidget(self.plugin_tree)
+        self.left_tabs.addTab(plugin_panel, "插件")
 
     # ---- 左栏: 插件管理 ----
 
