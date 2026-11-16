@@ -214,6 +214,7 @@ class MainWindow(QMainWindow):
         plugin_layout = QVBoxLayout(plugin_panel)
         plugin_layout.setContentsMargins(0, 0, 0, 0)
         self.plugin_tree = QTreeWidget(plugin_panel)
+        self.plugin_tree.setObjectName("pluginTree")
         self.plugin_tree.setHeaderLabels(["插件", ""])
         self.plugin_tree.setRootIsDecorated(False)
         plugin_layout.addWidget(self.plugin_tree)

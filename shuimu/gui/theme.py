@@ -95,6 +95,12 @@ QTreeWidget::item, QTreeView::item {{
     padding: {pad(4)} {pad(2)};
     border-radius: 4px;
 }}
+/* 嵌入式部件行(如插件面板的启用/禁用按钮): 垂直 padding 归零,
+   否则 setItemWidget 的部件被压到行内容区, 低于按钮自身最小高度,
+   文字底部被裁(2026-11-16 实测: 行 31px, 按钮仅得 23px). */
+QTreeWidget#pluginTree::item {{
+    padding: 0 {pad(2)};
+}}
 QLineEdit:focus, QTreeWidget:focus, QTreeView:focus, QTableWidget:focus,
 QPlainTextEdit:focus, QComboBox:focus, QDateEdit:focus, QTimeEdit:focus {{
     border: 1px solid {PRIMARY_LIGHT};
