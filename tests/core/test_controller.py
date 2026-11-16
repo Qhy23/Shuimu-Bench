@@ -836,3 +836,77 @@ class TestPluginFrameworkExtensions:
         params = json.loads(row["params"])
         assert params["username"] == "20231234567"
         assert params["secret_params"] == ["password"]
+
+
+class TestIndexSync:
+    """文件操作的索引同步(2026-11-16): 重命名/移动/删除 + 撤销一并回滚."""
+
+    def test_add_resource_duplicate_rejected(self, ctl, tmp_path):
+        """同课程重复登记幂等拒绝, 不抛异常不重复入库."""
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        cid = ctl.storage.list_courses()[0]["id"]
+        assert ctl.add_resource(cid, str(f)).ok
+        again = ctl.add_resource(cid, str(f))
+        assert not again.ok and again.detail.get("duplicate")
+        assert len(ctl.storage.list_resources(cid)) == 1
+
+    def test_rename_syncs_index_and_descendants(self, ctl, tmp_path):
+        """重命名目录: 本行与子孙登记行路径同步, 撤销改回."""
+        ws = tmp_path / "ws"
+        (ws / "sub").mkdir(parents=True)
+        (ws / "sub" / "a.txt").write_text("x")
+        cid = ctl.storage.list_courses()[0]["id"]
+        ctl.add_resource(cid, str(ws))
+        ctl.add_resource(cid, str(ws / "sub" / "a.txt"))
+        assert ctl.file_rename(str(ws), "ws2").ok
+        paths = {r["path_or_url"] for r in ctl.storage.list_resources(cid)}
+        assert paths == {str(tmp_path / "ws2"),
+                         str(tmp_path / "ws2" / "sub" / "a.txt")}
+        assert ctl.undo().ok
+        paths = {r["path_or_url"] for r in ctl.storage.list_resources(cid)}
+        assert paths == {str(ws), str(ws / "sub" / "a.txt")}
+
+    def test_move_syncs_index(self, ctl, tmp_path):
+        """移动文件: 登记路径跟随, 撤销移回并改回."""
+        src_dir = tmp_path / "src"
+        dst_dir = tmp_path / "dst"
+        src_dir.mkdir()
+        dst_dir.mkdir()
+        f = src_dir / "a.txt"
+        f.write_text("x")
+        cid = ctl.storage.list_courses()[0]["id"]
+        ctl.add_resource(cid, str(f))
+        assert ctl.file_move([str(f)], str(dst_dir)).ok
+        row = ctl.storage.find_resource(cid, str(dst_dir / "a.txt"))
+        assert row is not None
+        assert ctl.undo().ok
+        assert (src_dir / "a.txt").exists()
+        assert ctl.storage.find_resource(cid, str(f)) is not None
+
+    def test_delete_removes_rows_and_undo_restores(self, ctl_trash, tmp_path):
+        """删除: 磁盘入回收站且索引行移除; 撤销两者俱恢复."""
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        cid = ctl_trash.storage.list_courses()[0]["id"]
+        ctl_trash.add_resource(cid, str(f))
+        assert ctl_trash.file_delete([str(f)]).ok
+        assert not f.exists()
+        assert ctl_trash.storage.list_resources(cid) == []
+        assert ctl_trash.undo().ok
+        assert f.exists()
+        assert ctl_trash.storage.find_resource(cid, str(f)) is not None
+
+    def test_undo_copy_drops_registered_rows(self, ctl_trash, tmp_path):
+        """复制撤销: 产物入回收站, 其后登记的行一并移除."""
+        src = tmp_path / "src.txt"
+        src.write_text("x")
+        dst_dir = tmp_path / "d"
+        dst_dir.mkdir()
+        cid = ctl_trash.storage.list_courses()[0]["id"]
+        assert ctl_trash.file_copy([str(src)], str(dst_dir)).ok
+        copied = dst_dir / "src.txt"
+        assert ctl_trash.add_resource(cid, str(copied)).ok
+        assert ctl_trash.undo().ok
+        assert not copied.exists()
+        assert ctl_trash.storage.list_resources(cid) == []

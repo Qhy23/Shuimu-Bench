@@ -223,6 +223,37 @@ class Storage:
             "SELECT * FROM resources WHERE course_id = ? ORDER BY added_at", (course_id,)
         ).fetchall()
 
+    def find_resource(self, course_id: int, path_or_url: str):
+        """按 (课程, 路径) 查已登记资源行, 无则 None(幂等登记前置检查)."""
+        return self._conn.execute(
+            "SELECT * FROM resources WHERE course_id = ? AND path_or_url = ?",
+            (course_id, path_or_url)).fetchone()
+
+    def resources_under(self, path: str) -> list:
+        """路径本身与其子孙目录内的全部登记资源(跨课程, 按路径排序).
+
+        供文件操作同步索引: 前缀匹配以 / 为目录边界, 不误伤同前缀名.
+        """
+        esc = (path.replace("\\", "\\\\")
+               .replace("%", "\\%").replace("_", "\\_"))
+        return self._conn.execute(
+            "SELECT * FROM resources WHERE path_or_url = ?"
+            " OR path_or_url LIKE ? ESCAPE '\\' ORDER BY path_or_url",
+            (path, esc + "/%")).fetchall()
+
+    def retarget_resource(self, resource_id: int, new_path: str) -> None:
+        """文件被移动/重命名后同步登记路径, 顺带刷新显示名与 size/mtime."""
+        size, mtime = None, None
+        if os.path.exists(new_path):
+            stat = os.stat(new_path)
+            size, mtime = stat.st_size, stat.st_mtime
+        self._conn.execute(
+            "UPDATE resources SET path_or_url = ?,"
+            " display_name = ?, size = ?, mtime = ? WHERE id = ?",
+            (new_path, os.path.basename(new_path.rstrip("/")),
+             size, mtime, resource_id))
+        self._conn.commit()
+
     def search_resources(self, keyword: str) -> list:
         """跨课程按子串搜索资源, display_name 或 path_or_url 任一命中即匹配.
 

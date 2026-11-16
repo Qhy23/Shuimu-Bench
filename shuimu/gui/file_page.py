@@ -16,7 +16,6 @@ from PySide6.QtCore import QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QFileDialog,
     QFileSystemModel,
     QHBoxLayout,
@@ -31,8 +30,8 @@ from PySide6.QtWidgets import (
 )
 
 from shuimu.core.controller import Controller, detect_kind
-from shuimu.core.fileops import find_conflicts
 from shuimu.core.paths import default_workspace_root
+from shuimu.gui import dialogs
 from shuimu.gui.dialogs import warn
 
 
@@ -52,11 +51,15 @@ class FileBrowserPage(QWidget):
     status_message = Signal(str)   # 状态栏提示(工作目录切换/校验失败等)
 
     def __init__(self, controller: Controller = None,
-                 workspace_root: str = None, parent=None):
+                 workspace_root: str = None, clipboard: dict = None,
+                 parent=None):
         super().__init__(parent)
         self._ctl = controller
         self._workspace_root = workspace_root or default_workspace_root()
-        self._clipboard = {"mode": None, "paths": []}  # 应用内部剪贴板
+        # 应用内部剪贴板; 可由主窗口注入共享实例(与左栏课程树互通),
+        # 语义为原地变异更新, 各页不得整体重绑
+        self._clipboard = clipboard if clipboard is not None \
+            else {"mode": None, "paths": []}
         self._plugin_catalog = []  # 可用插件 manifest(主窗口推送)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -283,14 +286,16 @@ class FileBrowserPage(QWidget):
         paths = self._selected_or_hint()
         if not paths:
             return
-        self._clipboard = {"mode": "copy", "paths": paths}
+        self._clipboard["mode"] = "copy"
+        self._clipboard["paths"] = paths
         self.status_message.emit(f"已复制 {len(paths)} 项")
 
     def _cut_selected(self) -> None:
         paths = self._selected_or_hint()
         if not paths:
             return
-        self._clipboard = {"mode": "cut", "paths": paths}
+        self._clipboard["mode"] = "cut"
+        self._clipboard["paths"] = paths
         self.status_message.emit(f"已剪切 {len(paths)} 项(粘贴后生效)")
 
     def _paste(self) -> None:
@@ -298,9 +303,8 @@ class FileBrowserPage(QWidget):
 
         恰好选中一个目录时贴入该目录(树形视图展开子目录浏览时,
         工作目录并未跟着变, 须以选中为准), 否则贴进当前工作目录.
-        同名冲突逐个询问(见 _resolve_conflicts); "覆盖"先把旧文件移入
-        回收站再粘贴. 剪切分支只移出成功的项(部分失败可重试);
-        复制分支保留剪贴板可多次粘贴.
+        冲突决策与执行在 dialogs.perform_paste(与左栏课程树共用内核);
+        中栏粘贴只落盘, 登记仍走"加入选中课程".
         """
         if not self._clipboard["paths"]:
             self.status_message.emit("剪贴板为空")
@@ -308,35 +312,10 @@ class FileBrowserPage(QWidget):
         ctl = self._ctl_or_hint()
         if ctl is None:
             return
-        target = self._paste_target()
-        paths = self._clipboard["paths"]
-        policies = {}
-        conflicts = find_conflicts(paths, target)
-        if conflicts:
-            policies = self._resolve_conflicts(conflicts)
-            if policies is None:
-                self.status_message.emit("已取消粘贴")
-                return
-        skip_srcs = {src for src, policy in policies.items()
-                     if policy == "skip"}
-        replace_dsts = [dst for src, dst in conflicts
-                        if policies.get(src) == "replace"]
-        if replace_dsts:
-            ctl.file_delete(replace_dsts)  # 旧文件入回收站, 留痕并入撤销栈
-        todo = [p for p in paths if p not in skip_srcs]
-        if not todo:
-            self.status_message.emit("已跳过全部项目")
-            return
-        action = (ctl.file_copy if self._clipboard["mode"] == "copy"
-                  else ctl.file_move)
-        result = action(todo, target)
+        result = dialogs.perform_paste(ctl, self._clipboard,
+                                       self._paste_target(),
+                                       self._ask_conflict)
         self.status_message.emit(result.message)
-        if self._clipboard["mode"] == "cut":
-            done = {item["src"] for item in result.detail.get("items", [])
-                    if item["status"] == "ok"}
-            remaining = [p for p in self._clipboard["paths"] if p not in done]
-            self._clipboard = {"mode": "cut" if remaining else None,
-                               "paths": remaining}
 
     def _paste_target(self) -> str:
         """粘贴目标: 恰好选中一个目录时该目录, 否则当前工作目录."""
@@ -346,57 +325,12 @@ class FileBrowserPage(QWidget):
         return self._workspace_root
 
     def _resolve_conflicts(self, conflicts: list):
-        """逐个询问同名冲突的处理方式.
-
-        返回 {src: "replace"|"skip"|"keep_both"}, 取消整个粘贴返回 None;
-        勾选"应用于其余全部"后其余冲突沿用当前决策.
-        """
-        policies = {}
-        apply_all = None
-        for i, (src, _dst) in enumerate(conflicts):
-            if apply_all is None:
-                choice, apply = self._ask_conflict(
-                    os.path.basename(src), len(conflicts) - i)
-                if choice == "cancel":
-                    return None
-                policies[src] = choice
-                if apply:
-                    apply_all = choice
-            else:
-                policies[src] = apply_all
-        return policies
+        """逐个询问同名冲突(委托共享实现, 注入本页可替换的 _ask_conflict)."""
+        return dialogs.resolve_conflicts(conflicts, self._ask_conflict)
 
     def _ask_conflict(self, name: str, remaining: int) -> tuple:
-        """单个同名冲突决策框. 返回 (决策, 是否应用于其余全部)."""
-        box = QMessageBox(self)
-        box.setWindowTitle("同名冲突")
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setText(f"“{name}” 在目标文件夹已存在。")
-        box.setInformativeText("选择如何处理此项。")
-        check = None
-        if remaining > 1:
-            # QCheckBox 须持局部引用: shiboken6 下无父 QObject 由 Python
-            # 包装器拥有, 临时对象在语句结束即被回收, 对话框内成悬空指针
-            check = QCheckBox(f"应用于其余 {remaining - 1} 个冲突")
-            box.setCheckBox(check)
-        btn_replace = box.addButton("覆盖(旧的移入回收站)",
-                                    QMessageBox.ButtonRole.YesRole)
-        btn_skip = box.addButton("跳过", QMessageBox.ButtonRole.NoRole)
-        btn_keep = box.addButton("两者都保留(自动加 _1)",
-                                 QMessageBox.ButtonRole.AcceptRole)
-        box.setDefaultButton(btn_keep)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is btn_replace:
-            choice = "replace"
-        elif clicked is btn_skip:
-            choice = "skip"
-        elif clicked is btn_keep:
-            choice = "keep_both"
-        else:
-            choice = "cancel"   # Esc 或关闭框
-        apply_all = bool(check is not None and check.isChecked())
-        return choice, apply_all
+        """单个同名冲突决策框(委托共享实现, 保留方法名便于测试替换)."""
+        return dialogs.ask_conflict(name, remaining, self)
 
     def _undo(self) -> None:
         """Ctrl+Z: 撤销最近一次文件页操作."""

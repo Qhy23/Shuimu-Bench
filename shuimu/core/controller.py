@@ -122,10 +122,15 @@ class Controller(LearnActions, CloudActions):
             {"removed_resources": removed})
 
     def add_resource(self, course_id: int, target: str) -> ActionResult:
-        """登记文件/目录/链接进课程."""
+        """登记文件/目录/链接进课程(同课程重复登记幂等拒绝)."""
         kind = detect_kind(target)
         if kind != "link" and not os.path.exists(target):
             return ActionResult(False, f"路径不存在: {target}")
+        existing = self.storage.find_resource(course_id, target)
+        if existing is not None:
+            return ActionResult(
+                False, f"该课程已登记: {target}",
+                {"resource_id": existing["id"], "kind": kind, "duplicate": True})
         rid = self.storage.add_resource(course_id, kind, target)
         self.storage.log_operation("add_resource", rid, path_snapshot=target)
         return ActionResult(True, f"已登记 #{rid} [{KIND_LABEL[kind]}] {target}",
@@ -195,10 +200,29 @@ class Controller(LearnActions, CloudActions):
         return self._transfer(fileops.move_batch, "file_move", "移动",
                               sources, dst_dir)
 
-    def file_delete(self, paths: list) -> ActionResult:
-        """把一批文件/目录移入回收站.
+    def _retarget_index(self, old: str, new: str) -> int:
+        """文件路径变更后同步登记行(old -> new, 含子孙), 返回更新行数."""
+        rows = self.storage.resources_under(old)
+        for row in rows:
+            suffix = row["path_or_url"][len(old):]
+            self.storage.retarget_resource(row["id"], new + suffix)
+        return len(rows)
 
-        留痕 detail 记录 原路径 -> 回收站路径 映射, 为将来恢复留数据.
+    def _drop_index(self, paths: list) -> list:
+        """从索引移除 paths 及其子孙的登记行, 返回完整行 dict(供撤销恢复)."""
+        removed: dict = {}
+        for path in paths:
+            for row in self.storage.resources_under(path):
+                removed[row["id"]] = dict(row)
+        for rid in removed:
+            self.storage.remove_resource(rid)
+        return list(removed.values())
+
+    def file_delete(self, paths: list) -> ActionResult:
+        """把一批文件/目录移入回收站, 同步移除对应索引行.
+
+        留痕 detail 记录 原路径 -> 回收站路径 映射与索引同步行数,
+        被移除的索引行完整存入撤销条目供恢复.
         """
         paths = [p for p in paths if p]
         if not paths:
@@ -212,12 +236,17 @@ class Controller(LearnActions, CloudActions):
             except OSError as exc:
                 errors.append(f"{path}: {exc}")
         snapshot = paths[0] if len(paths) == 1 else f"{paths[0]} 等 {len(paths)} 项"
+        removed_rows = self._drop_index([item["src"] for item in items])
         # Windows Shell 后端不回传回收站路径, 不可撤销, 不入栈
-        self._push_undo("file_delete", [(item["src"], item["trash"])
-                                        for item in items if item["trash"]])
+        self._push_undo("file_delete",
+                        [(item["src"], item["trash"])
+                         for item in items if item["trash"]],
+                        removed_rows=removed_rows)
         self.storage.log_operation(
             "file_delete", status="failed" if errors else "ok",
-            path_snapshot=snapshot, detail={"items": items, "errors": errors})
+            path_snapshot=snapshot,
+            detail={"items": items, "errors": errors,
+                    "index_removed": len(removed_rows)})
         message = f"已移入回收站 {len(items)} 项"
         if errors:
             return ActionResult(False, f"{message}, 失败 {len(errors)} 项",
@@ -225,14 +254,16 @@ class Controller(LearnActions, CloudActions):
         return ActionResult(True, message, {"items": items})
 
     def file_rename(self, path: str, new_name: str) -> ActionResult:
-        """同目录重命名."""
+        """同目录重命名, 同步索引路径(含登记的子孙)."""
         try:
             dst = fileops.rename_entry(path, new_name)
         except (ValueError, OSError) as exc:
             return ActionResult(False, str(exc))
+        index_n = self._retarget_index(path, dst)
         self.storage.log_operation(
             "file_rename", params={"new_name": new_name},
-            path_snapshot=path, detail={"dst": dst})
+            path_snapshot=path,
+            detail={"dst": dst, "index_updated": index_n})
         self._push_undo("file_rename", [(path, dst)])
         message = (f"已重命名 {os.path.basename(path)}"
                    f" -> {os.path.basename(dst)}")
@@ -271,6 +302,12 @@ class Controller(LearnActions, CloudActions):
         ok_n = sum(1 for i in items if i.status == "ok")
         skip_n = sum(1 for i in items if i.status == "skipped")
         fail_n = sum(1 for i in items if i.status == "failed")
+        index_n = 0
+        if action == "file_move":   # 移动改路径, 复制不动原索引
+            for i in items:
+                if i.status == "ok":
+                    index_n += self._retarget_index(i.src, i.dst)
+            detail["index_updated"] = index_n
         self._push_undo(action, [(i.src, i.dst) for i in items
                                  if i.status == "ok"])
         self.storage.log_operation(
@@ -293,7 +330,9 @@ class Controller(LearnActions, CloudActions):
         - 移动      -> 移回原位
         - 删除      -> 从回收站恢复到原路径
         - 重命名    -> 改回旧名
-        原位置被占用或目标已缺失时该项失败, 不静默改名.
+        索引随文件一并回滚: 复制/新建撤销时移除其后登记的行,
+        移动/重命名撤销时登记路径改回, 删除撤销时重插原登记行
+        (原位置被占用或目标已缺失时该项失败, 不静默改名).
         """
         if not self._undo_stack:
             return ActionResult(False, "没有可撤销的操作")
@@ -306,13 +345,25 @@ class Controller(LearnActions, CloudActions):
             try:
                 if kind in ("file_copy", "file_mkdir"):
                     trash.move_to_trash(current, self.config)
+                    self._drop_index([current])
                 elif kind in ("file_move", "file_delete"):
                     fileops.move_back(current, original)
+                    if kind == "file_move":
+                        self._retarget_index(current, original)
                 else:  # file_rename
                     fileops.rename_entry(current, os.path.basename(original))
+                    self._retarget_index(current, original)
                 done += 1
             except (ValueError, OSError) as exc:
                 errors.append(str(exc))
+        if kind == "file_delete":
+            # 恢复成功的文件重插原登记行(路径已存在者; 含 find 幂等防护)
+            for row in entry.get("removed_rows", []):
+                path = row["path_or_url"]
+                if not os.path.exists(path) or \
+                        self.storage.find_resource(row["course_id"], path):
+                    continue
+                self.storage.add_resource(row["course_id"], row["kind"], path)
         self.storage.log_operation(
             "undo", status="failed" if errors else "ok",
             params={"undid": kind}, path_snapshot=snapshot,
@@ -325,11 +376,13 @@ class Controller(LearnActions, CloudActions):
                                 {"done": done, "errors": errors})
         return ActionResult(True, message, {"done": done})
 
-    def _push_undo(self, kind: str, items: list) -> None:
+    def _push_undo(self, kind: str, items: list, **extra) -> None:
         """成功条目入撤销栈(空批不入, 上限 100 条, 超出丢最旧)."""
         if not items:
             return
-        self._undo_stack.append({"kind": kind, "items": items})
+        entry = {"kind": kind, "items": items}
+        entry.update(extra)
+        self._undo_stack.append(entry)
         del self._undo_stack[:-100]
 
     # ---- 插件 ----
