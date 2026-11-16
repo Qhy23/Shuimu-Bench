@@ -121,10 +121,15 @@ class Storage:
     """工作区数据库. 所有写操作立即提交."""
 
     def __init__(self, db_path: str):
-        db_path = os.path.abspath(db_path)
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.db_path = db_path
-        self._conn = sqlite3.connect(db_path)
+        if db_path == ":memory:":
+            # SQLite 内存库特殊串: abspath 会令其退化为当前目录下的
+            # 真实文件 ":memory:", 须原样传给 connect 且无需建目录
+            self.db_path = db_path
+        else:
+            db_path = os.path.abspath(db_path)
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+            self.db_path = db_path
+        self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
         # SQLite 默认不启用外键, 必须逐连接打开, 否则 ON DELETE CASCADE 不生效.
         self._conn.execute("PRAGMA foreign_keys = ON")

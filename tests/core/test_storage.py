@@ -44,6 +44,20 @@ class TestCourse:
         assert names == ["未分组", "高等数学"]
 
 
+class TestMemoryDb:
+    """":memory:" 特殊路径: 真内存库, 不在当前目录落文件."""
+
+    def test_memory_db_creates_no_file(self, tmp_path, monkeypatch):
+        """建库/建表/闭库全程不在 cwd 产生 ":memory:" 文件."""
+        monkeypatch.chdir(tmp_path)
+        store = Storage(":memory:")
+        store.add_course("课程")
+        assert store.list_courses()[0]["name"] == "课程"
+        store.close()
+        assert not (tmp_path / ":memory:").exists()
+        assert not list(tmp_path.iterdir())
+
+
 class TestResource:
     """资源索引行为."""
 
