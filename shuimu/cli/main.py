@@ -57,6 +57,11 @@ from shuimu.plugins.campus.cli import (
     build_campus_subcommands,
     run_campus_command,
 )
+from shuimu.plugins.ai.cli import (
+    AI_COMMANDS,
+    build_ai_subcommands,
+    run_ai_command,
+)
 from shuimu.core.paths import (
     cli_history_path,
     default_db_path,
@@ -126,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     build_campus_subcommands(sub)
     build_learn_subcommands(sub)
     build_cloud_subcommands(sub)
+    build_ai_subcommands(sub)
     return parser
 
 
@@ -436,6 +442,8 @@ def run_command(ctl: Controller, args) -> int:
         return run_learn_command(ctl, args)
     if args.command in CLOUD_COMMANDS:
         return run_cloud_command(ctl, args)
+    if args.command in AI_COMMANDS:
+        return run_ai_command(ctl, args)
     if args.command:
         return _run_schedule_command(ctl, args)
     return 0
