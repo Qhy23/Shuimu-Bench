@@ -83,11 +83,14 @@ class TestAiGate:
         assert not transport.requests
 
     def test_not_installed(self, tmp_path, monkeypatch):
-        """无 ai 插件: 明确提示未安装."""
+        """无 ai 插件(内置/外部都指向空目录): 明确提示未安装."""
         monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
                             lambda: str(tmp_path / "no.yaml"))
         monkeypatch.setattr("shuimu.core.controller.template_links_path",
                             lambda: str(tmp_path / "no.yaml"))
+        monkeypatch.setattr(
+            "shuimu.core.pluginman.builtin_plugins_dir",
+            lambda: str(tmp_path / "no-builtin"))
         storage = Storage(str(tmp_path / "d.db"))
         controller = Controller(
             storage, schedule_path=str(tmp_path / "s.yaml"),

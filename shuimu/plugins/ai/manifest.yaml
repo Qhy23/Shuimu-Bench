@@ -1,0 +1,42 @@
+# 插件清单: network 默认禁用, 启用(经确认)即授权联网
+id: ai
+name: AI 工具
+version: "0.1.0"
+api_version: 1
+description: "OpenAI 兼容接口问答: 勾选课程资料与学堂缓存构建上下文. 兼容智谱/DeepSeek/Kimi/Ollama 等; API Key 仅存本机 data/ 下, 不入留痕."
+entry: plugin
+permissions: [network]
+applies_to: [app]
+params:
+  - name: action
+    type: choice
+    label: 操作
+    required: true
+    default: status
+    choices:
+      - [status, 配置状态]
+      - [ask, 提问]
+      - [history, 历史记录]
+      - [clear, 清除历史]
+  - name: question
+    type: str
+    label: 问题
+    help: action=ask 时必填
+  - name: course_id
+    type: int
+    label: 课程 id
+    help: ask 时把该课程资源纳入上下文; 缺省不附带
+  - name: with_learn
+    type: bool
+    label: 附带学堂缓存
+    default: false
+    help: 纳入关联课程的公告与作业描述
+  - name: api_key
+    type: secret
+    label: API Key
+    help: 仅本次使用不留痕; 缺省用已保存配置(data/ai-config.json)
+  - name: limit
+    type: int
+    label: 历史条数
+    default: 20
+    help: action=history 时使用
