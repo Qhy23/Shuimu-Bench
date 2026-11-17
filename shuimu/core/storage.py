@@ -24,6 +24,13 @@ CREATE TABLE IF NOT EXISTS courses (
   name TEXT NOT NULL UNIQUE,
   created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS folders (
+  id INTEGER PRIMARY KEY,
+  course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS resources (
   id INTEGER PRIMARY KEY,
   course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
@@ -33,6 +40,7 @@ CREATE TABLE IF NOT EXISTS resources (
   size INTEGER,
   mtime REAL,
   added_at REAL NOT NULL,
+  folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
   UNIQUE (course_id, path_or_url)
 );
 CREATE TABLE IF NOT EXISTS operations (
@@ -134,6 +142,15 @@ class Storage:
         # SQLite 默认不启用外键, 必须逐连接打开, 否则 ON DELETE CASCADE 不生效.
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
+        # 旧库迁移: 2026-11-16 前的 resources 无 folder_id (SQLite 的
+        # CREATE TABLE IF NOT EXISTS 不会为旧表补列), 检测后 ALTER 补上
+        columns = {row[1] for row in
+                   self._conn.execute("PRAGMA table_info(resources)")}
+        if "folder_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE resources ADD COLUMN folder_id INTEGER"
+                " REFERENCES folders(id) ON DELETE SET NULL")
+            self._conn.commit()
 
     def close(self) -> None:
         """关闭连接."""
@@ -183,14 +200,108 @@ class Storage:
         self._conn.commit()
         return count
 
+    # ---- 虚拟文件夹 (索引组织层, 不对应磁盘目录) ----
+
+    def add_folder(self, course_id: int, parent_id: int, name: str) -> int:
+        """在 parent_id(None=课程根)下建虚拟文件夹, 同名兄弟拒绝."""
+        if parent_id is not None:
+            parent = self.get_folder(parent_id)
+            if parent is None or parent["course_id"] != course_id:
+                raise ValueError(f"父文件夹不存在或不属于该课程: #{parent_id}")
+        siblings = self.list_folders(course_id)
+        if any(f["name"] == name and f["parent_id"] == parent_id
+               for f in siblings):
+            raise ValueError(f"同名文件夹已存在: {name}")
+        cur = self._conn.execute(
+            "INSERT INTO folders (course_id, parent_id, name, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (course_id, parent_id, name, time.time()))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def list_folders(self, course_id: int) -> list:
+        """课程的全部文件夹, 按创建时间排序."""
+        return self._conn.execute(
+            "SELECT * FROM folders WHERE course_id = ? ORDER BY created_at",
+            (course_id,)).fetchall()
+
+    def get_folder(self, folder_id: int):
+        """按 id 取文件夹行, 无则 None."""
+        return self._conn.execute(
+            "SELECT * FROM folders WHERE id = ?", (folder_id,)).fetchone()
+
+    def folder_rename(self, folder_id: int, name: str) -> None:
+        """文件夹改名(仅索引层)."""
+        self._conn.execute(
+            "UPDATE folders SET name = ? WHERE id = ?", (name, folder_id))
+        self._conn.commit()
+
+    def folder_delete(self, folder_id: int) -> None:
+        """删除空文件夹; 非空抛 ValueError(子项须先移走或级联清掉)."""
+        if self.count_folder_children(folder_id):
+            folder = self.get_folder(folder_id)
+            raise ValueError(f"文件夹非空: {folder['name']}")
+        self._conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+        self._conn.commit()
+
+    def folder_descendants(self, folder_id: int) -> list:
+        """自身及全部子孙文件夹 id 列表(BFS)."""
+        ids, queue = [folder_id], [folder_id]
+        while queue:
+            current = queue.pop(0)
+            for row in self._conn.execute(
+                    "SELECT id FROM folders WHERE parent_id = ?", (current,)):
+                ids.append(row["id"])
+                queue.append(row["id"])
+        return ids
+
+    def count_folder_children(self, folder_id: int) -> int:
+        """直接子文件夹数 + 直接归属资源数."""
+        folders = self._conn.execute(
+            "SELECT COUNT(*) FROM folders WHERE parent_id = ?",
+            (folder_id,)).fetchone()[0]
+        resources = self._conn.execute(
+            "SELECT COUNT(*) FROM resources WHERE folder_id = ?",
+            (folder_id,)).fetchone()[0]
+        return folders + resources
+
+    def folder_set_parent(self, folder_id: int, parent_id) -> None:
+        """移动文件夹到另一父文件夹(None=课程根)."""
+        self._conn.execute(
+            "UPDATE folders SET parent_id = ? WHERE id = ?",
+            (parent_id, folder_id))
+        self._conn.commit()
+
+    def folder_delete_tree(self, folder_id: int) -> None:
+        """删除文件夹行, 子文件夹经外键级联(调用方应已清掉其中资源行)."""
+        self._conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+        self._conn.commit()
+
+    def remove_resources_in_folders(self, folder_ids: list) -> int:
+        """删除归属这些文件夹的全部索引行(磁盘不动), 返回删除行数."""
+        if not folder_ids:
+            return 0
+        marks = ",".join("?" * len(folder_ids))
+        cur = self._conn.execute(
+            f"DELETE FROM resources WHERE folder_id IN ({marks})", folder_ids)
+        self._conn.commit()
+        return cur.rowcount
+
+    def set_resource_folder(self, resource_id: int, folder_id) -> None:
+        """把索引条目移入文件夹(None=课程根)."""
+        self._conn.execute(
+            "UPDATE resources SET folder_id = ? WHERE id = ?",
+            (folder_id, resource_id))
+        self._conn.commit()
+
     # ---- 资源 ----
 
     def add_resource(self, course_id: int, kind: str, path_or_url: str,
-                     display_name: str = None) -> int:
+                     display_name: str = None, folder_id: int = None) -> int:
         """把文件/目录/链接登记进课程. 文件类资源统一存绝对路径并记录 size+mtime.
 
         display_name 缺省时: 文件/目录取 basename, 链接取完整 URL; 云盘等
-        场景可显式传入显示名.
+        场景可显式传入显示名. folder_id 为归属虚拟文件夹(None=课程根).
         """
         if kind != "link":
             path_or_url = os.path.abspath(path_or_url)
@@ -205,8 +316,9 @@ class Storage:
                 if kind != "link" else path_or_url
         cur = self._conn.execute(
             "INSERT INTO resources (course_id, kind, path_or_url, display_name,"
-            " size, mtime, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (course_id, kind, path_or_url, name, size, mtime, time.time()),
+            " size, mtime, added_at, folder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (course_id, kind, path_or_url, name, size, mtime, time.time(),
+             folder_id),
         )
         self._conn.commit()
         return cur.lastrowid

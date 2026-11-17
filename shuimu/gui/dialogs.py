@@ -3,6 +3,7 @@
 import os
 import time
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -11,6 +12,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
 )
 
@@ -150,6 +153,47 @@ def format_operation_line(op) -> str:
     if op["detail"]:
         parts.append(str(op["detail"]))
     return " ".join(parts)
+
+
+class FolderPickerDialog(QDialog):
+    """选择目标虚拟文件夹(含课程根), 用于索引条目/文件夹的"移动到".
+
+    folders 为课程的文件夹行(含 id/parent_id/name), 按父子关系建树;
+    exclude_ids 中的节点置灰不可选(移动文件夹时排除自身与子孙).
+    """
+
+    def __init__(self, folders: list, course_name: str, parent=None,
+                 exclude_ids: set = None):
+        super().__init__(parent)
+        self.setWindowTitle("移动到文件夹")
+        self.resize(320, 380)
+        layout = QVBoxLayout(self)
+        self.tree = QTreeWidget(self)
+        self.tree.setHeaderHidden(True)
+        layout.addWidget(self.tree)
+        root = QTreeWidgetItem(self.tree, [f"{course_name} (课程根)"])
+        root.setData(0, Qt.ItemDataRole.UserRole, None)
+        nodes = {None: root}
+        pending = list(folders)
+        while pending:            # 父先于子插入, 孤儿行最终忽略
+            for row in list(pending):
+                if row["parent_id"] in nodes:
+                    item = QTreeWidgetItem(nodes[row["parent_id"]], [row["name"]])
+                    item.setData(0, Qt.ItemDataRole.UserRole, row["id"])
+                    if exclude_ids and row["id"] in exclude_ids:
+                        item.setDisabled(True)
+                    nodes[row["id"]] = item
+                    pending.remove(row)
+        self.tree.expandAll()
+        self.tree.setCurrentItem(root)
+        layout.addWidget(ok_cancel_box(self, self.accept))
+
+    def selected_folder_id(self):
+        """当前选中文件夹 id, 课程根返回 None."""
+        item = self.tree.currentItem()
+        if item is None or not item.flags() & Qt.ItemFlag.ItemIsEnabled:
+            return None
+        return item.data(0, Qt.ItemDataRole.UserRole)
 
 
 class LogPreviewDialog(QDialog):

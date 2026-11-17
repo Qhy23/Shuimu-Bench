@@ -1,11 +1,7 @@
-"""左栏课程树文件操作测试: 右键菜单语义 + 两栏剪贴板互通 + 粘贴自动登记."""
+"""左栏索引操作测试: 菜单形态, 新建/重命名/删除文件夹, 移动到, 登记落点."""
 
-from copy import deepcopy
-
-import pytest
 from PySide6.QtWidgets import QMessageBox
 
-from shuimu.core.config import DEFAULTS
 from shuimu.core.storage import Storage
 from shuimu.gui.main_window import MainWindow
 
@@ -27,47 +23,75 @@ class _FakeInput:
 
 
 class _FakeBox:
-    """替代 QMessageBox 的假件(question 返回构造时指定按钮)."""
+    """替代 QMessageBox 模块引用: 类形态同时服务静态 question 与实例构造.
 
+    click_mode 控制非空文件夹弹框的点击: "remove"=第一个按钮,
+    None=取消; question_answer 控制确认框返回值.
+    """
+
+    # pylint: disable=invalid-name
     StandardButton = QMessageBox.StandardButton
+    Icon = QMessageBox.Icon
+    ButtonRole = QMessageBox.ButtonRole
+    question_answer = QMessageBox.StandardButton.Yes
+    click_mode = None
 
-    def __init__(self, answer):
-        """记录希望 question 返回的按钮."""
-        self._answer = answer
+    def __init__(self, *_a, **_k):
+        """记录弹框按钮."""
+        self._buttons = []
 
-    def question(self, *_args, **_kwargs):
-        """返回构造时指定的按钮, 忽略全部参数."""
-        return self._answer
+    @staticmethod
+    def question(*_a, **_k):
+        """静态确认框: 返回类属性指定的按钮."""
+        return _FakeBox.question_answer
+
+    def setWindowTitle(self, _t):
+        """忽略标题."""
+    def setIcon(self, _i):
+        """忽略图标."""
+    def setText(self, _t):
+        """忽略正文."""
+    def setInformativeText(self, _t):
+        """忽略说明文字."""
+
+    def addButton(self, text, _role):
+        """登记并返回按钮占位."""
+        button = (text,)
+        self._buttons.append(button)
+        return button
+
+    def button(self, _sb):
+        """无标准按钮."""
+        return None
+
+    def setDefaultButton(self, _b):
+        """忽略默认按钮."""
+
+    def exec(self):
+        """立即返回(点击由 click_mode 决定)."""
+        return 0
+
+    def clickedButton(self):
+        """按 click_mode 返回被点击按钮, 取消时 None."""
+        if _FakeBox.click_mode == "remove" and self._buttons:
+            return self._buttons[0]
+        return None
 
 
-@pytest.fixture()
-def env(tmp_path, monkeypatch, qtbot):
-    """主窗口 + 隔离回收站目录(默认课程"未分组"可用)."""
-    cfg = deepcopy(DEFAULTS)
-    cfg["fileops"]["trash_dir"] = str(tmp_path / "trash")
-    monkeypatch.setattr("shuimu.core.controller.load_config",
-                        lambda: deepcopy(cfg))
-    storage = Storage(str(tmp_path / "ops.db"))
-    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
-                        links_path=str(tmp_path / "l.yaml"))
-    qtbot.addWidget(window)
-    yield window, storage, tmp_path
-    storage.close()
+class _FakePicker:
+    """替代 FolderPickerDialog: exec 返回 True, 选中指定文件夹."""
 
+    def __init__(self, selected):
+        """记录选中的文件夹 id."""
+        self._selected = selected
 
-def _setup_course(window, storage, tmp_path):
-    """两文件同目录(虚拟节点 ws)+ 一链接; 返回 (课程id, 虚拟ws节点)."""
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "a.txt").write_text("a")
-    (ws / "b.txt").write_text("b")
-    cid = storage.list_courses()[0]["id"]
-    window.ctl.add_resource(cid, str(ws / "a.txt"))
-    window.ctl.add_resource(cid, str(ws / "b.txt"))
-    window.ctl.add_resource(cid, "https://example.com/")
-    window.reload_courses()
-    course = window.course_tree.topLevelItem(0)
-    return cid, course.child(0)      # child(0) = 虚拟 ws, child(1) = 链接
+    def exec(self):
+        """直接视为确认."""
+        return True
+
+    def selected_folder_id(self):
+        """返回构造时指定的文件夹 id."""
+        return self._selected
 
 
 def _texts(menu):
@@ -75,158 +99,186 @@ def _texts(menu):
     return [act.text() for act in menu.actions()]
 
 
-class TestCourseMenu:
+def _setup(qtbot, tmp_path):
+    """课件/第1周 两级文件夹 + 文件与链接各一条入库, 返回全套引用."""
+    storage = Storage(str(tmp_path / "ops.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
+                        links_path=str(tmp_path / "l.yaml"))
+    qtbot.addWidget(window)
+    cid = storage.ensure_default_course()
+    f1 = storage.add_folder(cid, None, "课件")
+    f2 = storage.add_folder(cid, f1, "第1周")
+    f = tmp_path / "a.txt"
+    f.write_text("x")
+    rid = storage.add_resource(cid, "file", str(f), folder_id=f2)
+    storage.add_resource(cid, "link", "https://example.com/", folder_id=f1)
+    window.reload_courses()
+    course = window.course_tree.topLevelItem(0)
+    return window, storage, cid, f1, f2, rid, course
+
+
+class TestMenus:
     """菜单形态随节点类型变化."""
 
-    def test_menu_on_file_node(self, env):
-        """文件节点: 打开/复制/剪切/重命名/删除, 无粘贴与新建."""
-        window, _storage, tmp_path = env
-        _cid, ws_node = _setup_course(window, _storage, tmp_path)
-        menu = window._build_course_menu(ws_node.child(0))
-        assert "打开" in _texts(menu)
-        assert "复制" in _texts(menu) and "删除" in _texts(menu)
-        assert "粘贴" not in _texts(menu)
+    def test_menu_on_course_folder_file_link(self, qtbot, tmp_path):
+        """四类节点菜单条目各按设计."""
+        window, _s, _c, _f1, _f2, _rid, course = _setup(qtbot, tmp_path)
+        assert _texts(window._build_course_menu(course)) \
+            == ["新建目录", "添加链接", "", "删除课程"]
+        folder_node = course.child(0)
+        assert _texts(window._build_course_menu(folder_node))[:2] \
+            == ["新建子目录", ""]
+        file_node = folder_node.child(0).child(0)
+        assert _texts(window._build_course_menu(file_node)) \
+            == ["打开", "在中栏定位", "", "移动到...", "移除索引"]
+        link_node = folder_node.child(1)
+        assert _texts(window._build_course_menu(link_node)) \
+            == ["打开", "", "移动到...", "移除索引"]
+        assert _texts(window._build_course_menu(None)) == []
+        _s.close()
 
-    def test_menu_on_dir_node(self, env):
-        """虚拟目录节点: 定位/粘贴/新建文件夹; 非登记无"移除资源"."""
-        window, _storage, tmp_path = env
-        _cid, ws_node = _setup_course(window, _storage, tmp_path)
-        texts = _texts(window._build_course_menu(ws_node))
-        assert "粘贴" in texts and "新建文件夹" in texts
-        assert "在中栏定位" in texts and "移除资源" not in texts
-
-    def test_menu_on_link_node(self, env):
-        """链接节点只开放与移除, 无文件操作."""
-        window, _storage, tmp_path = env
-        _cid, ws_node = _setup_course(window, _storage, tmp_path)
-        link_menu = _texts(window._build_course_menu(ws_node.parent().child(1)))
-        assert "打开" in link_menu and "移除资源" in link_menu
-        assert "复制" not in link_menu
-
-    def test_menu_on_course_and_blank(self, env):
-        """课程节点与空白处只保留撤销."""
-        window, _storage, tmp_path = env
-        _setup_course(window, _storage, tmp_path)
-        course = window.course_tree.topLevelItem(0)
-        assert _texts(window._build_course_menu(course)) == ["撤销"]
-        assert _texts(window._build_course_menu(None)) == ["撤销"]
-
-    def test_shortcuts_registered(self, env):
-        """六个快捷键挂在课程树上, 与文件页同键位."""
-        window, _storage, _tmp = env
+    def test_shortcuts_registered(self, qtbot, tmp_path):
+        """仅 F2/Del 两个快捷键(索引操作, 无文件操作键)."""
+        window, _s, *_ = _setup(qtbot, tmp_path)
         acts = {act.shortcut().toString()
                 for act in window.course_tree.actions()
                 if not act.shortcut().isEmpty()}
-        assert acts == {"Ctrl+C", "Ctrl+X", "Ctrl+V", "Del", "F2", "Ctrl+Z"}
+        assert acts == {"F2", "Del"}
+        _s.close()
 
 
-class TestClipboardShared:
-    """两栏剪贴板互通."""
+class TestFolderOps:
+    """文件夹新建/重命名/删除."""
 
-    def test_file_page_shares_app_clipboard(self, env):
-        """文件页持引用即主窗口的应用剪贴板."""
-        window, _storage, _tmp = env
-        assert window.file_page._clipboard is window._app_clipboard
-
-    def test_tree_copy_visible_to_file_page(self, env):
-        """左栏复制后文件页立即可见(同一对象)."""
-        window, storage, tmp_path = env
-        _cid, ws_node = _setup_course(window, storage, tmp_path)
-        window.course_tree.setCurrentItem(ws_node.child(0))
-        window._course_copy()
-        assert window.file_page._clipboard["mode"] == "copy"
-        assert window.file_page._clipboard["paths"] \
-            == [str(tmp_path / "ws" / "a.txt")]
-
-    def test_copy_ignores_links_with_hint(self, env):
-        """只选链接时提示无可操作项."""
-        window, storage, tmp_path = env
-        _cid, ws_node = _setup_course(window, storage, tmp_path)
-        link = ws_node.parent().child(1)
-        window.course_tree.setCurrentItem(link)
-        window._course_copy()
-        assert window.statusBar().currentMessage() == "请先选中文件或目录"
-
-
-class TestPasteAndOps:
-    """粘贴自动登记与各操作槽."""
-
-    def test_paste_auto_registers(self, env):
-        """贴入目录节点后新文件自动登记进该课程."""
-        window, storage, tmp_path = env
-        cid, ws_node = _setup_course(window, storage, tmp_path)
-        other = tmp_path / "other"
-        other.mkdir()
-        (other / "x.txt").write_text("new")
-        window._app_clipboard.update(mode="copy", paths=[str(other / "x.txt")])
-        window.course_tree.setCurrentItem(ws_node)
-        window._course_paste()
-        dst = tmp_path / "ws" / "x.txt"
-        assert dst.exists()
-        assert storage.find_resource(cid, str(dst)) is not None
-        assert "已登记 1 项" in window.statusBar().currentMessage()
-
-    def test_paste_conflict_replace(self, env, monkeypatch):
-        """同名冲突选覆盖: 旧文件入回收站, 新文件登记."""
-        window, storage, tmp_path = env
-        cid, ws_node = _setup_course(window, storage, tmp_path)
-        other = tmp_path / "other"
-        other.mkdir()
-        (other / "a.txt").write_text("new")
-        monkeypatch.setattr("shuimu.gui.dialogs.ask_conflict",
-                            lambda _n, _r, _parent: ("replace", False))
-        window._app_clipboard.update(mode="copy", paths=[str(other / "a.txt")])
-        window.course_tree.setCurrentItem(ws_node)
-        window._course_paste()
-        dst = tmp_path / "ws" / "a.txt"
-        assert dst.read_text() == "new"
-        assert storage.find_resource(cid, str(dst)) is not None
-
-    def test_paste_without_dir_hint(self, env):
-        """选中文件节点粘贴时提示需要目录节点."""
-        window, _storage, tmp_path = env
-        _cid, ws_node = _setup_course(window, _storage, tmp_path)
-        window._app_clipboard.update(mode="copy", paths=["/tmp/whatever"])
-        window.course_tree.setCurrentItem(ws_node.child(0))
-        window._course_paste()
-        assert "目录节点" in window.statusBar().currentMessage()
-
-    def test_delete_then_undo_restores_index(self, env, monkeypatch):
-        """删除走回收站并移除索引行, 撤销两者俱恢复."""
-        window, storage, tmp_path = env
-        cid, ws_node = _setup_course(window, storage, tmp_path)
-        target = tmp_path / "ws" / "a.txt"
-        window.course_tree.setCurrentItem(ws_node.child(0))
-        monkeypatch.setattr("shuimu.gui.main_window.QMessageBox",
-                            _FakeBox(QMessageBox.StandardButton.Yes))
-        window._course_delete()
-        assert not target.exists()
-        assert storage.find_resource(cid, str(target)) is None
-        window._course_undo()
-        assert target.exists()
-        assert storage.find_resource(cid, str(target)) is not None
-
-    def test_rename_via_slot_syncs_index(self, env, monkeypatch):
-        """左栏重命名后索引路径同步."""
-        window, storage, tmp_path = env
-        cid, ws_node = _setup_course(window, storage, tmp_path)
-        old = tmp_path / "ws" / "a.txt"
-        window.course_tree.setCurrentItem(ws_node.child(0))
+    def test_folder_create_under_selection(self, qtbot, tmp_path, monkeypatch):
+        """选中文件夹内新建子目录, 父链展开可见."""
+        window, storage, cid, f1, _f2, _rid, _course = _setup(qtbot, tmp_path)
+        window.course_tree.setCurrentItem(
+            window.course_tree.topLevelItem(0).child(0))
         monkeypatch.setattr("shuimu.gui.main_window.QInputDialog",
-                            _FakeInput("c.txt"))
-        window._course_rename()
-        new = tmp_path / "ws" / "c.txt"
-        assert new.exists() and not old.exists()
-        assert storage.find_resource(cid, str(new)) is not None
+                            _FakeInput("作业"))
+        window._folder_create()
+        sub = next(row for row in storage.list_folders(cid)
+                   if row["name"] == "作业")
+        assert sub["parent_id"] == f1
+        course = window.course_tree.topLevelItem(0)   # 重建后重取节点
+        folder_node = course.child(0)
+        assert folder_node.text(0) == "课件"
+        assert folder_node.isExpanded()               # 父链已展开
+        storage.close()
 
-    def test_mkdir_registers_into_course(self, env, monkeypatch):
-        """目录节点下新建文件夹自动登记."""
-        window, storage, tmp_path = env
-        cid, ws_node = _setup_course(window, storage, tmp_path)
-        window.course_tree.setCurrentItem(ws_node)
+    def test_rename_folder_only(self, qtbot, tmp_path, monkeypatch):
+        """F2 重命名文件夹; 索引条目上 F2 给提示."""
+        window, storage, _cid, _f1, _f2, _rid, _course = _setup(qtbot, tmp_path)
+        window.course_tree.setCurrentItem(
+            window.course_tree.topLevelItem(0).child(0))
         monkeypatch.setattr("shuimu.gui.main_window.QInputDialog",
-                            _FakeInput("新目录"))
-        window._course_mkdir()
-        created = tmp_path / "ws" / "新目录"
-        assert created.is_dir()
-        assert storage.find_resource(cid, str(created)) is not None
+                            _FakeInput("讲义"))
+        window._rename_current()
+        names = {row["name"] for row in storage.list_folders(
+            storage.ensure_default_course())}
+        assert "讲义" in names and "课件" not in names
+        # 索引条目上重命名给提示
+        course = window.course_tree.topLevelItem(0)
+        window.course_tree.setCurrentItem(course.child(0).child(0).child(0))
+        window._rename_current()
+        assert "文件夹" in window.statusBar().currentMessage()
+        storage.close()
+
+    def test_delete_empty_folder(self, qtbot, tmp_path, monkeypatch):
+        """空文件夹删除走确认."""
+        window, storage, cid, *_ = _setup(qtbot, tmp_path)
+        f3 = storage.add_folder(cid, None, "临时")
+        window.reload_courses()
+        course = window.course_tree.topLevelItem(0)
+        empty = next(course.child(i) for i in range(course.childCount())
+                     if course.child(i).text(0) == "临时")
+        window.course_tree.setCurrentItem(empty)
+        monkeypatch.setattr("shuimu.gui.main_window.QMessageBox", _FakeBox)
+        window._delete_current()
+        assert storage.get_folder(f3) is None
+        storage.close()
+
+    def test_delete_nonempty_cascade_and_cancel(self, qtbot, tmp_path,
+                                                monkeypatch):
+        """非空弹框: 一键全部移除并删除(仅索引); 取消则原样保留."""
+        window, storage, _cid, f1, _f2, rid, _course = _setup(qtbot, tmp_path)
+        monkeypatch.setattr("shuimu.gui.main_window.QMessageBox", _FakeBox)
+        window.course_tree.setCurrentItem(
+            window.course_tree.topLevelItem(0).child(0))
+        _FakeBox.click_mode = None                     # 取消分支
+        window._delete_current()
+        assert storage.get_folder(f1) is not None
+        assert storage.get_resource(rid) is not None
+        _FakeBox.click_mode = "remove"                 # 全部移除并删除
+        window._delete_current()
+        assert storage.get_folder(f1) is None
+        assert storage.get_resource(rid) is None
+        assert (tmp_path / "a.txt").exists()           # 磁盘不动
+        _FakeBox.click_mode = None
+        storage.close()
+
+
+class TestMoveAndRegister:
+    """移动到与登记落点."""
+
+    def test_move_resource_via_picker(self, qtbot, tmp_path, monkeypatch):
+        """索引条目经选择框移动到目标文件夹."""
+        window, storage, _cid, f1, _f2, rid, course = _setup(qtbot, tmp_path)
+        file_node = course.child(0).child(0).child(0)
+        window.course_tree.setCurrentItem(file_node)
+        monkeypatch.setattr("shuimu.gui.main_window.dialogs.FolderPickerDialog",
+                            lambda *a, **k: _FakePicker(f1))
+        window._move_current()
+        assert storage.get_resource(rid)["folder_id"] == f1
+        storage.close()
+
+    def test_move_folder_excludes_descendants(self, qtbot, tmp_path,
+                                              monkeypatch):
+        """移动文件夹时选择框排除自身与子孙(排除集传入)."""
+        window, storage, _cid, f1, f2, _rid, course = _setup(qtbot, tmp_path)
+        seen = {}
+
+        def fake_picker(_folders, _name, _parent=None, exclude_ids=None):
+            seen["exclude"] = exclude_ids
+            return _FakePicker(None)
+
+        monkeypatch.setattr(
+            "shuimu.gui.main_window.dialogs.FolderPickerDialog", fake_picker)
+        window.course_tree.setCurrentItem(course.child(0).child(0))  # 第1周
+        window._move_current()
+        assert seen["exclude"] == {f2}                # 只排除自身与子孙
+        assert storage.get_folder(f2)["parent_id"] is None
+        assert storage.get_folder(f1) is not None
+        storage.close()
+
+    def test_register_lands_in_selected_folder(self, qtbot, tmp_path):
+        """中栏登记落点跟随左栏选中的文件夹."""
+        window, storage, _cid, f1, _f2, _rid, course = _setup(qtbot, tmp_path)
+        window.course_tree.setCurrentItem(course.child(0))
+        new_file = tmp_path / "b.txt"
+        new_file.write_text("y")
+        window._on_add_requested(str(new_file))
+        row = storage.find_resource(storage.ensure_default_course(),
+                                    str(new_file))
+        assert row is not None and row["folder_id"] == f1
+        # 选中的不是文件夹(课程节点)时落课程根
+        window.course_tree.setCurrentItem(
+            window.course_tree.topLevelItem(0))
+        third = tmp_path / "c.txt"
+        third.write_text("z")
+        window._on_add_requested(str(third))
+        row = storage.find_resource(storage.ensure_default_course(), str(third))
+        assert row is not None and row["folder_id"] is None
+        storage.close()
+
+    def test_remove_index(self, qtbot, tmp_path, monkeypatch):
+        """移除索引走确认, 只动索引行."""
+        window, storage, _cid, _f1, _f2, rid, course = _setup(qtbot, tmp_path)
+        file_node = course.child(0).child(0).child(0)
+        window.course_tree.setCurrentItem(file_node)
+        monkeypatch.setattr("shuimu.gui.main_window.QMessageBox", _FakeBox())
+        window._remove_selected()
+        assert storage.get_resource(rid) is None
+        assert (tmp_path / "a.txt").exists()
+        storage.close()

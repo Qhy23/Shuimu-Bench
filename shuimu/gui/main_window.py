@@ -17,7 +17,6 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QFileDialog,
     QHBoxLayout,
@@ -58,7 +57,7 @@ from shuimu.gui.titlebar import TitleBar
 
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1
-ROLE_DIR_PATH = Qt.UserRole + 2
+ROLE_FOLDER_ID = Qt.UserRole + 2
 
 
 def tree_icon_size() -> int:
@@ -93,60 +92,6 @@ def _open_url(url: str) -> bool:
 # 打开, 未来浏览器插件可注册内嵌方式与之并存(见 core/url_open.py).
 # _wslview_open 为 core 实现的模块内别名(WSL 分发与测试替换入口).
 url_open.set_default(_open_url)
-
-
-def _display_forest(resources: list) -> list:
-    """课程资源 -> 显示树节点列表(纯数据, 无 Qt, 便于单测).
-
-    文件/目录资源按绝对路径组件嵌套, 连续单子虚拟目录折叠为最深节点;
-    链接无层级, 随加入顺序平铺。节点形如 {"kind": "dir"|"resource",
-    "path": 完整路径|None, "resource": 资源行|None, "children": [...]};
-    输出保持资源加入顺序, 文件/目录的顶层组在其首个资源出现处整组发射.
-    """
-    root = {"resource": None, "children": {}}
-    for res in resources:
-        if res["kind"] == "link":
-            continue
-        node = root
-        for part in res["path_or_url"].split("/")[1:]:
-            node = node["children"].setdefault(
-                part, {"resource": None, "children": {}})
-        node["resource"] = res
-    out: list = []
-    emitted: set = set()
-    for res in resources:
-        if res["kind"] == "link":
-            out.append({"kind": "resource", "path": None,
-                        "resource": res, "children": []})
-            continue
-        parts = res["path_or_url"].split("/")[1:]
-        if not parts:  # 根目录本身被登记的病态情况: 不参与分组
-            if "root" not in emitted:
-                emitted.add("root")
-                out.append({"kind": "resource", "path": None,
-                            "resource": res, "children": []})
-            continue
-        if parts[0] in emitted:
-            continue
-        emitted.add(parts[0])
-        out.append(_emit_group(root["children"][parts[0]], ["", parts[0]]))
-    return out
-
-
-def _emit_group(node: dict, path: list) -> dict:
-    """从 trie 节点发射显示子树: 先折叠单链, 虚拟节点记录完整路径."""
-    while node["resource"] is None and len(node["children"]) == 1:
-        name, node = next(iter(node["children"].items()))
-        path = path + [name]
-    base = (path if node["resource"] is None
-            else node["resource"]["path_or_url"].split("/"))
-    children = [_emit_group(child, base + [name])
-                for name, child in node["children"].items()]
-    if node["resource"] is None:
-        return {"kind": "dir", "path": "/".join(path),
-                "resource": None, "children": children}
-    return {"kind": "resource", "path": None,
-            "resource": node["resource"], "children": children}
 
 
 class MainWindow(QMainWindow):
@@ -272,9 +217,7 @@ class MainWindow(QMainWindow):
             lambda item: self._remember_tree_state(item, True))
         self.course_tree.itemCollapsed.connect(
             lambda item: self._remember_tree_state(item, False))
-        # 文件管理器化: 多选 + 右键菜单 + 快捷键(与中栏文件页同款语义)
-        self.course_tree.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection)
+        # 索引管理: 右键菜单 + 快捷键(仅索引层操作, 不动磁盘)
         self.course_tree.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
         self.course_tree.customContextMenuRequested.connect(
@@ -282,6 +225,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.course_tree)
         row = QHBoxLayout()
         row.addWidget(_button("新建课程", self._add_course))
+        row.addWidget(_button("新建目录", self._folder_create))
         row.addWidget(_button("添加链接", self._add_link))
         layout.addLayout(row)
         row2 = QHBoxLayout()
@@ -408,12 +352,12 @@ class MainWindow(QMainWindow):
         return self.file_page.set_workspace_root(path)
 
     def _on_add_requested(self, path: str) -> None:
-        """文件页请求把选中项登记进当前课程."""
-        course_id = self._current_course_id()
+        """文件页请求把选中项登记进当前课程(落点跟随左栏选中文件夹)."""
+        course_id, folder_id = self._current_target_folder()
         if course_id is None:
             self.statusBar().showMessage("请先在左栏选中一门课程")
             return
-        result = self.ctl.add_resource(course_id, path)
+        result = self.ctl.add_resource(course_id, path, folder_id=folder_id)
         self.statusBar().showMessage(result.message)
         if result.ok:
             self.reload_courses()
@@ -480,7 +424,7 @@ class MainWindow(QMainWindow):
     # ---- 左栏: 课程与资源索引 ----
 
     def reload_courses(self) -> None:
-        """从索引重建课程树: 资源按目录层级嵌套, 失效标灰, 展开状态记忆."""
+        """从索引重建课程树: 虚拟文件夹在前 + 索引条目在后, 展开状态记忆."""
         self.course_tree.clear()
         for course in self.storage.list_courses():
             node = QTreeWidgetItem(self.course_tree, [course["name"]])
@@ -488,24 +432,35 @@ class MainWindow(QMainWindow):
             node.setToolTip(0, f"课程: {course['name']}")
             node.setIcon(0, QIcon(artwork.kind_icon(
                 "course", size=tree_icon_size())))
-            for dnode in _display_forest(self.storage.list_resources(course["id"])):
-                self._append_tree_node(node, dnode, course["id"])
+            self._fill_course_node(
+                node,
+                self.storage.list_folders(course["id"]),
+                self.storage.list_resources(course["id"]))
             node.setExpanded(self._tree_expanded.get(
                 ("course", course["id"]), False))
 
-    def _append_tree_node(self, parent_item, dnode: dict,
-                          course_id: int) -> None:
-        """把显示树节点挂为 Qt 项: 虚拟目录或资源两态."""
-        if dnode["kind"] == "dir":
-            item = QTreeWidgetItem(parent_item,
-                                   [os.path.basename(dnode["path"])])
-            item.setData(0, ROLE_DIR_PATH, dnode["path"])
-            item.setToolTip(0, dnode["path"])
-            item.setIcon(0, QIcon(artwork.kind_icon(
-                "dir", size=tree_icon_size())))
-            key = ("dir", course_id, dnode["path"])
-        else:
-            res = dnode["resource"]
+    def _fill_course_node(self, course_node,
+                          folders: list, resources: list) -> None:
+        """课程节点下组装层级: 文件夹递归在前(创建序), 索引条目在后(加入序)."""
+        nodes = {None: course_node}
+        by_parent: dict = {}
+        for folder in folders:
+            by_parent.setdefault(folder["parent_id"], []).append(folder)
+
+        def build(parent_id, parent_item):
+            for folder in by_parent.get(parent_id, []):
+                item = QTreeWidgetItem(parent_item, [folder["name"]])
+                item.setData(0, ROLE_FOLDER_ID, folder["id"])
+                item.setToolTip(0, f"文件夹: {folder['name']}")
+                item.setIcon(0, QIcon(artwork.kind_icon(
+                    "dir", size=tree_icon_size())))
+                item.setExpanded(self._tree_expanded.get(
+                    ("folder", folder["id"]), False))
+                nodes[folder["id"]] = item
+                build(folder["id"], item)
+
+        build(None, course_node)
+        for res in resources:
             exists, changed = Storage.check_resource(res)
             label = res["display_name"]
             if res["kind"] == "link":
@@ -514,7 +469,9 @@ class MainWindow(QMainWindow):
                 label += " (失效)"
             elif changed:
                 label += " (已变更)"
-            item = QTreeWidgetItem(parent_item, [label])
+            # 归属文件夹行缺失(理论上仅外键兜底时)回落课程根
+            item = QTreeWidgetItem(nodes.get(res["folder_id"], course_node),
+                                   [label])
             item.setData(0, ROLE_RESOURCE_ID, res["id"])
             item.setToolTip(0, res["path_or_url"])
             item.setIcon(0, QIcon(artwork.kind_icon(
@@ -522,28 +479,20 @@ class MainWindow(QMainWindow):
                 size=tree_icon_size())))
             if not exists:
                 item.setForeground(0, QBrush(Qt.GlobalColor.gray))
-            key = ("res", res["id"])
-        item.setExpanded(self._tree_expanded.get(key, False))
-        for child in dnode["children"]:
-            self._append_tree_node(item, child, course_id)
 
     @staticmethod
     def _tree_state_key(item) -> tuple:
-        """树项 -> 展开状态记忆键(课程/资源/虚拟目录三类)."""
+        """树项 -> 展开状态记忆键(课程/文件夹/资源三类)."""
         course_id = item.data(0, ROLE_COURSE_ID)
         if course_id is not None:
             return ("course", course_id)
+        fid = item.data(0, ROLE_FOLDER_ID)
+        if fid is not None:
+            return ("folder", fid)
         rid = item.data(0, ROLE_RESOURCE_ID)
         if rid is not None:
             return ("res", rid)
-        path = item.data(0, ROLE_DIR_PATH)
-        if path is None:
-            return None
-        parent = item.parent()
-        while parent is not None and parent.data(0, ROLE_COURSE_ID) is None:
-            parent = parent.parent()
-        course_id = parent.data(0, ROLE_COURSE_ID) if parent else None
-        return ("dir", course_id, path)
+        return None
 
     def _remember_tree_state(self, item, expanded: bool) -> None:
         """记录用户展开/收起的节点, 重建树后恢复."""
@@ -551,10 +500,10 @@ class MainWindow(QMainWindow):
         if key is not None:
             self._tree_expanded[key] = expanded
 
-    # ---- 左栏: 课程树文件操作 (与中栏文件页同款语义) ----
+    # ---- 左栏: 索引管理操作 (仅索引层, 不动磁盘文件) ----
 
     def _build_course_actions(self) -> None:
-        """创建课程树操作 QAction(快捷键仅焦点在树内时生效, 对齐文件页)."""
+        """创建课程树操作 QAction(快捷键仅焦点在树内时生效)."""
 
         def make(text: str, slot, key: str = None) -> QAction:
             act = QAction(text, self.course_tree)
@@ -565,95 +514,53 @@ class MainWindow(QMainWindow):
             self.course_tree.addAction(act)
             return act
 
-        self.course_act_copy = make("复制", self._course_copy, "Ctrl+C")
-        self.course_act_cut = make("剪切", self._course_cut, "Ctrl+X")
-        self.course_act_paste = make("粘贴", self._course_paste, "Ctrl+V")
-        self.course_act_delete = make("删除", self._course_delete, "Delete")
-        self.course_act_rename = make("重命名", self._course_rename, "F2")
-        self.course_act_mkdir = make("新建文件夹", self._course_mkdir)
-        self.course_act_undo = make("撤销", self._course_undo, "Ctrl+Z")
+        self.course_act_rename = make("重命名", self._rename_current, "F2")
+        self.course_act_delete = make("删除", self._delete_current, "Delete")
 
     def _show_course_menu(self, pos) -> None:
-        """右键课程树: 右键项不在选中集内时先切换选中(对齐文件页语义)."""
+        """右键课程树: 右键项切换为当前选中后按节点类型弹菜单."""
         item = self.course_tree.itemAt(pos)
-        if item is not None and item not in self.course_tree.selectedItems():
+        if item is not None:
             self.course_tree.setCurrentItem(item)
-        self._build_course_menu(item).exec(
-            self.course_tree.viewport().mapToGlobal(pos))
+        menu = self._build_course_menu(item)
+        if menu.actions():
+            menu.exec(self.course_tree.viewport().mapToGlobal(pos))
 
     def _build_course_menu(self, item) -> QMenu:
         """构造右键菜单(与弹出分离, 便于测试).
 
-        链接节点只开放/移除; 文件/目录节点给全套文件操作; 目录节点
-        追加粘贴与新建文件夹; 课程节点与空白处只保留撤销.
+        课程: 新建目录/添加链接/删除课程; 文件夹: 新建子目录/重命名/
+        移动到/删除; 文件·目录索引: 打开/定位/移动到/移除索引;
+        链接: 打开/移动到/移除索引. 空白处不弹菜单.
         """
         menu = QMenu(self.course_tree)
-        if item is None or item.data(0, ROLE_COURSE_ID) is not None:
-            menu.addAction(self.course_act_undo)
+        if item is None:
             return menu
-        path = self._tree_node_path(item)
-        is_link = item.data(0, ROLE_RESOURCE_ID) is not None and path is None
-        is_dir = self._tree_node_is_dir(item)
-        if is_link:
-            menu.addAction("打开", lambda: self._on_resource_activated(item, 0))
-            menu.addAction("移除资源", self._remove_selected)
-        else:
-            menu.addAction("在中栏定位" if is_dir else "打开",
-                           lambda: self._on_resource_activated(item, 0))
-            if item.data(0, ROLE_RESOURCE_ID) is not None:
-                menu.addAction("移除资源", self._remove_selected)
+        if item.data(0, ROLE_COURSE_ID) is not None:
+            menu.addAction("新建目录", self._folder_create)
+            menu.addAction("添加链接", self._add_link)
             menu.addSeparator()
-            menu.addAction(self.course_act_copy)
-            menu.addAction(self.course_act_cut)
-            if is_dir:
-                menu.addAction(self.course_act_paste)
+            menu.addAction("删除课程", self._delete_course)
+            return menu
+        if item.data(0, ROLE_FOLDER_ID) is not None:
+            menu.addAction("新建子目录", self._folder_create)
             menu.addSeparator()
             menu.addAction(self.course_act_rename)
+            menu.addAction("移动到...", self._move_current)
             menu.addAction(self.course_act_delete)
-            if is_dir:
-                menu.addAction(self.course_act_mkdir)
-        menu.addSeparator()
-        menu.addAction(self.course_act_undo)
-        self.course_act_paste.setEnabled(bool(self._app_clipboard["paths"]))
+            return menu
+        rid = item.data(0, ROLE_RESOURCE_ID)
+        if rid is not None:
+            res = self.storage.get_resource(rid)
+            if res is not None and res["kind"] != "link":
+                menu.addAction("打开", lambda: self._on_resource_activated(item, 0))
+                menu.addAction("在中栏定位", lambda: self._locate_resource(res))
+            else:
+                menu.addAction("打开", lambda: self._on_resource_activated(item, 0))
+            menu.addSeparator()
+            menu.addAction("移动到...", self._move_current)
+            menu.addAction("移除索引", self._remove_selected)
         return menu
-
-    def _tree_node_path(self, item):
-        """节点 -> 文件系统路径(链接与课程节点返回 None)."""
-        rid = item.data(0, ROLE_RESOURCE_ID)
-        if rid is not None:
-            res = self.storage.get_resource(rid)
-            if res is None or res["kind"] == "link":
-                return None
-            return res["path_or_url"]
-        return item.data(0, ROLE_DIR_PATH)
-
-    def _tree_node_is_dir(self, item) -> bool:
-        """节点是否目录(登记目录或虚拟目录)."""
-        rid = item.data(0, ROLE_RESOURCE_ID)
-        if rid is not None:
-            res = self.storage.get_resource(rid)
-            return res is not None and res["kind"] == "dir"
-        return item.data(0, ROLE_DIR_PATH) is not None
-
-    def _tree_fs_selection(self) -> tuple:
-        """选中节点分拣 -> (可操作路径列表, 被忽略的链接数). 课程节点跳过."""
-        paths, links = [], 0
-        for node in self.course_tree.selectedItems():
-            path = self._tree_node_path(node)
-            if path is not None:
-                paths.append(path)
-            elif node.data(0, ROLE_RESOURCE_ID) is not None:
-                links += 1
-        return paths, links
-
-    def _selected_dir_node(self):
-        """恰好选中一个目录节点时返回其路径, 否则 None."""
-        nodes = [n for n in self.course_tree.selectedItems()
-                 if n.data(0, ROLE_COURSE_ID) is None]
-        if len(nodes) != 1:
-            return None
-        return self._tree_node_path(nodes[0]) \
-            if self._tree_node_is_dir(nodes[0]) else None
 
     def _course_id_of_item(self, item):
         """节点所属课程 id(向上找课程节点)."""
@@ -662,120 +569,167 @@ class MainWindow(QMainWindow):
             node = node.parent()
         return node.data(0, ROLE_COURSE_ID) if node is not None else None
 
-    def _course_copy(self) -> None:
-        paths, links = self._tree_fs_selection()
-        if not paths:
-            self.statusBar().showMessage("请先选中文件或目录")
-            return
-        self._app_clipboard["mode"] = "copy"
-        self._app_clipboard["paths"] = paths
-        self.statusBar().showMessage(
-            f"已复制 {len(paths)} 项" + (f"(忽略 {links} 个链接)" if links else ""))
-
-    def _course_cut(self) -> None:
-        paths, links = self._tree_fs_selection()
-        if not paths:
-            self.statusBar().showMessage("请先选中文件或目录")
-            return
-        self._app_clipboard["mode"] = "cut"
-        self._app_clipboard["paths"] = paths
-        self.statusBar().showMessage(
-            f"已剪切 {len(paths)} 项(粘贴后生效)"
-            + (f"(忽略 {links} 个链接)" if links else ""))
-
-    def _course_paste(self) -> None:
-        """粘贴到选中的目录节点, 贴入项自动登记进该课程.
-
-        冲突决策与执行在 dialogs.perform_paste(与中栏共用内核),
-        此处注入登记回调.
-        """
-        target = self._selected_dir_node()
-        if target is None:
-            self.statusBar().showMessage("请先选中一个目录节点再粘贴")
-            return
-        if not self._app_clipboard["paths"]:
-            self.statusBar().showMessage("剪贴板为空")
-            return
-        course_id = self._course_id_of_item(self.course_tree.currentItem())
-        if course_id is None:
-            self.statusBar().showMessage("无法确定目标课程")
-            return
-
-        def register(dst: str) -> bool:
-            return self.ctl.add_resource(course_id, dst).ok
-
-        result = dialogs.perform_paste(
-            self.ctl, self._app_clipboard, target,
-            lambda name, remaining: dialogs.ask_conflict(name, remaining, self),
-            register=register)
-        self.statusBar().showMessage(result.message)
-        self.reload_courses()
-
-    def _course_delete(self) -> None:
-        """删除选中文件/目录: 移入回收站, 索引行同步移除."""
-        paths, _links = self._tree_fs_selection()
-        if not paths:
-            self.statusBar().showMessage("请先选中文件或目录")
-            return
-        names = [os.path.basename(p) for p in paths]
-        preview = "\n".join(names[:5]) + ("\n..." if len(names) > 5 else "")
-        answer = QMessageBox.question(
-            self, "删除",
-            f"把选中的 {len(paths)} 个项目移入回收站?\n\n{preview}\n\n"
-            "可从回收站找回; 对应课程索引将一并移除.")
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        result = self.ctl.file_delete(paths)
-        self.statusBar().showMessage(result.message)
-        self.reload_courses()
-
-    def _course_rename(self) -> None:
-        """重命名选中节点(虚拟目录同样可改, 索引路径同步含子孙)."""
+    def _current_target_folder(self) -> tuple:
+        """登记落点: (课程 id, 文件夹 id). 选中文件夹时落在该文件夹,
+        其余(课程/资源/未选)落在课程根; 无课程语境返回 (None, None)."""
         item = self.course_tree.currentItem()
-        if item is None or item.data(0, ROLE_COURSE_ID) is not None:
-            self.statusBar().showMessage("请先选中要重命名的项目")
+        if item is None:
+            return None, None
+        fid = item.data(0, ROLE_FOLDER_ID)
+        course_id = self._course_id_of_item(item)
+        return course_id, (fid if course_id is not None else None)
+
+    def _folder_create(self) -> None:
+        """新建虚拟文件夹: 落点 = 选中文件夹/课程根, 选中资源时提示."""
+        item = self.course_tree.currentItem()
+        if item is None:
+            self.statusBar().showMessage("请先选中课程或文件夹")
             return
-        path = self._tree_node_path(item)
-        if path is None:
-            self.statusBar().showMessage("链接不支持重命名, 请编辑对应课程资源")
+        course_id = self._course_id_of_item(item)
+        if course_id is None:
+            self.statusBar().showMessage("请先选中课程或文件夹")
             return
-        name, ok = QInputDialog.getText(self, "重命名", "新名称:",
-                                        text=os.path.basename(path))
-        if not ok:
+        parent_fid = item.data(0, ROLE_FOLDER_ID)
+        name, ok = QInputDialog.getText(self, "新建文件夹", "名称:",
+                                        text="新建文件夹")
+        if not ok or not name.strip():
             return
-        if not name.strip() or name.strip() == os.path.basename(path):
-            self.statusBar().showMessage("名称未变化")
+        result = self.ctl.folder_create(course_id, parent_fid, name)
+        self.statusBar().showMessage(result.message)
+        if result.ok:
+            self.reload_courses()
+            self._expand_to_new_folder(course_id, result.detail["folder_id"])
+
+    def _expand_to_new_folder(self, course_id: int, folder_id: int) -> None:
+        """新建文件夹后展开其父链, 让新节点立即可见."""
+        folder = self.storage.get_folder(folder_id)
+        if folder is None:
             return
-        result = self.ctl.file_rename(path, name)
+        chain = []
+        fid = folder["parent_id"]
+        while fid is not None:
+            row = self.storage.get_folder(fid)
+            chain.append(fid)
+            fid = row["parent_id"] if row is not None else None
+        for node in self._iter_course_items(course_id):
+            if node.data(0, ROLE_FOLDER_ID) in chain:
+                node.setExpanded(True)
+
+    def _iter_course_items(self, course_id: int):
+        """某课程节点下的全部树项(含嵌套, 广度优先)."""
+        for i in range(self.course_tree.topLevelItemCount()):
+            node = self.course_tree.topLevelItem(i)
+            if node.data(0, ROLE_COURSE_ID) == course_id:
+                queue = [node]
+                while queue:
+                    current = queue.pop(0)
+                    yield current
+                    queue.extend(current.child(j)
+                                 for j in range(current.childCount()))
+
+    def _rename_current(self) -> None:
+        """F2: 重命名选中的文件夹(索引条目名跟随文件, 不提供改名)."""
+        item = self.course_tree.currentItem()
+        if item is None or item.data(0, ROLE_FOLDER_ID) is None:
+            self.statusBar().showMessage("请先选中要重命名的文件夹")
+            return
+        fid = item.data(0, ROLE_FOLDER_ID)
+        folder = self.storage.get_folder(fid)
+        name, ok = QInputDialog.getText(self, "重命名文件夹", "新名称:",
+                                        text=folder["name"])
+        if not ok or not name.strip():
+            return
+        result = self.ctl.folder_rename(fid, name)
         self.statusBar().showMessage(result.message)
         if result.ok:
             self.reload_courses()
 
-    def _course_mkdir(self) -> None:
-        """在选中目录节点下新建文件夹并自动登记进该课程."""
-        target = self._selected_dir_node()
-        if target is None:
-            self.statusBar().showMessage("请先选中一个目录节点")
+    def _delete_current(self) -> None:
+        """Delete: 文件夹走删除流程(非空给一键清空选项), 索引条目走移除."""
+        item = self.course_tree.currentItem()
+        if item is None:
             return
-        course_id = self._course_id_of_item(self.course_tree.currentItem())
-        if course_id is None:
-            self.statusBar().showMessage("无法确定目标课程")
+        if item.data(0, ROLE_FOLDER_ID) is not None:
+            self._folder_delete(item.data(0, ROLE_FOLDER_ID))
             return
-        name, ok = QInputDialog.getText(self, "新建文件夹", "名称:",
-                                        text="新建文件夹")
-        if not ok:
-            return
-        result = self.ctl.file_mkdir(target, name)
-        if result.ok:
-            self.ctl.add_resource(course_id, result.detail["path"])
-        self.statusBar().showMessage(result.message)
-        self.reload_courses()
+        if item.data(0, ROLE_RESOURCE_ID) is not None:
+            self._remove_selected()
 
-    def _course_undo(self) -> None:
-        """撤销最近一次文件操作(文件与索引一并回滚)."""
-        result = self.ctl.undo()
+    def _folder_delete(self, folder_id: int) -> None:
+        """删除文件夹: 空则确认删; 非空提供\"全部移除并删除\"(仅动索引)."""
+        folder = self.storage.get_folder(folder_id)
+        if folder is None:
+            return
+        children = self.storage.count_folder_children(folder_id)
+        if not children:
+            answer = QMessageBox.question(
+                self, "删除文件夹", f"删除空文件夹「{folder['name']}」?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            result = self.ctl.folder_delete(folder_id)
+        else:
+            box = QMessageBox(self)
+            box.setWindowTitle("删除非空文件夹")
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setText(f"文件夹「{folder['name']}」含 {children} 个直接条目.")
+            box.setInformativeText(
+                "可先移走其中条目再删除; 或连同子文件夹与其中索引一并移除"
+                "(只动索引, 磁盘文件不受影响).")
+            btn_remove = box.addButton("全部移除并删除",
+                                       QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(
+                box.button(QMessageBox.StandardButton.Cancel))
+            box.exec()
+            if box.clickedButton() is not btn_remove:
+                self.statusBar().showMessage("已取消删除文件夹")
+                return
+            result = self.ctl.folder_delete(folder_id, cascade=True)
         self.statusBar().showMessage(result.message)
-        self.reload_courses()
+        if result.ok:
+            self.reload_courses()
+
+    def _move_current(self) -> None:
+        """移动到...: 文件夹或索引条目经 FolderPickerDialog 选目标."""
+        item = self.course_tree.currentItem()
+        if item is None:
+            return
+        course_id = self._course_id_of_item(item)
+        if course_id is None:
+            return
+        course = self.storage.get_course(course_id)
+        exclude = set()
+        fid = item.data(0, ROLE_FOLDER_ID)
+        if fid is not None:      # 移动文件夹: 自身与子孙不可为目标
+            exclude = set(self.storage.folder_descendants(fid))
+        dialog = dialogs.FolderPickerDialog(
+            self.storage.list_folders(course_id), course["name"], self,
+            exclude_ids=exclude)
+        if not dialog.exec():
+            return
+        target = dialog.selected_folder_id()
+        if fid is not None:
+            result = self.ctl.folder_move(fid, target)
+        else:
+            rid = item.data(0, ROLE_RESOURCE_ID)
+            result = self.ctl.resource_move(rid, target)
+        self.statusBar().showMessage(result.message)
+        if result.ok:
+            self.reload_courses()
+
+    def _locate_resource(self, res) -> None:
+        """在中栏定位: 目录索引进入该目录, 文件索引进父目录并选中文件."""
+        path = res["path_or_url"]
+        if not os.path.exists(path):
+            self.statusBar().showMessage(f"已失效: {path}")
+            return
+        target = path if res["kind"] == "dir" else os.path.dirname(path)
+        if not self.set_workspace_root(target):
+            return
+        if res["kind"] != "dir":
+            index = self.file_page.file_model.index(path)
+            if index.isValid():
+                self.file_page.file_view.setCurrentIndex(index)
 
     def _current_course_id(self):
         item = self.course_tree.currentItem()
@@ -797,14 +751,15 @@ class MainWindow(QMainWindow):
             self.reload_courses()
 
     def _add_link(self) -> None:
-        course_id = self._current_course_id()
+        course_id, folder_id = self._current_target_folder()
         if course_id is None:
             self.statusBar().showMessage("请先在左栏选中一门课程")
             return
         url, ok = QInputDialog.getText(self, "添加链接", "URL(http/https):")
         if not ok or not url.strip():
             return
-        result = self.ctl.add_resource(course_id, url.strip())
+        result = self.ctl.add_resource(course_id, url.strip(),
+                                       folder_id=folder_id)
         self.statusBar().showMessage(result.message)
         if result.ok:
             self.reload_courses()
@@ -837,9 +792,9 @@ class MainWindow(QMainWindow):
             return
         rid = item.data(0, ROLE_RESOURCE_ID)
         if rid is None:
-            if item.data(0, ROLE_DIR_PATH) is not None:
+            if item.data(0, ROLE_FOLDER_ID) is not None:
                 self.statusBar().showMessage(
-                    "选中的是目录层级节点(未登记), 请选中具体资源移除")
+                    "选中的是文件夹, 请用「删除」移除文件夹")
             else:
                 self.statusBar().showMessage(
                     "选中的是课程节点, 请用「删除课程」按钮")
@@ -848,7 +803,7 @@ class MainWindow(QMainWindow):
         if res is None:
             return
         answer = QMessageBox.question(
-            self, "移除资源", f"从索引移除(不动磁盘文件):\n{res['path_or_url']}?"
+            self, "移除索引", f"从索引移除(不动磁盘文件):\n{res['path_or_url']}?"
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
@@ -860,14 +815,7 @@ class MainWindow(QMainWindow):
         """双击资源: 链接用浏览器打开, 文件用系统默认程序打开, 目录在中栏定位."""
         rid = item.data(0, ROLE_RESOURCE_ID)
         if rid is None:
-            # 虚拟目录节点: 与目录资源一致, 双击在中栏定位
-            path = item.data(0, ROLE_DIR_PATH)
-            if path is not None:
-                if not os.path.exists(path):
-                    self.statusBar().showMessage(f"已失效: {path}")
-                else:
-                    self.set_workspace_root(path)
-            return
+            return                # 课程/文件夹节点: 双击仅切换展开
         res = self.storage.get_resource(rid)
         if res is None:
             return

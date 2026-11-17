@@ -121,20 +121,141 @@ class Controller(LearnActions, CloudActions):
             True, f"已删除课程 {course['name']}(级联移除 {removed} 条索引)",
             {"removed_resources": removed})
 
-    def add_resource(self, course_id: int, target: str) -> ActionResult:
-        """登记文件/目录/链接进课程(同课程重复登记幂等拒绝)."""
+    def add_resource(self, course_id: int, target: str,
+                     folder_id: int = None) -> ActionResult:
+        """登记文件/目录/链接进课程(同课程重复登记幂等拒绝).
+
+        folder_id 为归属虚拟文件夹(None=课程根), 须经校验属于该课程.
+        """
         kind = detect_kind(target)
         if kind != "link" and not os.path.exists(target):
             return ActionResult(False, f"路径不存在: {target}")
+        if folder_id is not None:
+            folder = self.storage.get_folder(folder_id)
+            if folder is None or folder["course_id"] != course_id:
+                return ActionResult(False, f"目标文件夹不可用: #{folder_id}")
         existing = self.storage.find_resource(course_id, target)
         if existing is not None:
             return ActionResult(
                 False, f"该课程已登记: {target}",
                 {"resource_id": existing["id"], "kind": kind, "duplicate": True})
-        rid = self.storage.add_resource(course_id, kind, target)
-        self.storage.log_operation("add_resource", rid, path_snapshot=target)
+        rid = self.storage.add_resource(course_id, kind, target,
+                                        folder_id=folder_id)
+        self.storage.log_operation("add_resource", rid, path_snapshot=target,
+                                   params={"folder_id": folder_id})
         return ActionResult(True, f"已登记 #{rid} [{KIND_LABEL[kind]}] {target}",
                             {"resource_id": rid, "kind": kind})
+
+    # ---- 虚拟文件夹 (索引组织层) ----
+
+    def folder_create(self, course_id: int, parent_id, name: str) -> ActionResult:
+        """新建虚拟文件夹(parent_id None=课程根), 同名兄弟拒绝."""
+        name = name.strip()
+        if not name:
+            return ActionResult(False, "名称不能为空")
+        if self.storage.get_course(course_id) is None:
+            return ActionResult(False, f"课程不存在: #{course_id}")
+        try:
+            fid = self.storage.add_folder(course_id, parent_id, name)
+        except ValueError as exc:
+            return ActionResult(False, str(exc))
+        self.storage.log_operation("folder_create",
+                                   params={"name": name,
+                                           "parent_id": parent_id},
+                                   path_snapshot=name)
+        return ActionResult(True, f"已新建文件夹 {name}",
+                            {"folder_id": fid})
+
+    def folder_rename(self, folder_id: int, name: str) -> ActionResult:
+        """文件夹改名(仅索引层, 不动磁盘)."""
+        folder = self.storage.get_folder(folder_id)
+        if folder is None:
+            return ActionResult(False, f"文件夹不存在: #{folder_id}")
+        name = name.strip()
+        if not name:
+            return ActionResult(False, "名称不能为空")
+        if name == folder["name"]:
+            return ActionResult(False, "名称未变化")
+        siblings = self.storage.list_folders(folder["course_id"])
+        if any(f["name"] == name and f["parent_id"] == folder["parent_id"]
+               and f["id"] != folder_id for f in siblings):
+            return ActionResult(False, f"同级已有同名文件夹: {name}")
+        self.storage.folder_rename(folder_id, name)
+        self.storage.log_operation("folder_rename",
+                                   params={"name": name},
+                                   path_snapshot=folder["name"])
+        return ActionResult(True,
+                            f"已重命名文件夹 {folder['name']} -> {name}")
+
+    def folder_delete(self, folder_id: int, cascade: bool = False) -> ActionResult:
+        """删除虚拟文件夹; cascade=True 连同子孙文件夹与其中索引一并移除.
+
+        两种模式都只动索引, 磁盘文件不受影响.
+        """
+        folder = self.storage.get_folder(folder_id)
+        if folder is None:
+            return ActionResult(False, f"文件夹不存在: #{folder_id}")
+        children = self.storage.count_folder_children(folder_id)
+        if children and not cascade:
+            return ActionResult(
+                False, f"文件夹非空(含 {children} 项), 请先移走条目"
+                       "或选择\"全部移除并删除\"")
+        descendants = self.storage.folder_descendants(folder_id)
+        removed = 0
+        if cascade:
+            removed = self.storage.remove_resources_in_folders(descendants)
+        self.storage.folder_delete_tree(folder_id)
+        self.storage.log_operation(
+            "folder_delete", path_snapshot=folder["name"],
+            detail={"cascade": cascade, "removed_resources": removed})
+        message = f"已删除文件夹 {folder['name']}"
+        if removed:
+            message += f"(级联移除 {removed} 条索引)"
+        return ActionResult(True, message, {"removed_resources": removed})
+
+    def folder_move(self, folder_id: int, parent_id) -> ActionResult:
+        """移动文件夹到另一文件夹下(None=课程根), 含环检测."""
+        folder = self.storage.get_folder(folder_id)
+        if folder is None:
+            return ActionResult(False, f"文件夹不存在: #{folder_id}")
+        if parent_id == folder["parent_id"]:
+            return ActionResult(False, "已在目标位置")
+        if parent_id == folder_id:
+            return ActionResult(False, "不能移入自身")
+        if parent_id is not None:
+            parent = self.storage.get_folder(parent_id)
+            if parent is None:
+                return ActionResult(False, f"目标文件夹不存在: #{parent_id}")
+            if parent["course_id"] != folder["course_id"]:
+                return ActionResult(False, "目标文件夹不属于该课程")
+            if parent_id in self.storage.folder_descendants(folder_id):
+                return ActionResult(False, "不能移入自己的子文件夹")
+        self.storage.folder_set_parent(folder_id, parent_id)
+        self.storage.log_operation("folder_move",
+                                   params={"parent_id": parent_id},
+                                   path_snapshot=folder["name"])
+        return ActionResult(True, f"已移动文件夹 {folder['name']}")
+
+    def resource_move(self, resource_id: int, folder_id) -> ActionResult:
+        """把索引条目移入文件夹(None=课程根), 只动索引."""
+        res = self.storage.get_resource(resource_id)
+        if res is None:
+            return ActionResult(False, f"资源不存在: #{resource_id}")
+        if folder_id is not None:
+            folder = self.storage.get_folder(folder_id)
+            if folder is None:
+                return ActionResult(False, f"目标文件夹不存在: #{folder_id}")
+            if folder["course_id"] != res["course_id"]:
+                return ActionResult(False, "目标文件夹不属于该课程")
+        if folder_id == res["folder_id"]:
+            return ActionResult(False, "已在该文件夹")
+        old = res["folder_id"]
+        self.storage.set_resource_folder(resource_id, folder_id)
+        self.storage.log_operation(
+            "resource_move", resource_id, params={"folder_id": folder_id,
+                                                  "from": old},
+            path_snapshot=res["path_or_url"])
+        return ActionResult(True, "已移动索引条目")
 
     def remove_resource(self, resource_id: int) -> ActionResult:
         """从索引移除资源(不动磁盘文件)."""

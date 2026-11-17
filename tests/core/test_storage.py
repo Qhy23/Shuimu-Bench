@@ -44,6 +44,76 @@ class TestCourse:
         assert names == ["未分组", "高等数学"]
 
 
+class TestFolder:
+    """虚拟文件夹: 组织层 CRUD 与级联."""
+
+    def test_crud_and_sibling_name_rejected(self, storage, course_id):
+        """建/查/改名/兄弟重名拒绝."""
+        fid = storage.add_folder(course_id, None, "课件")
+        assert storage.get_folder(fid)["name"] == "课件"
+        sub = storage.add_folder(course_id, fid, "第1周")
+        assert storage.list_folders(course_id)[0]["id"] == fid
+        storage.folder_rename(sub, "第一周")
+        assert storage.get_folder(sub)["name"] == "第一周"
+        with pytest.raises(ValueError, match="同名"):
+            storage.add_folder(course_id, None, "课件")
+        with pytest.raises(ValueError, match="同名"):
+            storage.add_folder(course_id, fid, "第一周")   # 与改后的子项同名
+
+    def test_delete_empty_only_and_tree(self, storage, course_id):
+        """空校验删除; 树删除级联子文件夹, 资源行随清."""
+        fid = storage.add_folder(course_id, None, "课件")
+        sub = storage.add_folder(course_id, fid, "第1周")
+        with pytest.raises(ValueError, match="非空"):
+            storage.folder_delete(fid)
+        storage.folder_delete_tree(fid)          # 级联删除子文件夹
+        assert storage.get_folder(fid) is None
+        assert storage.get_folder(sub) is None
+
+    def test_descendants_and_resource_placement(self, storage, course_id):
+        """子孙枚举(BFS)与资源归属/移动/批量清理."""
+        f1 = storage.add_folder(course_id, None, "A")
+        f2 = storage.add_folder(course_id, f1, "B")
+        f3 = storage.add_folder(course_id, f2, "C")
+        assert storage.folder_descendants(f1) == [f1, f2, f3]
+        rid = storage.add_resource(course_id, "link", "https://x/", folder_id=f3)
+        assert storage.get_resource(rid)["folder_id"] == f3
+        storage.set_resource_folder(rid, None)
+        assert storage.get_resource(rid)["folder_id"] is None
+        storage.set_resource_folder(rid, f2)
+        assert storage.remove_resources_in_folders([f1, f2]) == 1
+        assert storage.get_resource(rid) is None
+
+    def test_old_schema_migrated(self, tmp_path):
+        """旧库(无 folders/folder_id)打开即迁移, 原数据完好."""
+        db = str(tmp_path / "old.db")
+        conn = sqlite3.connect(db)
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.executescript("""
+            CREATE TABLE courses (id INTEGER PRIMARY KEY,
+              name TEXT NOT NULL UNIQUE, created_at REAL NOT NULL);
+            CREATE TABLE resources (id INTEGER PRIMARY KEY,
+              course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+              kind TEXT NOT NULL, path_or_url TEXT NOT NULL,
+              display_name TEXT, size INTEGER, mtime REAL,
+              added_at REAL NOT NULL,
+              UNIQUE (course_id, path_or_url));
+        """)
+        conn.execute("INSERT INTO courses VALUES (1, '旧课程', 0)")
+        conn.execute("INSERT INTO resources (course_id, kind, path_or_url,"
+                     " display_name, added_at) VALUES (1, 'link', 'https://x/',"
+                     " 'x', 0)")
+        conn.commit()
+        conn.close()
+        store = Storage(db)
+        cols = {row[1] for row in store._conn.execute(
+            "PRAGMA table_info(resources)")}
+        assert "folder_id" in cols
+        assert len(store.list_folders(1)) == 0
+        assert store.list_resources(1)[0]["path_or_url"] == "https://x/"
+        store.close()
+
+
 class TestMemoryDb:
     """":memory:" 特殊路径: 真内存库, 不在当前目录落文件."""
 
