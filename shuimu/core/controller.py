@@ -29,7 +29,10 @@ from shuimu.core.campus_net import (
 from shuimu.core.folder_actions import FolderActions
 from shuimu.core.learn_actions import LearnActions
 from shuimu.core.cloud_actions import CloudActions
+from shuimu.core.ai_actions import AiActions
+from shuimu.core.ai import UrllibAiTransport
 from shuimu.core.paths import (
+    default_ai_config_path,
     default_campus_fingerprint_path,
     default_campus_session_path,
     default_links_path,
@@ -73,7 +76,7 @@ def detect_kind(target: str) -> str:
     return "dir" if os.path.isdir(target) else "file"
 
 
-class Controller(FolderActions, LearnActions, CloudActions):
+class Controller(FolderActions, LearnActions, CloudActions, AiActions):
     """业务动作集合, 持有 Storage 与配置. 无界面状态."""
 
     def __init__(self, storage: Storage, config: dict = None,
@@ -81,7 +84,9 @@ class Controller(FolderActions, LearnActions, CloudActions):
                  plugins_state_path: str = None,
                  external_plugins_dir: str = None,
                  campus_session_path: str = None,
-                 campus_transport_factory=None):
+                 campus_transport_factory=None,
+                 ai_transport_factory=None,
+                 ai_config_path: str = None):
         self.storage = storage
         self.config = config or load_config()
         self.organize_rules = organize_rules(self.config)
@@ -92,6 +97,8 @@ class Controller(FolderActions, LearnActions, CloudActions):
         self._campus_session_path = campus_session_path
         self._campus_transport_factory = campus_transport_factory \
             or UrllibTransport
+        self._ai_transport_factory = ai_transport_factory or UrllibAiTransport
+        self._ai_config_path = ai_config_path or default_ai_config_path()
         self._plugin_manager = None
         self._semester_start = semester_start_date(self.config)
         self._week_count = semester_week_count(self.config)
