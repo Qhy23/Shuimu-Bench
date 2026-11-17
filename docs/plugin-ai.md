@@ -1,0 +1,65 @@
+# 插件: AI 工具(ai)
+
+把课程资料交给大模型, 针对课程问题给出回复. 兼容任意 **OpenAI 兼容服务**(智谱 / DeepSeek / Kimi / 通义 / OpenAI / 本地 Ollama 等), 以可选 network 插件形态提供: **默认禁用, 启用即授权联网**; 核心功能保持零网络.
+
+## 前提与启用
+
+```bash
+python cli.py plugin-enable ai --yes
+```
+
+需要一个 OpenAI 兼容服务的 API Key(Ollama 本地服务可免). 常用服务地址(base_url)与模型示例:
+
+| 服务 | base_url | 模型示例 |
+|---|---|---|
+| 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| Kimi (月之暗面) | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
+| Ollama 本地 | `http://localhost:11434/v1` | `qwen3:8b` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
+
+## 配置
+
+```bash
+python cli.py ai-config                          # 交互式: 服务地址/模型名/API Key
+python cli.py ai-config --base-url https://api.deepseek.com/v1 --model deepseek-chat
+python cli.py ai-config --show                   # 查看当前配置
+```
+
+- 三项配置存本机 `data/ai-config.json`(**权限 0o600, 不入仓库**); Key 清除: 交互时输入 `CLEAR`
+- 调优项(上下文字符预算/单文件上限/PDF 页数/超时/历史保留条数)在项目根 `config.yaml` 的 `ai` 段, 有默认值
+
+**GUI**: 右栏"AI"页签, 未配置时在页内直接填表保存.
+
+## 提问与上下文
+
+```bash
+python cli.py ai-ask "特征值和特征向量的几何意义是什么"            # 不附带资料
+python cli.py ai-ask "总结这门课的作业要求" --course 1            # 附带课程 1 的资料
+python cli.py ai-ask "整理最近的公告要点" --course 1 --with-learn  # 附带学堂缓存
+python cli.py ai-ask "..." --no-stream                            # 关闭流式输出
+```
+
+- 上下文按勾选构建: 课程资源(文件索引 + 链接) + 学堂缓存(`--with-learn`, 关联课程的公告与作业描述)
+- 文本提取: 纯文本/Markdown/代码直读; PDF 经 pypdf 按页提取(加密或扫描件会跳过并告知); HTML 转文本; docx/pptx 粗提文字
+- 预算控制: 总字符预算(默认 60000)内先到先得, 单文件上限 20000 字符, 超限文件在结果里列名告知
+- CLI 流式输出: 回答逐段打印到 stdout(便于管道), 统计信息走 stderr
+
+**GUI**: 右栏"AI"页签 = 对话视图(消息流 + 输入框, Ctrl+Enter 发送, 流式追加), 上方"上下文"下拉选择 不附带/某课程/全部课程, 可勾选"含学堂缓存"; 会话历史可切换/清除.
+
+## 历史管理
+
+```bash
+python cli.py ai-history                 # 最近会话列表
+python cli.py ai-history --session 1     # 展开某会话完整消息
+python cli.py ai-clear --yes             # 清除全部历史(--session N 清单会话)
+```
+
+对话历史存本机 SQLite(`data/shuimu.db` 的 ai_sessions/ai_messages 表), 超出保留条数(默认 200)自动删最旧.
+
+## 数据与隐私
+
+- **API Key 只存本机 `data/ai-config.json`(0o600), 不入仓库, 不入操作留痕**
+- 操作留痕只记元数据: 问题前 60 字/模型名/上下文统计/耗时; 完整对话只存本机数据库
+- 通用插件入口同样可用: `plugin-run ai --set action=ask --set question=...`(`--set api_key=...` 传入的 Key 仅本次使用, 不落盘)
+- 提问内容与勾选的课程资料会发送到所配置的 AI 服务; 不想上传的资料不要勾选对应课程

@@ -25,8 +25,8 @@
 ## 范围控制
 
 - MVP: 三栏主窗口 + 课程工作区(SQLite 索引) + 文件浏览 + 本地日程 + 操作记录.
-- 插件框架已落地(2026-11-09, plugin-framework 分支): 运行时在 `shuimu/core/pluginman.py`, 内置插件在 `shuimu/plugins/`(与外部插件同一加载路径, 无特权代码路径); 内置插件: hwcheck(占位待重设计, 见 HANDOFF §5), campus(校园账户登录, 2026-11-11 经真实登录校准), learn(网络学堂, 2026-11-12 经真实登录校准), cloud(清华云盘分享链接挂载, 2026-11-13 经真实分享链接校准).
-- **在线接入边界**(2026-11-08 经助教确认放开): 学校服务以可选 network 插件形态提供, 插件默认禁用, 启用时经确认授权联网; 核心功能保持零网络. 校园服务四件: 校园账户登录(已完成) / 网络学堂(已完成) / 清华云盘(已完成) / AI 工具.
+- 插件框架已落地(2026-11-09, plugin-framework 分支): 运行时在 `shuimu/core/pluginman.py`, 内置插件在 `shuimu/plugins/`(与外部插件同一加载路径, 无特权代码路径); 内置插件: hwcheck(占位待重设计, 见 HANDOFF §5), campus(校园账户登录, 2026-11-11 经真实登录校准), learn(网络学堂, 2026-11-12 经真实登录校准), cloud(清华云盘分享链接挂载, 2026-11-13 经真实分享链接校准), ai(AI 工具, OpenAI 兼容问答, 2026-11-17).
+- **在线接入边界**(2026-11-08 经助教确认放开): 学校服务以可选 network 插件形态提供, 插件默认禁用, 启用时经确认授权联网; 核心功能保持零网络. 校园服务四件: 校园账户登录(已完成) / 网络学堂(已完成) / 清华云盘(已完成) / AI 工具(已完成).
 - 本学期不做: 插件市场, PDF 阅读器.
 - 详细规划见 ../.claude/project-proposal.md.
 
@@ -43,6 +43,7 @@ python cli.py plugin-enable campus --yes      # 启用校园插件(联网授权)
 python cli.py campus-login                    # 校园登录(密码交互输入)
 python cli.py learn-refresh                   # 学堂全量刷新(需先启用 learn 并校园登录)
 python cli.py cloud-mount "https://cloud.tsinghua.edu.cn/d/<分享id>/"   # 挂载云盘分享库(需先启用 cloud)
+python cli.py ai-config && python cli.py ai-ask "问题" --course 1    # AI 问答(需先启用 ai 并配置服务)
 ```
 
 ## 数据组织
@@ -56,6 +57,7 @@ python cli.py cloud-mount "https://cloud.tsinghua.edu.cn/d/<分享id>/"   # 挂�
 - 校园登录: 协议在 `shuimu/core/campus.py`(WebVPN+新统一认证两阶段, SM2 加密密码, 2FA 登录与漫游均可能出现, INFO 门户漫游), 传输层 `shuimu/core/campus_net.py`(单跳 Transport 抽象 + urllib 实现 + MemoryTransport 假 transport 离线测试), 国密实现 `shuimu/core/sm2.py`(纯标准库, 国标向量 + gmssl 双向互通 + 真实服务端验证); GUI 入口 = 右栏"校园"页签(`plugins/campus/campus_tab.py` 三态 + 2FA 对话框), CLI 入口 campus-login/status/logout(`plugins/campus/cli.py`, 密码 getpass 交互, 绝不走 argv); controller 动作 campus_login/status/logout 留痕(不含密码/验证码). **凭据安全: 密码与验证码永不落盘不留痕**, 只持久化会话 `data/campus-session.json`(gitignored, 0o600) 与设备指纹 `data/campus-fingerprint`(登出保留); 登录为同步调用(网络慢时 UI 短暂冻结, 线程化留后续). 协议沉 core 是刻意的(11-09/11-12 决策): core 承载可离线测试的协议与编排, 插件包承载 GUI/CLI/壳, 主窗口与主 CLI 只接线.
 - 网络学堂: 协议在 `shuimu/core/learn.py`(WebVPN 加密主机段直连复用校园会话, 学堂会话失效自动经 INFO 门户漫游重建, 判定串集中常量区), 编排 `core/learn_sync.py`(差分刷新/课程匹配/下载/待办同步), controller 动作在 `core/learn_actions.py`(LearnActions 混入, ActionResult 在 `core/actions.py`); 缓存为 storage 的 6 张 learn 表(差分保留关联/描述缓存/待办映射), 下载落 `learn.download_dir`(默认 data/learn/<课名>/, 关联课程引用式登记); 未交作业同步日程待办([学堂] 前缀 + DB todo_tid 映射, 手动待办永不碰); GUI = 中栏"学堂"页签(`plugins/learn/learn_page.py` 三态), CLI = learn-* 子命令(`plugins/learn/cli.py`). 用户文档在 `docs/`(README 只留介绍与用法, 开发约定归本文件, 进度归 HANDOFF).
 - 清华云盘: 协议在 `shuimu/core/cloud.py`(匿名读分享链接, 目录列举 API + og:title 抓取 + ?p= 子目录链接, 判定串集中常量区), 编排 `core/cloud_sync.py`(目录树收集/课程名三级匹配/引用式登记, 重复挂载因 UNIQUE 转 skipped 幂等), controller 动作在 `core/cloud_actions.py`(CloudActions 混入, 浏览只读不留痕/挂载登记留痕); 免登录免凭据, 不整库下载(只登记 kind=link 资源, display_name=目录名, storage.add_resource 因此带 display_name 可选参); GUI = 中栏"云盘"页签(`plugins/cloud/cloud_page.py` 两态: 未启用引导/主视图, 无登录态), CLI = cloud-* 子命令(`plugins/cloud/cli.py`); 校准探针 `test/workspace/cloud_probe.py`(2026-11-13 实测: dirents 参数名是 path 非 p, 无效 token 404+error_msg).
+- AI 工具: 客户端在 `shuimu/core/ai.py`(OpenAI 兼容 chat/completions, 非流式+流式 SSE, 自带最小 AiTransport 协议 post_json/post_stream + urllib/Memory 双实现, 不动 campus_net; AiError 错误分类), 上下文构建 `core/ai_context.py`(资源枚举+扩展名分派提取: 纯文本直读/PDF 经 pypdf/HTML 转文本/docx 与 pptx zipfile+XML 粗提+字符预算先到先得), controller 动作在 `core/ai_actions.py`(AiActions 混入); 对话历史 = storage 的 ai_sessions/ai_messages 两表(外键级联, 裁剪保最近 N 条); **用户级配置(base_url/model/api_key)只存 `data/ai-config.json`(0o600, 不入仓库)**, config.yaml 的 ai 段只有调优项(预算/页数/超时/保留条数); 留痕只记元数据(问题前 60 字/模型/上下文统计/耗时), 完整对话只在 ai_messages, key 永不入留痕; GUI = 右栏"AI"页签(`plugins/ai/ai_tab.py` 三态: 未启用引导/配置表单/对话主视图, 流式 on_delta 增量追加+processEvents, 上下文课程级选择), CLI = ai-* 子命令(`plugins/ai/cli.py`, ai-ask 默认流式, key 经 getpass 绝不走 argv).
 - 索引只存引用, 不复制文件本体; 文件失效保留记录, 由 UI 标灰.
 - 文件页操作(复制/移动/删除/重命名/新建文件夹)经 controller 留痕; **操作与索引同步**(2026-11-16): 移动/重命名同步登记路径(storage.resources_under/retarget_resource, 含子孙), 删除移除索引行(完整行入撤销条目), 撤销时索引一并回滚(路径改回/重插原行/复制撤销清其后登记行), add_resource 同课程重复登记幂等拒绝; 纯逻辑在 `shuimu/core/fileops.py`(find_conflicts 预检/move_back 撤销移动); 粘贴同名冲突逐个弹框决策(覆盖=旧文件先入回收站/跳过/保留两者加 _1, 可"应用于其余全部"), 决策框与粘贴内核在 `gui/dialogs.py`(ask_conflict/resolve_conflicts/perform_paste, 中栏文件页使用); Ctrl+Z 撤销栈在 controller(内存 LIFO, 上限 100, 不跨会话, 无 redo): 复制与新建入回收站, 移动移回原位, 删除从回收站恢复, 重命名改回; 删除移入回收站, 后端在 `shuimu/core/trash.py` — 优先 config.yaml `fileops.trash_dir` 指定目录(WSL 测试用, 布局同 freedesktop: files/ + info/*.trashinfo), 留空用系统回收站(Windows Shell / XDG Trash).
 - 测试伪资料: 课程根目录 `content/`(仓库外), 单元测试一律用 tmp_path 保持隔离.
