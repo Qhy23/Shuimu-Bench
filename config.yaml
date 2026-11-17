@@ -34,3 +34,15 @@ fileops:
 learn:
   download_dir: ""               # 学堂课件/附件下载根目录; 留空用 data/learn,
                                   # 下载文件按课程名建子目录, 登记进关联课程(引用式)
+
+ai:                              # AI 工具调优项; base_url/model/api_key 存
+                                 # data/ai-config.json(0o600, 不入仓库),
+                                 # 常用服务地址: 智谱 https://open.bigmodel.cn/api/paas/v4
+                                 # DeepSeek https://api.deepseek.com/v1
+                                 # Kimi https://api.moonshot.cn/v1
+                                 # Ollama 本地 http://localhost:11434/v1
+  max_context_chars: 60000       # 上下文总字符预算
+  per_file_chars: 20000          # 单文件提取字符上限
+  max_pdf_pages: 30              # PDF 按页提取上限
+  timeout_seconds: 120           # 请求超时秒数(含流式读)
+  keep_messages: 200             # 对话历史保留条数(超出删最旧)

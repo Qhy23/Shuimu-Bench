@@ -122,6 +122,21 @@ CREATE TABLE IF NOT EXISTS learn_downloads (
   downloaded_at REAL NOT NULL,
   PRIMARY KEY (kind, remote_id)
 );
+
+CREATE TABLE IF NOT EXISTS ai_sessions (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id INTEGER PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES ai_sessions(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  content TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
 """
 
 
@@ -668,3 +683,85 @@ class Storage:
             " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, str(value)))
         self._conn.commit()
+
+    # ---- AI 工具对话历史 ----
+
+    def ai_add_round(self, session_id, question: str, answer: str,
+                     title: str = "") -> int:
+        """插入一轮对话(user+assistant 两行); 返回会话 id.
+
+        session_id 为 None 时新建会话(title 缺省取问题前 40 字);
+        同时更新会话 updated_at.
+        """
+        now = time.time()
+        if session_id is None:
+            session_id = self._conn.execute(
+                "INSERT INTO ai_sessions (title, created_at, updated_at)"
+                " VALUES (?, ?, ?)",
+                (title or question[:40], now, now)).lastrowid
+        self._conn.execute(
+            "INSERT INTO ai_messages (session_id, role, content, created_at)"
+            " VALUES (?, 'user', ?, ?)", (session_id, question, now))
+        self._conn.execute(
+            "INSERT INTO ai_messages (session_id, role, content, created_at)"
+            " VALUES (?, 'assistant', ?, ?)", (session_id, answer, now))
+        self._conn.execute(
+            "UPDATE ai_sessions SET updated_at = ? WHERE id = ?",
+            (now, session_id))
+        self._conn.commit()
+        return session_id
+
+    def ai_list_sessions(self, limit: int = 20) -> list:
+        """最近会话(按 updated_at 倒序), 附消息数 message_count."""
+        return self._conn.execute(
+            "SELECT s.id, s.title, s.created_at, s.updated_at,"
+            " COUNT(m.id) AS message_count"
+            " FROM ai_sessions s LEFT JOIN ai_messages m"
+            " ON m.session_id = s.id"
+            " GROUP BY s.id ORDER BY s.updated_at DESC, s.id DESC"
+            " LIMIT ?", (limit,)).fetchall()
+
+    def ai_list_messages(self, session_id: int) -> list:
+        """某会话全部消息(按 id 正序)."""
+        return self._conn.execute(
+            "SELECT * FROM ai_messages WHERE session_id = ? ORDER BY id",
+            (session_id,)).fetchall()
+
+    def ai_recent_messages(self, session_id: int, limit: int = 20) -> list:
+        """某会话最近 limit 条消息(正序返回), 供拼对话历史."""
+        rows = self._conn.execute(
+            "SELECT * FROM ai_messages WHERE session_id = ?"
+            " ORDER BY id DESC LIMIT ?", (session_id, limit)).fetchall()
+        return list(reversed(rows))
+
+    def ai_prune_history(self, keep_messages: int) -> int:
+        """全局只保留最近 keep_messages 条消息, 连带清理无消息会话.
+
+        返回删除的消息条数.
+        """
+        count = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM ai_messages").fetchone()["n"]
+        if count <= keep_messages:
+            return 0
+        self._conn.execute(
+            "DELETE FROM ai_messages WHERE id NOT IN ("
+            " SELECT id FROM ai_messages ORDER BY id DESC LIMIT ?)",
+            (keep_messages,))
+        self._conn.execute(
+            "DELETE FROM ai_sessions WHERE id NOT IN"
+            " (SELECT DISTINCT session_id FROM ai_messages)")
+        self._conn.commit()
+        return count - keep_messages
+
+    def ai_clear_history(self, session_id=None) -> int:
+        """清除全部历史(返回删除会话数)或单会话(存在 1 否则 0).
+
+        会话删除时其消息经外键 CASCADE 一并删除.
+        """
+        if session_id is None:
+            cursor = self._conn.execute("DELETE FROM ai_sessions")
+        else:
+            cursor = self._conn.execute(
+                "DELETE FROM ai_sessions WHERE id = ?", (session_id,))
+        self._conn.commit()
+        return cursor.rowcount or 0

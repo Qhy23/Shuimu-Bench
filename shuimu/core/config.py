@@ -51,6 +51,15 @@ DEFAULTS = {
     "learn": {
         "download_dir": "",  # 学堂课件/附件下载根目录; 空用 data/learn(见 core/paths.py)
     },
+    "ai": {
+        # AI 工具调优项(只读); base_url/model/api_key 等用户级配置
+        # 存 data/ai-config.json(0o600, 见 core/ai.py), 不放这里
+        "max_context_chars": 60000,  # 上下文总字符预算
+        "per_file_chars": 20000,     # 单文件提取字符上限
+        "max_pdf_pages": 30,         # PDF 按页提取上限
+        "timeout_seconds": 120,      # 请求超时秒数(含流式读)
+        "keep_messages": 200,        # 对话历史保留条数(超出删最旧)
+    },
 }
 
 

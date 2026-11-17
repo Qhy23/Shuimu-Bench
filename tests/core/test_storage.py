@@ -409,3 +409,73 @@ class TestLearnCache:
         store.learn_meta_set("k", "v")
         assert [row["name"] for row in store.list_courses()] == ["旧课"]
         store.close()
+
+
+class TestAiHistory:
+    """AI 对话历史表."""
+
+    def test_add_round_creates_session(self, storage):
+        """首轮对话自动建会话, 标题取问题前 40 字."""
+        sid = storage.ai_add_round(None, "什么是特征值", "特征值是...")
+        messages = storage.ai_list_messages(sid)
+        assert [m["role"] for m in messages] == ["user", "assistant"]
+        assert messages[0]["content"] == "什么是特征值"
+        sessions = storage.ai_list_sessions()
+        assert sessions[0]["title"] == "什么是特征值"
+        assert sessions[0]["message_count"] == 2
+
+    def test_add_round_existing_session(self, storage):
+        """指定会话续问, 两轮共四条消息."""
+        sid = storage.ai_add_round(None, "问一", "答一")
+        storage.ai_add_round(sid, "问二", "答二")
+        assert len(storage.ai_list_messages(sid)) == 4
+        assert storage.ai_list_sessions()[0]["message_count"] == 4
+
+    def test_long_title_truncated(self, storage):
+        """超长问题截断为 40 字标题."""
+        storage.ai_add_round(None, "字" * 50, "答")
+        assert len(storage.ai_list_sessions()[0]["title"]) == 40
+
+    def test_recent_messages_tail(self, storage):
+        """recent 取最近 N 条且保持正序."""
+        sid = storage.ai_add_round(None, "q1", "a1")
+        storage.ai_add_round(sid, "q2", "a2")
+        storage.ai_add_round(sid, "q3", "a3")
+        recent = storage.ai_recent_messages(sid, 2)
+        assert [m["content"] for m in recent] == ["q3", "a3"]
+
+    def test_list_sessions_order(self, storage):
+        """最近更新的会话排前."""
+        first = storage.ai_add_round(None, "第一会话", "答")
+        second = storage.ai_add_round(None, "第二会话", "答")
+        storage.ai_add_round(first, "追问", "答")
+        titles = [row["title"] for row in storage.ai_list_sessions()]
+        assert titles[0] == "第一会话"
+        assert titles[1] == "第二会话"
+        del second
+
+    def test_prune_history(self, storage):
+        """裁剪保留最近 N 条并清理无消息会话."""
+        storage.ai_add_round(None, "q1", "a1")
+        second = storage.ai_add_round(None, "q2", "a2")
+        removed = storage.ai_prune_history(2)
+        assert removed == 2
+        # 保留的是最新的第二会话, 无消息的第一会话被连带清理
+        assert [row["id"] for row in storage.ai_list_sessions()] == [second]
+        assert storage.ai_prune_history(2) == 0
+
+    def test_clear_single_session_cascades(self, storage):
+        """删单会话级联删消息."""
+        keep = storage.ai_add_round(None, "保留", "答")
+        drop = storage.ai_add_round(None, "删除", "答")
+        assert storage.ai_clear_history(drop) == 1
+        assert storage.ai_list_messages(drop) == []
+        assert storage.ai_list_messages(keep)
+        assert storage.ai_clear_history(999) == 0
+
+    def test_clear_all(self, storage):
+        """清全部历史."""
+        storage.ai_add_round(None, "q", "a")
+        storage.ai_add_round(None, "q2", "a2")
+        assert storage.ai_clear_history() == 2
+        assert storage.ai_list_sessions() == []
