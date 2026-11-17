@@ -51,6 +51,7 @@ from shuimu.gui.links_page import LinksPage
 from shuimu.plugins.campus.campus_tab import CampusTab
 from shuimu.plugins.learn.learn_page import LearnPage
 from shuimu.plugins.cloud.cloud_page import CloudPage
+from shuimu.plugins.ai.ai_tab import AiTab
 from shuimu.gui.plugin_runner import run_plugin_dialogs
 from shuimu.gui.schedule_view import ScheduleTab
 from shuimu.gui.titlebar import TitleBar
@@ -138,6 +139,7 @@ class MainWindow(QMainWindow):
             ("learn", self.center_tabs, self.learn_page),
             ("cloud", self.center_tabs, self.cloud_page),
             ("campus", self.tabs, self.campus_tab),
+            ("ai", self.tabs, self.ai_tab),
         )
         self.reload_plugins()
         self._apply_plugin_tabs()
@@ -396,6 +398,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.schedule_tab, "日程")
         self.campus_tab = CampusTab(self.ctl, self.tabs)
         self.tabs.addTab(self.campus_tab, "校园")
+        self.ai_tab = AiTab(self.ctl, self.tabs)
+        self.tabs.addTab(self.ai_tab, "AI")
+        self.ai_tab.status_message.connect(self.statusBar().showMessage)
 
     def _build_organize_tab(self) -> QWidget:
         tab = QWidget(self.tabs)

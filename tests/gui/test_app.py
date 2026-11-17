@@ -29,12 +29,13 @@ def test_main_window_structure(qtbot, tmp_path):
     assert window.center_tabs.isTabVisible(0)
     assert not window.center_tabs.isTabVisible(2)   # 学堂: 未启用隐藏
     assert not window.center_tabs.isTabVisible(3)   # 云盘: 未启用隐藏
-    assert window.tabs.count() == 3
-    assert [window.tabs.tabText(i) for i in range(3)] == ["整理", "日程",
-                                                          "校园"]
+    assert window.tabs.count() == 4
+    assert [window.tabs.tabText(i) for i in range(4)] == ["整理", "日程",
+                                                          "校园", "AI"]
     assert not window.tabs.isTabVisible(2)          # 校园: 未启用隐藏
+    assert not window.tabs.isTabVisible(3)          # AI: 未启用隐藏
     # 左栏插件面板: 内置插件全部列出(含未启用)
-    assert window.plugin_tree.topLevelItemCount() == 4
+    assert window.plugin_tree.topLevelItemCount() == 5
     storage.close()
 
 

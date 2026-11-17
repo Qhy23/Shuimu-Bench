@@ -31,7 +31,8 @@ class TestPluginPanel:
         """内置四插件全部在列; 未启用项灰显且按钮为\"启用\"."""
         window, storage = make_window(qtbot, tmp_path)
         buttons = panel_buttons(window)
-        assert set(buttons) == {"hwcheck", "campus", "learn", "cloud"}
+        assert set(buttons) == {"hwcheck", "campus", "learn", "cloud",
+                               "ai"}
         assert buttons["hwcheck"] == "禁用"      # read 插件默认启用
         assert buttons["campus"] == "启用"
         assert buttons["learn"] == "启用"

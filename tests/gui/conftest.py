@@ -19,3 +19,5 @@ def plugins_isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "shuimu.core.controller.default_campus_fingerprint_path",
         lambda: str(tmp_path / "campus-fingerprint"))
+    monkeypatch.setattr("shuimu.core.controller.default_ai_config_path",
+                        lambda: str(tmp_path / "ai-config.json"))
