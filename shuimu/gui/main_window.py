@@ -223,16 +223,6 @@ class MainWindow(QMainWindow):
         self.course_tree.customContextMenuRequested.connect(
             self._show_course_menu)
         layout.addWidget(self.course_tree)
-        row = QHBoxLayout()
-        row.addWidget(_button("新建课程", self._add_course))
-        row.addWidget(_button("新建目录", self._folder_create))
-        row.addWidget(_button("添加链接", self._add_link))
-        layout.addLayout(row)
-        row2 = QHBoxLayout()
-        row2.addWidget(_button("删除课程", self._delete_course))
-        row2.addWidget(_button("移除选中", self._remove_selected))
-        row2.addWidget(_button("刷新", self.reload_courses))
-        layout.addLayout(row2)
         self.left_tabs.addTab(course_panel, "课程")
         plugin_panel = QWidget(self.left_tabs)
         plugin_layout = QVBoxLayout(plugin_panel)
@@ -540,23 +530,31 @@ class MainWindow(QMainWindow):
             menu.exec(self.course_tree.viewport().mapToGlobal(pos))
 
     def _build_course_menu(self, item) -> QMenu:
-        """构造右键菜单(与弹出分离, 便于测试).
+        """构造右键菜单(与弹出分离, 便于测试); 操作全部整合于此.
 
-        课程: 新建目录/添加链接/删除课程; 文件夹: 新建子目录/重命名/
-        移动到/删除; 文件·目录索引: 打开/定位/移动到/移除索引;
-        链接: 打开/移动到/移除索引. 空白处不弹菜单.
+        空白: 新建课程/刷新(无课程语境, 不给课程内操作); 课程: 另加
+        新建目录/添加链接/删除课程; 文件夹: 新建子目录/添加链接/
+        重命名/移动到/删除; 文件索引: 打开/定位/移动到/移除索引;
+        链接: 打开/移动到/移除索引.
         """
         menu = QMenu(self.course_tree)
         if item is None:
+            menu.addAction("新建课程", self._add_course)
+            menu.addSeparator()
+            menu.addAction("刷新", self.reload_courses)
             return menu
         if item.data(0, ROLE_COURSE_ID) is not None:
+            menu.addAction("新建课程", self._add_course)
             menu.addAction("新建目录", self._folder_create)
             menu.addAction("添加链接", self._add_link)
+            menu.addSeparator()
+            menu.addAction("刷新", self.reload_courses)
             menu.addSeparator()
             menu.addAction("删除课程", self._delete_course)
             return menu
         if item.data(0, ROLE_FOLDER_ID) is not None:
             menu.addAction("新建子目录", self._folder_create)
+            menu.addAction("添加链接", self._add_link)
             menu.addSeparator()
             menu.addAction(self.course_act_rename)
             menu.addAction("移动到...", self._move_current)

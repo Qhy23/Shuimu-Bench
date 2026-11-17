@@ -128,17 +128,18 @@ class TestMenus:
         """四类节点菜单条目各按设计."""
         window, _s, _c, _f1, _f2, _rid, course = _setup(qtbot, tmp_path)
         assert _texts(window._build_course_menu(course)) \
-            == ["新建目录", "添加链接", "", "删除课程"]
+            == ["新建课程", "新建目录", "添加链接", "", "刷新", "", "删除课程"]
+        assert _texts(window._build_course_menu(None)) \
+            == ["新建课程", "", "刷新"]
         folder_node = course.child(0)
-        assert _texts(window._build_course_menu(folder_node))[:2] \
-            == ["新建子目录", ""]
+        assert _texts(window._build_course_menu(folder_node)) \
+            == ["新建子目录", "添加链接", "", "重命名", "移动到...", "删除"]
         file_node = folder_node.child(0).child(0)
         assert _texts(window._build_course_menu(file_node)) \
             == ["打开", "在中栏定位", "", "移动到...", "移除索引"]
         link_node = folder_node.child(1)
         assert _texts(window._build_course_menu(link_node)) \
             == ["打开", "", "移动到...", "移除索引"]
-        assert _texts(window._build_course_menu(None)) == []
         _s.close()
 
     def test_shortcuts_registered(self, qtbot, tmp_path):
