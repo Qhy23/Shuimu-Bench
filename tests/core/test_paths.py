@@ -8,6 +8,7 @@ import yaml
 from shuimu.core.config import DEFAULTS
 from shuimu.core.paths import (
     cli_history_path,
+    default_ai_config_path,
     default_db_path,
     default_links_path,
     default_schedule_path,
@@ -93,6 +94,24 @@ class TestLinksPaths:
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
         path = default_links_path()
+        assert str(tmp_path) in path
+        monkeypatch.delattr(sys, "frozen", raising=False)
+
+
+class TestAiConfigPath:
+    """AI 工具配置 JSON 路径."""
+
+    def test_dev_mode_under_project(self):
+        """源码运行时配置在项目 data/ 下."""
+        path = default_ai_config_path()
+        assert path.endswith(os.path.join("data", "ai-config.json"))
+        assert project_root() in path
+
+    def test_frozen_mode_uses_user_dir(self, monkeypatch, tmp_path):
+        """打包后落到平台用户数据目录."""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        path = default_ai_config_path()
         assert str(tmp_path) in path
         monkeypatch.delattr(sys, "frozen", raising=False)
 

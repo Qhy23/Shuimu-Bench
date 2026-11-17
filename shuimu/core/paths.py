@@ -104,6 +104,17 @@ def default_learn_download_dir() -> str:
     return os.path.join(project_root(), "data", "learn")
 
 
+def default_ai_config_path() -> str:
+    """AI 工具配置 JSON 位置(base_url/model/api_key; 0o600, 不入仓库).
+
+    与 default_campus_session_path 同款分叉: dev 在项目 data/,
+    frozen 在用户数据目录.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.join(user_data_dir(), "ai-config.json")
+    return os.path.join(project_root(), "data", "ai-config.json")
+
+
 def user_data_dir() -> str:
     """平台用户数据目录."""
     if sys.platform == "win32":
