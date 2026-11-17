@@ -41,18 +41,20 @@ class TestFolderTree:
                 for i in range(f1_node.childCount())] \
             == ["第1周", "[链接] https://example.com/"]
 
-    def test_dir_resource_double_click_locates(self, qtbot, tmp_path):
-        """目录索引双击仍在中栏定位."""
+    def test_legacy_dir_resources_hidden(self, qtbot, tmp_path):
+        """历史目录索引行不再显示(目录索引概念已废)."""
         storage, window = _make_window(qtbot, tmp_path)
         cid = storage.ensure_default_course()
         sub = tmp_path / "资料"
         sub.mkdir()
         storage.add_resource(cid, "dir", str(sub))
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        storage.add_resource(cid, "file", str(f))
         window.reload_courses()
-        node = window.course_tree.topLevelItem(0).child(0)
-        window._on_resource_activated(node, 0)
-        assert os.path.realpath(window.workspace_root) \
-            == os.path.realpath(str(sub))
+        course = window.course_tree.topLevelItem(0)
+        assert course.childCount() == 1                 # 只剩文件条目
+        assert course.child(0).text(0) == "a.txt"
         storage.close()
 
     def test_locate_file_selects_in_browser(self, qtbot, tmp_path):

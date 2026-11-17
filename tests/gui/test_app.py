@@ -126,24 +126,27 @@ def test_resource_activated_opens_file(qtbot, tmp_path, monkeypatch):
     storage.close()
 
 
-def test_resource_activated_dir_locates_in_browser(qtbot, tmp_path, monkeypatch):
-    """双击目录资源仍在中栏定位, 不调用系统程序打开."""
-    opened = []
-    monkeypatch.setattr("shuimu.gui.main_window._open_local",
-                        lambda path: opened.append(path) or True)
+def test_add_directory_imports_as_folders(qtbot, tmp_path):
+    """中栏目录"加入课程"递归导入: 虚拟文件夹 + 文件索引, 不建目录索引."""
     storage = Storage(str(tmp_path / "ui6.db"))
     window = MainWindow(storage, schedule_path=str(tmp_path / "sched.yaml"),
                         links_path=str(tmp_path / "links.yaml"))
     qtbot.addWidget(window)
     sub = tmp_path / "课件"
-    sub.mkdir()
+    (sub / "第1周").mkdir(parents=True)
+    (sub / "README.md").write_text("x")
+    (sub / "第1周" / "第7讲.pdf").write_text("y")
     course_id = storage.list_courses()[0]["id"]
-    window.ctl.add_resource(course_id, str(sub))
-    window.reload_courses()
-    node = window.course_tree.topLevelItem(0).child(0)
-    window._on_resource_activated(node, 0)
-    assert not opened
-    assert os.path.realpath(window.workspace_root) == os.path.realpath(str(sub))
+    window.course_tree.setCurrentItem(window.course_tree.topLevelItem(0))
+    window._on_add_requested(str(sub))
+    folders = storage.list_folders(course_id)
+    names = {f["name"] for f in folders}
+    assert names == {"课件", "第1周"}          # 两级虚拟文件夹
+    kinds = {r["kind"] for r in storage.list_resources(course_id)}
+    assert kinds == {"file"}                   # 无目录索引行
+    assert storage.find_resource(course_id, str(sub / "README.md")) is not None
+    status = window.statusBar().currentMessage()
+    assert "已导入目录 课件" in status and "2 个文件" in status
     storage.close()
 
 

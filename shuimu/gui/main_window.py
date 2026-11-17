@@ -352,15 +352,24 @@ class MainWindow(QMainWindow):
         return self.file_page.set_workspace_root(path)
 
     def _on_add_requested(self, path: str) -> None:
-        """文件页请求把选中项登记进当前课程(落点跟随左栏选中文件夹)."""
+        """文件页请求登记: 目录递归导入为虚拟文件夹层级, 文件进目标文件夹.
+
+        落点跟随左栏选中文件夹; 目录导入后展开新文件夹父链.
+        """
         course_id, folder_id = self._current_target_folder()
         if course_id is None:
             self.statusBar().showMessage("请先在左栏选中一门课程")
             return
-        result = self.ctl.add_resource(course_id, path, folder_id=folder_id)
+        if os.path.isdir(path):
+            result = self.ctl.import_directory(course_id, path, folder_id)
+        else:
+            result = self.ctl.add_resource(course_id, path, folder_id=folder_id)
         self.statusBar().showMessage(result.message)
         if result.ok:
             self.reload_courses()
+            if "folder_id" in result.detail:
+                self._expand_to_new_folder(course_id,
+                                           result.detail["folder_id"])
 
     def _on_open_requested(self, path: str) -> None:
         """文件页请求用系统默认程序打开文件."""
@@ -461,6 +470,10 @@ class MainWindow(QMainWindow):
 
         build(None, course_node)
         for res in resources:
+            if res["kind"] == "dir":
+                # 目录索引概念已废(2026-11-17): 目录经 import_directory
+                # 导入为虚拟文件夹; 历史目录索引行不再显示
+                continue
             exists, changed = Storage.check_resource(res)
             label = res["display_name"]
             if res["kind"] == "link":
@@ -718,18 +731,16 @@ class MainWindow(QMainWindow):
             self.reload_courses()
 
     def _locate_resource(self, res) -> None:
-        """在中栏定位: 目录索引进入该目录, 文件索引进父目录并选中文件."""
+        """在中栏定位文件索引: 切到父目录并选中该文件."""
         path = res["path_or_url"]
         if not os.path.exists(path):
             self.statusBar().showMessage(f"已失效: {path}")
             return
-        target = path if res["kind"] == "dir" else os.path.dirname(path)
-        if not self.set_workspace_root(target):
+        if not self.set_workspace_root(os.path.dirname(path)):
             return
-        if res["kind"] != "dir":
-            index = self.file_page.file_model.index(path)
-            if index.isValid():
-                self.file_page.file_view.setCurrentIndex(index)
+        index = self.file_page.file_model.index(path)
+        if index.isValid():
+            self.file_page.file_view.setCurrentIndex(index)
 
     def _current_course_id(self):
         item = self.course_tree.currentItem()
@@ -812,7 +823,7 @@ class MainWindow(QMainWindow):
         self.reload_courses()
 
     def _on_resource_activated(self, item, _column) -> None:
-        """双击资源: 链接用浏览器打开, 文件用系统默认程序打开, 目录在中栏定位."""
+        """双击索引条目: 链接用浏览器打开, 文件用系统默认程序打开."""
         rid = item.data(0, ROLE_RESOURCE_ID)
         if rid is None:
             return                # 课程/文件夹节点: 双击仅切换展开
@@ -827,14 +838,11 @@ class MainWindow(QMainWindow):
         if not os.path.exists(path):
             self.statusBar().showMessage(f"已失效: {path}")
             return
-        if os.path.isfile(path):
-            if _open_local(path):
-                self.statusBar().showMessage(f"已打开: {path}")
-            else:
-                warn(self, "无法打开文件",
-                      f"系统没有可用于打开该文件的默认程序:\n{path}")
-            return
-        self.set_workspace_root(path)
+        if _open_local(path):
+            self.statusBar().showMessage(f"已打开: {path}")
+        else:
+            warn(self, "无法打开文件",
+                  f"系统没有可用于打开该文件的默认程序:\n{path}")
 
     # ---- 右栏: 整理 ----
 
