@@ -135,13 +135,19 @@ class FolderActions:
         if cascade:
             removed = self.storage.remove_resources_in_folders(descendants)
         self.storage.folder_delete_tree(folder_id)
+        sub_folders = len(descendants) - 1
         self.storage.log_operation(
             "folder_delete", path_snapshot=folder["name"],
-            detail={"cascade": cascade, "removed_resources": removed})
+            detail={"cascade": cascade, "removed_resources": removed,
+                    "removed_folders": sub_folders})
         message = f"已删除文件夹 {folder['name']}"
-        if removed:
-            message += f"(级联移除 {removed} 条索引)"
-        return ActionResult(True, message, {"removed_resources": removed})
+        if removed or sub_folders:
+            message += (f"(级联移除 {removed} 条索引"
+                        + (f", {sub_folders} 个子文件夹" if sub_folders else "")
+                        + ")")
+        return ActionResult(True, message,
+                            {"removed_resources": removed,
+                             "removed_folders": sub_folders})
 
     def folder_move(self, folder_id: int, parent_id) -> ActionResult:
         """移动文件夹到另一文件夹下(None=课程根), 含环检测."""

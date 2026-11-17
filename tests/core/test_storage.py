@@ -81,6 +81,7 @@ class TestFolder:
         storage.set_resource_folder(rid, None)
         assert storage.get_resource(rid)["folder_id"] is None
         storage.set_resource_folder(rid, f2)
+        assert storage.count_resources_in_folders([f1, f2]) == 1   # 只读计数
         assert storage.remove_resources_in_folders([f1, f2]) == 1
         assert storage.get_resource(rid) is None
 

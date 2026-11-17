@@ -673,8 +673,11 @@ class MainWindow(QMainWindow):
         folder = self.storage.get_folder(folder_id)
         if folder is None:
             return
-        children = self.storage.count_folder_children(folder_id)
-        if not children:
+        # 条目统计为全部子孙(子文件夹与其中索引总和), 非直接子项
+        descendants = self.storage.folder_descendants(folder_id)
+        sub_folders = len(descendants) - 1
+        resources = self.storage.count_resources_in_folders(descendants)
+        if not self.storage.count_folder_children(folder_id):
             answer = QMessageBox.question(
                 self, "删除文件夹", f"删除空文件夹「{folder['name']}」?")
             if answer != QMessageBox.StandardButton.Yes:
@@ -684,7 +687,10 @@ class MainWindow(QMainWindow):
             box = QMessageBox(self)
             box.setWindowTitle("删除非空文件夹")
             box.setIcon(QMessageBox.Icon.Question)
-            box.setText(f"文件夹「{folder['name']}」含 {children} 个直接条目.")
+            scope = f"{resources} 个索引条目" if resources else "无索引条目"
+            if sub_folders:
+                scope += f", {sub_folders} 个子文件夹"
+            box.setText(f"文件夹「{folder['name']}」内共 {scope}.")
             box.setInformativeText(
                 "可先移走其中条目再删除; 或连同子文件夹与其中索引一并移除"
                 "(只动索引, 磁盘文件不受影响).")

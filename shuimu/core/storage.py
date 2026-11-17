@@ -287,6 +287,15 @@ class Storage:
         self._conn.commit()
         return cur.rowcount
 
+    def count_resources_in_folders(self, folder_ids: list) -> int:
+        """归属这些文件夹的索引行总数(只读, 不删)."""
+        if not folder_ids:
+            return 0
+        marks = ",".join("?" * len(folder_ids))
+        return self._conn.execute(
+            f"SELECT COUNT(*) FROM resources WHERE folder_id IN ({marks})",
+            folder_ids).fetchone()[0]
+
     def set_resource_folder(self, resource_id: int, folder_id) -> None:
         """把索引条目移入文件夹(None=课程根)."""
         self._conn.execute(

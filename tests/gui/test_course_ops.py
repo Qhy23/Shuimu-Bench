@@ -35,10 +35,13 @@ class _FakeBox:
     ButtonRole = QMessageBox.ButtonRole
     question_answer = QMessageBox.StandardButton.Yes
     click_mode = None
+    instances = []
 
     def __init__(self, *_a, **_k):
-        """记录弹框按钮."""
+        """记录弹框按钮与正文(实例留档供测试断言)."""
         self._buttons = []
+        self.text = ""
+        type(self).instances.append(self)
 
     @staticmethod
     def question(*_a, **_k):
@@ -49,8 +52,9 @@ class _FakeBox:
         """忽略标题."""
     def setIcon(self, _i):
         """忽略图标."""
-    def setText(self, _t):
-        """忽略正文."""
+    def setText(self, text):
+        """记录正文."""
+        self.text = text
     def setInformativeText(self, _t):
         """忽略说明文字."""
 
@@ -197,6 +201,22 @@ class TestFolderOps:
         monkeypatch.setattr("shuimu.gui.main_window.QMessageBox", _FakeBox)
         window._delete_current()
         assert storage.get_folder(f3) is None
+        storage.close()
+
+    def test_delete_dialog_counts_descendants(self, qtbot, tmp_path,
+                                              monkeypatch):
+        """删除弹框统计全部子孙(索引条目与子文件夹), 非直接子项."""
+        window, storage, _cid, _f1, _f2, _rid, _course = _setup(qtbot, tmp_path)
+        monkeypatch.setattr("shuimu.gui.main_window.QMessageBox", _FakeBox)
+        _FakeBox.instances.clear()
+        window.course_tree.setCurrentItem(
+            window.course_tree.topLevelItem(0).child(0))     # 课件
+        _FakeBox.click_mode = None                           # 取消, 只看弹框
+        window._delete_current()
+        text = _FakeBox.instances[-1].text
+        # 课件 下: 链接(直属于课件) + 第1周/a.txt = 2 条索引, 1 个子文件夹
+        assert "2 个索引条目" in text and "1 个子文件夹" in text
+        _FakeBox.click_mode = None
         storage.close()
 
     def test_delete_nonempty_cascade_and_cancel(self, qtbot, tmp_path,
