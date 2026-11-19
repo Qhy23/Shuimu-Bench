@@ -59,6 +59,7 @@ DEFAULTS = {
         "max_pdf_pages": 30,         # PDF 按页提取上限
         "timeout_seconds": 120,      # 请求超时秒数(含流式读)
         "keep_messages": 200,        # 对话历史保留条数(超出删最旧)
+        "context_tokens": 0,         # 模型上下文窗口 tokens(GUI 用量显示); 0 不显示上限
     },
 }
 

@@ -47,6 +47,7 @@ class AiTab(QWidget):
         super().__init__(parent)
         self._ctl = ctl
         self._session_id = None      # None = 新对话
+        self._session_tokens = 0     # 本次进入会话以来的累计 tokens
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.stack = QStackedWidget()
@@ -144,9 +145,11 @@ class AiTab(QWidget):
         self.input_edit.setFixedHeight(72)
         column.addWidget(self.input_edit)
         send_row = QHBoxLayout()
+        self.tokens_label = QLabel("")
+        self.tokens_label.setStyleSheet(f"color: {theme.FG_DIM};")
+        send_row.addWidget(self.tokens_label, 1)
         self.send_button = QPushButton("发送")
         self.send_button.clicked.connect(self._send)
-        send_row.addStretch(1)
         send_row.addWidget(self.send_button)
         column.addLayout(send_row)
         shortcut = QShortcut(QKeySequence("Ctrl+Return"), self.input_edit)
@@ -289,6 +292,7 @@ class AiTab(QWidget):
             self.status_label.setText(
                 f"上下文 {len(context_items)} 条, 未纳入: "
                 f"{', '.join(skipped[:5])}")
+        self._update_tokens(result.detail.get("usage") or {})
         self._scroll_to_end()
 
     def _on_delta(self, piece: str) -> None:
@@ -297,6 +301,23 @@ class AiTab(QWidget):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(piece)
         QApplication.processEvents()
+
+    def _update_tokens(self, usage: dict) -> None:
+        """更新输入区下方的会话累计用量(可配窗口上限时一并显示)."""
+        total = usage.get("total_tokens")
+        if isinstance(total, int):
+            self._session_tokens += total
+        window = int(self._ctl.config.get("ai", {}).get(
+            "context_tokens", 0) or 0)
+        text = f"本会话累计 {self._session_tokens} tokens"
+        if window > 0:
+            text += f" / 可用 {window}"
+        self.tokens_label.setText(text)
+
+    def _reset_tokens(self) -> None:
+        """新对话/切换会话: 累计清零(历史轮次的用量未持久化)."""
+        self._session_tokens = 0
+        self.tokens_label.setText("")
 
     def _scroll_to_end(self) -> None:
         """消息流滚动到底部."""
@@ -308,6 +329,7 @@ class AiTab(QWidget):
         self._session_id = None
         self.session_box.setCurrentIndex(0)
         self.chat_browser.clear()
+        self._reset_tokens()
 
     def _on_session_picked(self, index: int) -> None:
         """切换会话(下拉 data 为 None 表示新对话)."""
@@ -317,6 +339,7 @@ class AiTab(QWidget):
             return
         self._session_id = session_id
         self._rebuild_chat()
+        self._reset_tokens()
 
     def _clear_history(self) -> None:
         """清除全部对话历史(确认框)."""

@@ -33,6 +33,7 @@ class FakeAiController:
         self.enabled_calls = []
         self.cleared = 0
         self.plugins = SimpleNamespace(get=lambda pid: self.record)
+        self.config = {"ai": {}}
         self.storage = SimpleNamespace(
             list_courses=lambda: [{"id": 1, "name": "高数"},
                                   {"id": 2, "name": "AI 编程"}],
@@ -74,6 +75,7 @@ class FakeAiController:
                                  "message_count": 2})
         return ActionResult(True, "已回答", {
             "answer": "第一段第二段", "session_id": new_id,
+            "usage": {"total_tokens": 42},
             "context_items": [{"label": "讲义.pdf", "source": "高数",
                                "kind": "file", "chars": 10,
                                "truncated": False, "skipped": ""}]})
@@ -189,6 +191,19 @@ class TestChat:
         assert "AI: 第一段第二段" in text
         assert widget.input_edit.toPlainText() == ""
         assert widget.session_box.count() == 2   # 新对话 + 1 个会话
+
+    def test_tokens_accumulate_and_reset(self, tab):
+        """tokens 常驻输入区下方: 逐轮累计, 新对话清零, 可配窗口上限."""
+        widget, ctl = tab
+        ctl.config = {"ai": {"context_tokens": 1000}}
+        widget.input_edit.setPlainText("问一")
+        widget._send()
+        assert widget.tokens_label.text() == "本会话累计 42 tokens / 可用 1000"
+        widget.input_edit.setPlainText("问二")
+        widget._send()
+        assert "累计 84 tokens" in widget.tokens_label.text()
+        widget._new_chat()
+        assert widget.tokens_label.text() == ""
 
     def test_send_failure_appends_note(self, tab):
         """失败: 错误消息追加在消息流内."""
