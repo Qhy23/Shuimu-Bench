@@ -38,6 +38,8 @@ learn:
 ai:                              # AI 工具调优项; base_url/model/api_key 存
                                  # data/ai-config.json(0o600, 不入仓库),
                                  # 常用服务地址: 智谱 https://open.bigmodel.cn/api/paas/v4
+                                 #   (Claude Code 资源包走 https://open.bigmodel.cn/api/anthropic,
+                                 #    自动按 Anthropic 协议调用, 与 paas/v4 额度不通用)
                                  # DeepSeek https://api.deepseek.com/v1
                                  # Kimi https://api.moonshot.cn/v1
                                  # Ollama 本地 http://localhost:11434/v1

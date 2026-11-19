@@ -345,3 +345,154 @@ class TestAiConfigStore:
         path.write_text(json.dumps({"base_url": "u", "extra": 1,
                                     "model": 5}), encoding="utf-8")
         assert AiConfigStore(str(path)).load() == {"base_url": "u"}
+
+
+ANTHROPIC_BASE = "https://open.bigmodel.cn/api/anthropic"
+
+
+def _anthropic_config():
+    """Anthropic 协议配置(base_url 含 /anthropic 片段)."""
+    return AiConfig(base_url=ANTHROPIC_BASE, api_key="sk-ant",
+                    model="glm-5.3")
+
+
+def _anthropic_payload(text="答案", stop="end_turn"):
+    """构造一条 Anthropic 非流式响应体."""
+    return {"type": "message", "role": "assistant", "model": "glm-5.3",
+            "content": [{"type": "text", "text": text}],
+            "stop_reason": stop,
+            "usage": {"input_tokens": 10, "output_tokens": 3}}
+
+
+def _anth_event(obj):
+    """构造一条 Anthropic SSE 行(event 行 + data 行)."""
+    return ["event: " + obj.get("type", "x"),
+            "data: " + json.dumps(obj, ensure_ascii=False)]
+
+
+class TestAnthropicNonStream:
+    """Anthropic 协议非流式."""
+
+    def test_protocol_inferred_and_headers(self):
+        """base_url 含 /anthropic: 端点 /v1/messages, x-api-key 头."""
+        transport = MemoryAiTransport()
+        transport.add_json(payload=_anthropic_payload())
+        AiClient(_anthropic_config(), transport).chat(MESSAGES)
+        url, headers, body, _stream = transport.requests[0]
+        assert url == (ANTHROPIC_BASE + "/v1/messages")
+        assert headers["x-api-key"] == "sk-ant"
+        assert headers["anthropic-version"] == "2023-06-01"
+        assert "Authorization" not in headers
+        assert body["max_tokens"] == 4096
+
+    def test_success_and_usage_mapped(self):
+        """content 数组拼接, usage 映射为 OpenAI 键名."""
+        transport = MemoryAiTransport()
+        transport.add_json(payload=_anthropic_payload("第一段"))
+        reply = AiClient(_anthropic_config(), transport).chat(MESSAGES)
+        assert reply.content == "第一段"
+        assert reply.finish_reason == "end_turn"
+        assert reply.usage == {"prompt_tokens": 10,
+                               "completion_tokens": 3, "total_tokens": 13}
+        assert reply.model == "glm-5.3"
+
+    def test_system_lifted_to_top_level(self):
+        """system 消息抽为顶层 system 参数, 不进 messages."""
+        transport = MemoryAiTransport()
+        transport.add_json(payload=_anthropic_payload())
+        messages = [{"role": "system", "content": "资料"}, MESSAGES[0]]
+        AiClient(_anthropic_config(), transport).chat(messages)
+        body = transport.requests[0][2]
+        assert body["system"] == "资料"
+        assert body["messages"] == [MESSAGES[0]]
+
+    def test_error_body_message_extracted(self):
+        """Anthropic 错误体 error.message 提取, 401 归 auth."""
+        transport = MemoryAiTransport()
+        transport.add_json(status=401, payload={
+            "type": "error",
+            "error": {"type": "authentication_error",
+                      "message": "invalid api key"}})
+        with pytest.raises(AiError) as exc:
+            AiClient(_anthropic_config(), transport).chat(MESSAGES)
+        assert exc.value.kind == "auth"
+        assert "invalid api key" in str(exc.value)
+
+    def test_missing_content_protocol(self):
+        """缺 content 字段归 protocol."""
+        transport = MemoryAiTransport()
+        transport.add_json(payload={"type": "message"})
+        with pytest.raises(AiError) as exc:
+            AiClient(_anthropic_config(), transport).chat(MESSAGES)
+        assert exc.value.kind == "protocol"
+
+    def test_balance_error_is_rate_limit(self):
+        """智谱余额不足形态(429 + error.code 1113)归 rate_limit."""
+        transport = MemoryAiTransport()
+        transport.add_json(status=429, payload={
+            "type": "error",
+            "error": {"code": "1113",
+                      "message": "余额不足或无可用资源包,请充值。"}})
+        with pytest.raises(AiError) as exc:
+            AiClient(_anthropic_config(), transport).chat(MESSAGES)
+        assert exc.value.kind == "rate_limit"
+
+
+class TestAnthropicStream:
+    """Anthropic 协议流式."""
+
+    def test_stream_events_aggregate(self):
+        """事件流逐块回调, 增量聚合, usage/stop_reason 提取."""
+        transport = MemoryAiTransport()
+        lines = []
+        lines += _anth_event({"type": "message_start", "message": {
+            "model": "glm-5.3", "usage": {"input_tokens": 7}}})
+        lines += _anth_event({"type": "ping"})
+        lines += _anth_event({"type": "content_block_start",
+                              "index": 0})
+        lines += _anth_event({"type": "content_block_delta", "index": 0,
+                              "delta": {"type": "text_delta",
+                                        "text": "水木"}})
+        lines += _anth_event({"type": "content_block_delta", "index": 0,
+                              "delta": {"type": "text_delta",
+                                        "text": "工作台"}})
+        lines += _anth_event({"type": "content_block_stop", "index": 0})
+        lines += _anth_event({"type": "message_delta",
+                              "delta": {"stop_reason": "end_turn"},
+                              "usage": {"output_tokens": 4}})
+        lines += _anth_event({"type": "message_stop"})
+        lines.append("data: [DONE]")
+        transport.add_stream(lines)
+        pieces = []
+        reply = AiClient(_anthropic_config(), transport).chat(
+            MESSAGES, stream=True, on_delta=pieces.append)
+        assert reply.content == "水木工作台"
+        assert pieces == ["水木", "工作台"]
+        assert reply.finish_reason == "end_turn"
+        assert reply.usage == {"prompt_tokens": 7, "completion_tokens": 4,
+                               "total_tokens": 11}
+        assert reply.model == "glm-5.3"
+
+    def test_stream_non_text_delta_ignored(self):
+        """非 text_delta 增量(如工具调用)不产出文本."""
+        transport = MemoryAiTransport()
+        lines = _anth_event({"type": "content_block_delta",
+                             "delta": {"type": "input_json_delta",
+                                       "partial_json": "{\"x\""}})
+        lines += _anth_event({"type": "content_block_delta",
+                              "delta": {"type": "text_delta",
+                                        "text": "ok"}})
+        lines.append("data: [DONE]")
+        transport.add_stream(list(lines))
+        reply = AiClient(_anthropic_config(), transport).chat(
+            MESSAGES, stream=True)
+        assert reply.content == "ok"
+
+    def test_stream_bad_json(self):
+        """流中坏 JSON 抛 protocol."""
+        transport = MemoryAiTransport()
+        transport.add_stream(["data: {bad"])
+        with pytest.raises(AiError) as exc:
+            AiClient(_anthropic_config(), transport).chat(
+                MESSAGES, stream=True)
+        assert exc.value.kind == "protocol"

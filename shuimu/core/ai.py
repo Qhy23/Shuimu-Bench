@@ -1,14 +1,19 @@
-"""OpenAI 兼容聊天客户端: 最小 transport 协议, urllib 实现, SSE 流式解析.
+"""OpenAI 兼容 + Anthropic 协议聊天客户端: 最小 transport, urllib, SSE 流式.
 
-不引 openai SDK; base_url 指向任一 OpenAI 兼容服务(智谱/DeepSeek/Kimi/
-Ollama 等)的 API 根(如 https://api.deepseek.com/v1), 客户端拼
-/chat/completions. api_key 经 Bearer 头携带, 为空时不发 Authorization
-(本地 Ollama 免鉴权).
+不引第三方 SDK; 按服务分两种协议, 由 base_url 自动推断:
+
+- OpenAI 兼容(智谱 paas/v4 / DeepSeek / Kimi / Ollama 等): base_url 为
+  API 根(如 https://api.deepseek.com/v1), 拼 /chat/completions,
+  api_key 经 Bearer 头携带, 为空时不发 Authorization(本地 Ollama 免鉴权).
+- Anthropic Messages(base_url 含 "/anthropic", 如智谱给 Claude Code
+  用户的 https://open.bigmodel.cn/api/anthropic): 拼 /v1/messages,
+  x-api-key + anthropic-version 头, system 消息抽为顶层 system 参数,
+  max_tokens 必填(内定 4096); 该端点的 key 资源包与 paas/v4 不通用.
 
 传输层自带最小协议(post_json 整读 + post_stream 逐行), 与 campus_net 的
 "单跳整读"契约互不影响; 非流式响应复用 campus_net.HttpResponse 纯数据类.
-SSE 解析为行迭代器纯函数, 不做多行 data 聚合(OpenAI 兼容生态均为单行
-载荷; 如需支持多行 data 的服务再扩展聚合模式).
+SSE 解析为行迭代器纯函数, 不做多行 data 聚合(两种协议均为单行载荷;
+如需支持多行 data 的服务再扩展聚合模式).
 
 api_key 永不入留痕; 用户级配置(base_url/model/api_key)由 AiConfigStore
 落 data/ai-config.json(0o600), 不入 config.yaml(会随仓库分发).
@@ -26,6 +31,9 @@ from shuimu.core.campus_net import HttpResponse
 AI_USER_AGENT = "ShuimuBench/0.1"
 CONFIG_KEYS = ("base_url", "model", "api_key")
 ERROR_KINDS = ("config", "auth", "rate_limit", "server", "network", "protocol")
+ANTHROPIC_VERSION = "2023-06-01"      # Anthropic Messages 协议版本头
+ANTHROPIC_MAX_TOKENS = 4096           # Anthropic 协议 max_tokens 必填
+ANTHROPIC_MARK = "/anthropic"         # base_url 含此片段则走 Anthropic 协议
 
 
 class AiError(Exception):
@@ -249,12 +257,60 @@ def parse_stream_delta(payload: str) -> str:
     return content if isinstance(content, str) else ""
 
 
+def parse_anthropic_delta(data: dict) -> str:
+    """Anthropic SSE 载荷(已解析的 dict) -> text_delta 增量文本.
+
+    载荷自带 type 字段(event: 行无需依赖); 非 content_block_delta 或
+    非文本增量(如工具调用)返回空串.
+    """
+    if data.get("type") != "content_block_delta":
+        return ""
+    delta = data.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "text_delta":
+        return ""
+    text = delta.get("text")
+    return text if isinstance(text, str) else ""
+
+
+def _split_system(messages: list) -> tuple:
+    """messages -> (system 文本, 其余消息列表).
+
+    Anthropic 协议 system 是顶层参数; 多条 system 消息以换行拼接.
+    """
+    system_parts = []
+    rest = []
+    for message in messages:
+        if message.get("role") == "system":
+            content = message.get("content")
+            if isinstance(content, str) and content:
+                system_parts.append(content)
+        else:
+            rest.append(message)
+    return "\n".join(system_parts), rest
+
+
+def _anthropic_usage(raw: dict) -> dict:
+    """Anthropic usage(input/output_tokens) -> OpenAI 形态键名."""
+    prompt = raw.get("input_tokens")
+    completion = raw.get("output_tokens")
+    mapped = {}
+    if isinstance(prompt, int):
+        mapped["prompt_tokens"] = prompt
+    if isinstance(completion, int):
+        mapped["completion_tokens"] = completion
+        mapped["total_tokens"] = prompt + completion \
+            if isinstance(prompt, int) else completion
+    return mapped
+
+
 class AiClient:
-    """OpenAI 兼容 chat/completions 客户端(非流式与流式)."""
+    """聊天客户端: OpenAI 兼容与 Anthropic 协议(按 base_url 推断)."""
 
     def __init__(self, config: AiConfig, transport: AiTransport = None):
         self._config = config
         self._transport = transport or UrllibAiTransport(config.timeout)
+        self._protocol = "anthropic" \
+            if ANTHROPIC_MARK in config.base_url else "openai"
 
     def chat(self, messages: list, stream: bool = False,
              on_delta=None) -> AiReply:
@@ -265,6 +321,8 @@ class AiClient:
         """
         if not self._config.base_url or not self._config.model:
             raise AiError("config", "base_url 与 model 未配置")
+        if self._protocol == "anthropic":
+            return self._chat_anthropic(messages, stream, on_delta)
         body = {"model": self._config.model, "messages": messages,
                 "stream": bool(stream)}
         if stream:
@@ -285,6 +343,89 @@ class AiClient:
                        finish_reason=finish if isinstance(finish, str) else "",
                        usage=dict(usage) if isinstance(usage, dict) else {},
                        model=self._echo_model(data))
+
+    # ---- Anthropic Messages 协议 ----
+
+    def _chat_anthropic(self, messages: list, stream: bool,
+                        on_delta) -> AiReply:
+        """Anthropic 协议一轮对话: system 抽为顶层参数, max_tokens 必填."""
+        system, rest = _split_system(messages)
+        body = {"model": self._config.model,
+                "max_tokens": ANTHROPIC_MAX_TOKENS,
+                "messages": rest, "stream": bool(stream)}
+        if system:
+            body["system"] = system
+        if stream:
+            return self._chat_anthropic_stream(body, on_delta)
+        response = self._post_json_anthropic(body)
+        self._raise_for_status(response.status, response.text)
+        data = self._parse_json(response.text)
+        blocks = data.get("content")
+        if not isinstance(blocks, list):
+            raise AiError("protocol", "响应缺少 content 字段")
+        content = "".join(
+            block.get("text", "") for block in blocks
+            if isinstance(block, dict) and block.get("type") == "text")
+        raw_usage = data.get("usage") if isinstance(
+            data.get("usage"), dict) else {}
+        finish = data.get("stop_reason")
+        return AiReply(content=content,
+                       finish_reason=finish if isinstance(finish, str) else "",
+                       usage=_anthropic_usage(raw_usage),
+                       model=self._echo_model(data))
+
+    def _chat_anthropic_stream(self, body: dict, on_delta) -> AiReply:
+        """Anthropic 流式: 逐 data: 载荷按 type 字段分派聚合."""
+        try:
+            response = self._transport.post_stream(
+                self._endpoint(), self._headers(), body)
+        except AiNetworkError as exc:
+            raise AiError("network", str(exc)) from exc
+        if not 200 <= response.status < 300:
+            self._raise_for_status(response.status,
+                                   "".join(response.lines))
+        parts = []
+        finish = ""
+        usage = {}
+        model = ""
+        for payload in iter_sse_data(response.lines):
+            try:
+                data = json.loads(payload)
+            except ValueError as exc:
+                raise AiError("protocol",
+                              f"SSE 载荷不是合法 JSON: {payload[:80]}") from exc
+            if not isinstance(data, dict):
+                raise AiError("protocol", "SSE 载荷不是 JSON 对象")
+            kind = data.get("type")
+            if kind == "content_block_delta":
+                piece = parse_anthropic_delta(data)
+                if piece:
+                    parts.append(piece)
+                    if on_delta is not None:
+                        on_delta(piece)
+            elif kind == "message_delta":
+                delta = data.get("delta")
+                if isinstance(delta, dict) and isinstance(
+                        delta.get("stop_reason"), str):
+                    finish = delta["stop_reason"]
+                if isinstance(data.get("usage"), dict):
+                    usage.update(data["usage"])   # 只带 output, 合并保留 input
+            elif kind == "message_start":
+                message = data.get("message")
+                if isinstance(message, dict):
+                    model = self._echo_model(message)
+                    if isinstance(message.get("usage"), dict):
+                        usage.update(message["usage"])
+        return AiReply(content="".join(parts), finish_reason=finish,
+                       usage=_anthropic_usage(usage),
+                       model=model or self._config.model)
+
+    def _post_json_anthropic(self, body: dict) -> HttpResponse:
+        try:
+            return self._transport.post_json(
+                self._endpoint(), self._headers(), body)
+        except AiNetworkError as exc:
+            raise AiError("network", str(exc)) from exc
 
     def _chat_stream(self, body: dict, on_delta) -> AiReply:
         try:
@@ -333,11 +474,18 @@ class AiClient:
             raise AiError("network", str(exc)) from exc
 
     def _endpoint(self) -> str:
+        if self._protocol == "anthropic":
+            return self._config.base_url.rstrip("/") + "/v1/messages"
         return self._config.base_url.rstrip("/") + "/chat/completions"
 
     def _headers(self) -> dict:
         headers = {"Content-Type": "application/json"}
-        if self._config.api_key:
+        if not self._config.api_key:
+            return headers
+        if self._protocol == "anthropic":
+            headers["x-api-key"] = self._config.api_key
+            headers["anthropic-version"] = ANTHROPIC_VERSION
+        else:
             headers["Authorization"] = f"Bearer {self._config.api_key}"
         return headers
 

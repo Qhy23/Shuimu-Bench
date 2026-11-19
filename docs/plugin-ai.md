@@ -8,15 +8,18 @@
 python cli.py plugin-enable ai --yes
 ```
 
-需要一个 OpenAI 兼容服务的 API Key(Ollama 本地服务可免). 常用服务地址(base_url)与模型示例:
+需要一个 OpenAI 兼容服务或 Anthropic 协议服务的 API Key(Ollama 本地服务可免). 常用服务地址(base_url)与模型示例:
 
-| 服务 | base_url | 模型示例 |
-|---|---|---|
-| 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| Kimi (月之暗面) | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
-| Ollama 本地 | `http://localhost:11434/v1` | `qwen3:8b` |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| 服务 | base_url | 协议 | 模型示例 |
+|---|---|---|---|
+| 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | OpenAI 兼容 | `glm-5.3` |
+| 智谱 AI (Claude Code 资源包) | `https://open.bigmodel.cn/api/anthropic` | Anthropic | `glm-5.3` |
+| DeepSeek | `https://api.deepseek.com/v1` | OpenAI 兼容 | `deepseek-chat` |
+| Kimi (月之暗面) | `https://api.moonshot.cn/v1` | OpenAI 兼容 | `moonshot-v1-8k` |
+| Ollama 本地 | `http://localhost:11434/v1` | OpenAI 兼容 | `qwen3:8b` |
+| OpenAI | `https://api.openai.com/v1` | OpenAI 兼容 | `gpt-4o-mini` |
+
+协议按 base_url 自动推断: 地址含 `/anthropic` 走 Anthropic Messages 协议, 其余走 OpenAI 兼容协议, 无需额外配置. 注意智谱两种端点的资源包**不通用**: Claude Code 订阅的 key 只在 `/anthropic` 端点有额度, 请按自己 key 的类型选 base_url; 模型名用 API 名(如 `glm-5.3`, 完整清单见 `GET <base_url>/models`), 不要填 `GLM-5.3[1m]` 这类客户端别名.
 
 ## 配置
 
