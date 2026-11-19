@@ -7,6 +7,7 @@
 """
 
 import html
+import logging
 import os
 import re
 import zipfile
@@ -222,12 +223,21 @@ def _extract_plain(path: str, limit_chars: int) -> tuple:
 
 
 def _extract_pdf(path: str, limit_chars: int, max_pdf_pages: int) -> tuple:
-    """PDF 按页提取(pypdf 函数内导入, 未装时降级为明确错误)."""
+    """PDF 按页提取(pypdf 函数内导入, 未装时降级为明确错误).
+
+    pypdf 对 xref 瑕疵("Ignoring wrong pointing object")与 CFF 字体
+    编码会按 WARNING 打 stderr 刷屏(LaTeX 排版的数学讲义尤其多),
+    提取期间把 pypdf logger 静音到 ERROR: 这些是尽力提取的容错
+    提示, 提取结果照常返回; 需要诊断时可自行调低该 logger 级别.
+    """
     try:
         # 函数内导入: 未安装 pypdf 只影响 PDF 路径, 不影响模块导入
         from pypdf import PdfReader  # pylint: disable=import-outside-toplevel
     except ImportError:
         return "", "未安装 pypdf (pip install pypdf)"
+    pypdf_logger = logging.getLogger("pypdf")
+    previous_level = pypdf_logger.level
+    pypdf_logger.setLevel(logging.ERROR)
     try:
         reader = PdfReader(path)
         if reader.is_encrypted:
@@ -242,6 +252,8 @@ def _extract_pdf(path: str, limit_chars: int, max_pdf_pages: int) -> tuple:
         full = "\n".join(texts).strip()
     except Exception as exc:                # pylint: disable=broad-exception-caught
         return "", f"PDF 无法解析: {exc}"
+    finally:
+        pypdf_logger.setLevel(previous_level)
     if not full:
         return "", "无文本层(可能是扫描件)"
     return full[:limit_chars], ""
