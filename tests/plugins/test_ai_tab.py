@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import QUrl
 
 from shuimu.core.controller import ActionResult
 from shuimu.plugins.ai.ai_tab import (
@@ -58,23 +59,25 @@ class FakeAiController:
 
     def ai_ask(self, question, course_ids=None, resource_ids=None,
                include_learn=False, session_id=None, stream=False,
-               on_delta=None):
-        """问答替身: 流式分两块回调, 落一条会话."""
+               on_delta=None, think=False, on_thinking=None):
+        """问答替身: 思考(勾选时)与回答流式回调, 落一条会话."""
         del resource_ids, stream
         self.ask_calls.append((question, list(course_ids or []),
-                               include_learn, session_id))
+                               include_learn, session_id, think))
+        if think and on_thinking is not None:
+            on_thinking(getattr(self, "ask_thinking_text", "先想想"))
+        answer = getattr(self, "ask_answer", "第一段第二段")
         if on_delta is not None:
-            on_delta("第一段")
-            on_delta("第二段")
+            on_delta(answer)
         self.session_seq += 1
         new_id = self.session_seq
         self.messages[new_id] = [
             {"role": "user", "content": question},
-            {"role": "assistant", "content": "第一段第二段"}]
+            {"role": "assistant", "content": answer}]
         self.sessions.insert(0, {"id": new_id, "title": question[:40],
                                  "message_count": 2})
         return ActionResult(True, "已回答", {
-            "answer": "第一段第二段", "session_id": new_id,
+            "answer": answer, "session_id": new_id,
             "usage": {"total_tokens": 42},
             "context_items": [{"label": "讲义.pdf", "source": "高数",
                                "kind": "file", "chars": 10,
@@ -186,9 +189,10 @@ class TestChat:
         widget.input_edit.setPlainText("什么是特征值")
         widget._send()
         assert ctl.ask_calls[0][0] == "什么是特征值"
+        assert ctl.ask_calls[0][4] is False    # 默认不深度思考
         text = widget.chat_browser.toPlainText()
-        assert "我: 什么是特征值" in text
-        assert "AI: 第一段第二段" in text
+        assert "什么是特征值" in text and "我" in text
+        assert "第一段第二段" in text
         assert widget.input_edit.toPlainText() == ""
         assert widget.session_box.count() == 2   # 新对话 + 1 个会话
 
@@ -204,6 +208,48 @@ class TestChat:
         assert "累计 84 tokens" in widget.tokens_label.text()
         widget._new_chat()
         assert widget.tokens_label.text() == ""
+
+    def test_thinking_inline_toggle(self, tab):
+        """思考内嵌该轮回答前: 默认收起锚点行, 点击展开/再收起."""
+        widget, ctl = tab
+        widget.think_check.setChecked(True)
+        widget.input_edit.setPlainText("难题")
+        widget._send()
+        assert ctl.ask_calls[0][4] is True
+        text = widget.chat_browser.toPlainText()
+        assert "思考过程 (3 字)" in text       # 锚点行带字数
+        assert "先想想" not in text            # 收起态不显示内容
+        widget._on_anchor(QUrl("think:0"))
+        assert "先想想" in widget.chat_browser.toPlainText()
+        widget._on_anchor(QUrl("think:0"))
+        assert "先想想" not in widget.chat_browser.toPlainText()
+        assert "思考过程 (3 字)" in widget.chat_browser.toPlainText()
+
+    def test_math_rendered(self, tab):
+        """行内/行间公式经轻量转换渲染, 无占位符残留."""
+        widget, ctl = tab
+        ctl.ask_answer = "面积 $S = \\pi r^2$ 成立"
+        widget.input_edit.setPlainText("公式")
+        widget._send()
+        html = widget.chat_browser.toHtml()
+        assert "π" in widget.chat_browser.toPlainText()
+        assert "r<sup>2</sup>" in html or "font-weight:700" in html
+        assert "\u2063" not in widget.chat_browser.toPlainText()
+        del ctl.ask_answer
+
+    def test_answer_rendered_as_markdown(self, tab):
+        """完成后整流重渲染: 标题/加粗生效, 历史轮次不丢."""
+        widget, ctl = tab
+        ctl.ask_answer = "# 小节\n\n这是**加粗**内容"
+        widget.input_edit.setPlainText("q1")
+        widget._send()
+        ctl.ask_answer = "第二轮回答"
+        widget.input_edit.setPlainText("q2")
+        widget._send()
+        html = widget.chat_browser.toHtml()
+        assert "xx-large" in html                  # h1 生效
+        assert "q1" in widget.chat_browser.toPlainText()   # 首轮仍在
+        del ctl.ask_answer
 
     def test_send_failure_appends_note(self, tab):
         """失败: 错误消息追加在消息流内."""
@@ -241,7 +287,7 @@ class TestChat:
         # 两条会话 + 新对话占位
         assert widget.session_box.count() == 3
         widget.session_box.setCurrentIndex(2)
-        assert "我: 第一问" in widget.chat_browser.toPlainText()
+        assert "第一问" in widget.chat_browser.toPlainText()
 
     def test_new_chat_clears_view(self, tab):
         """新对话: 视图清空回到无会话态."""

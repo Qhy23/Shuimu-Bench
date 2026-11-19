@@ -1,9 +1,18 @@
 """右栏"AI"页签: 插件启用引导 / 配置表单 / 对话主视图三态.
 
 对话/配置全部经 controller.ai_* 动作; 构造与页签切换零联网(只读
-配置文件与本地库). 流式回复为同步调用 + on_delta 内增量追加 +
-processEvents(learn 页同款取舍, 线程化留后续).
+配置文件与本地库). 流式回复为同步调用 + 增量追加 + processEvents
+(learn 页同款取舍, 线程化留后续).
+
+消息流按轮次结构(self._rounds)整体渲染: 每轮 = 问题 + 思考折叠区 +
+回答 + 脚注; 思考以锚点链接内嵌在该轮回答之前(主流 AI 形态), 点击
+展开/收起后整流重建; 思考与回答流式期间按纯文本追加, 本轮完成后
+整流重渲染为 Markdown(逐块 insertMarkdown 会丢段落), 数学公式经
+core/ai_math 轻量转换(占位符 -> LaTeX 子集 HTML). 思考不持久化,
+历史回放只含问答本身.
 """
+
+import html as html_mod
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
@@ -24,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from shuimu.core.ai_math import extract_formulas, latex_to_html
 from shuimu.core.controller import Controller
 from shuimu.gui import theme
 from shuimu.gui.dialogs import confirm_network_enable, warn
@@ -31,11 +41,27 @@ from shuimu.gui.dialogs import confirm_network_enable, warn
 PAGE_DISABLED, PAGE_CONFIG, PAGE_MAIN = 0, 1, 2
 CONTEXT_ALL = "all"      # 上下文下拉"全部课程"的 data 值
 
+USER_HEAD = '<p style="color:{primary};"><b>我</b></p>'
+AI_HEAD = '<p><b>AI</b></p>'
+THINK_TOGGLE = ('<p style="color:{dim};font-size:small">'
+                '<a href="{href}">{text}</a></p>')
+THINK_BODY = '<p style="color:{dim};font-size:small">{text}</p>'
+FOOTNOTE = '<p style="color:{dim};font-size:small">— {text}</p>'
+FAILED_NOTE = '<p style="color:{danger};">({text})</p>'
+
 
 def _confirm(parent, text: str) -> bool:
     """确认框(独立成函数便于测试替换)."""
     answer = QMessageBox.question(parent, "确认", text)
     return answer == QMessageBox.StandardButton.Yes
+
+
+def _new_round(question: str, thinking: str = "", answer: str = "",
+               footnote: str = "", failed: bool = False) -> dict:
+    """一轮对话的渲染结构."""
+    return {"question": question, "thinking": thinking, "answer": answer,
+            "footnote": footnote, "failed": failed,
+            "thinking_open": False}
 
 
 class AiTab(QWidget):
@@ -48,6 +74,9 @@ class AiTab(QWidget):
         self._ctl = ctl
         self._session_id = None      # None = 新对话
         self._session_tokens = 0     # 本次进入会话以来的累计 tokens
+        self._rounds = []            # 当前会话的轮次渲染结构
+        self._thinking_parts = []    # 本轮流式的思考增量缓存
+        self._thinking_shown = False # 本轮流式是否已显示过思考段
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.stack = QStackedWidget()
@@ -131,10 +160,14 @@ class AiTab(QWidget):
         self.learn_check = QCheckBox("含学堂缓存")
         self.learn_check.setChecked(True)
         context.addWidget(self.learn_check)
+        self.think_check = QCheckBox("深度思考")
+        self.think_check.setToolTip("回答前先深度思考(更慢, 消耗更多 tokens)")
+        context.addWidget(self.think_check)
         column.addLayout(context)
         # 消息流
         self.chat_browser = QTextBrowser()
         self.chat_browser.setOpenExternalLinks(False)
+        self.chat_browser.anchorClicked.connect(self._on_anchor)
         column.addWidget(self.chat_browser, 1)
         self.status_label = QLabel("")
         self.status_label.setStyleSheet(f"color: {theme.FG_DIM};")
@@ -203,17 +236,109 @@ class AiTab(QWidget):
         self.session_box.setCurrentIndex(max(index, 0))
         self.session_box.blockSignals(False)
 
-    def _rebuild_chat(self) -> None:
-        """按当前会话重建消息流."""
+    def _load_rounds_from_storage(self) -> None:
+        """按当前会话从本地库重建轮次(思考不持久化, 恒空)."""
+        self._rounds = []
         if self._session_id is None:
-            self.chat_browser.clear()
             return
-        parts = []
         for row in self._ctl.storage.ai_list_messages(self._session_id):
-            prefix = "我: " if row["role"] == "user" else "AI: "
-            parts.append(prefix + row["content"])
-        self.chat_browser.setPlainText("\n\n".join(parts))
+            if row["role"] == "user":
+                self._rounds.append(_new_round(row["content"]))
+            elif self._rounds:
+                self._rounds[-1]["answer"] = row["content"]
+
+    def _rebuild_chat(self) -> None:
+        """整流重建消息流(唯一的富文本渲染入口)."""
+        self.chat_browser.clear()
+        cursor = self.chat_browser.textCursor()
+        for index, one_round in enumerate(self._rounds):
+            self._render_round(cursor, index, one_round)
         self._scroll_to_end()
+
+    def _render_round(self, cursor: QTextCursor, index: int,
+                      one_round: dict) -> None:
+        """渲染单轮: 问题 / 思考折叠区 / 回答 / 脚注."""
+        if index > 0:
+            self._append_html(cursor, "<p><br></p>")
+        self._append_html(cursor, USER_HEAD.format(primary=theme.PRIMARY))
+        self._insert_markdown_math(cursor, one_round["question"])
+        self._append_html(cursor, "<p><br></p>" + AI_HEAD)
+        if one_round["thinking"]:
+            self._render_thinking(cursor, index, one_round)
+        if one_round["failed"]:
+            self._append_html(cursor, FAILED_NOTE.format(
+                danger=theme.DANGER,
+                text=html_mod.escape(one_round["answer"])))
+        else:
+            self._insert_markdown_math(cursor, one_round["answer"])
+        if one_round["footnote"]:
+            self._append_html(cursor, "<p><br></p>" + FOOTNOTE.format(
+                dim=theme.FG_DIM,
+                text=html_mod.escape(one_round["footnote"])))
+
+    def _render_thinking(self, cursor: QTextCursor, index: int,
+                         one_round: dict) -> None:
+        """思考折叠区: 锚点行 + (展开时)灰色正文, 内嵌于回答之前."""
+        thinking = one_round["thinking"]
+        opened = one_round["thinking_open"]
+        marker = "▾" if opened else "▸"
+        label = (f"{marker} 思考过程" if opened
+                 else f"{marker} 思考过程 ({len(thinking)} 字)")
+        self._append_html(cursor, THINK_TOGGLE.format(
+            dim=theme.FG_DIM, href=f"think:{index}", text=label))
+        if opened:
+            self._append_html(cursor, THINK_BODY.format(
+                dim=theme.FG_DIM,
+                text=html_mod.escape(thinking).replace("\n", "<br>")))
+
+    def _on_anchor(self, url) -> None:
+        """锚点点击: think:N 切换该轮思考展开/收起."""
+        target = url.toString()
+        if not target.startswith("think:"):
+            return
+        try:
+            index = int(target.split(":", 1)[1])
+        except ValueError:
+            return
+        if 0 <= index < len(self._rounds):
+            self._rounds[index]["thinking_open"] = \
+                not self._rounds[index]["thinking_open"]
+            self._rebuild_chat()
+
+    # ---- 消息流渲染辅助 ----
+
+    @staticmethod
+    def _append_html(cursor: QTextCursor, fragment: str) -> None:
+        """在光标处插入 HTML 片段."""
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(fragment)
+
+    def _insert_markdown_math(self, cursor: QTextCursor, text: str) -> None:
+        """Markdown 渲染 + 数学公式轻量转换.
+
+        公式先替换为占位符再渲染正文, 然后在本轮插入范围内查找
+        占位符并替换为 LaTeX 近似 HTML(范围用文档字符数界定,
+        textCursor 副本位置不可靠).
+        """
+        plain, formulas = extract_formulas(text)
+        document = self.chat_browser.document()
+        scope_start = document.characterCount() - 1
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertMarkdown(plain)
+        scope_end = document.characterCount()
+        for index, latex in enumerate(formulas):
+            finder = QTextCursor(document)
+            finder.setPosition(scope_start)
+            hit = document.find(f"⁣F{index}⁣", finder)
+            if not hit.isNull() and hit.position() <= scope_end:
+                hit.insertHtml(latex_to_html(latex))
+
+    def _append_plain(self, piece: str) -> None:
+        """流式期间纯文本追加(完成后整流重渲染)."""
+        cursor = self.chat_browser.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(piece)
+        QApplication.processEvents()
 
     # ---- 动作 ----
 
@@ -255,7 +380,7 @@ class AiTab(QWidget):
         return [data]
 
     def _send(self) -> None:
-        """发送问题; 流式追加回复."""
+        """发送问题; 思考与回答流式纯文本追加, 完成后整流重渲染."""
         question = self.input_edit.toPlainText().strip()
         if not question:
             return
@@ -264,43 +389,67 @@ class AiTab(QWidget):
         self.status_label.setText("回答中...")
         self.repaint()
         cursor = self.chat_browser.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        if self.chat_browser.toPlainText():
-            cursor.insertText("\n\n")
-        cursor.insertText(f"我: {question}\n\nAI: ")
+        if self._rounds:
+            self._append_html(cursor, "<p><br></p>")
+        self._append_html(cursor, USER_HEAD.format(primary=theme.PRIMARY))
+        self._append_plain(question)
+        self._append_html(cursor, "<p><br></p>" + AI_HEAD)
+        self._thinking_parts = []
+        self._thinking_shown = False
         self.input_edit.clear()
         result = self._ctl.ai_ask(
             question, course_ids=self._selected_course_ids(),
             include_learn=self.learn_check.isChecked(),
             session_id=self._session_id, stream=True,
+            think=self.think_check.isChecked(),
+            on_thinking=self._on_thinking,
             on_delta=self._on_delta)
         self.send_button.setEnabled(True)
         self.new_chat_button.setEnabled(True)
         self.status_label.setText("")
+        thinking = "".join(self._thinking_parts)
         if not result.ok:
-            cursor = self.chat_browser.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.insertText(f"\n\n({result.message})")
+            self._rounds.append(_new_round(question, thinking=thinking,
+                                           answer=result.message,
+                                           failed=True))
+            self._rebuild_chat()
             self.status_message.emit(result.message)
             return
         self._session_id = result.detail["session_id"]
+        self._rounds.append(_new_round(
+            question, thinking=thinking,
+            answer=result.detail.get("answer", ""),
+            footnote=self._build_footnote(result.detail)))
+        self._update_tokens(result.detail.get("usage") or {})
         self._refresh_sessions()
-        context_items = result.detail.get("context_items") or []
-        skipped = [item["label"] for item in context_items
+        self._rebuild_chat()
+        skipped = [item["label"] for item in
+                   result.detail.get("context_items") or []
                    if item.get("skipped")]
         if skipped:
-            self.status_label.setText(
-                f"上下文 {len(context_items)} 条, 未纳入: "
-                f"{', '.join(skipped[:5])}")
-        self._update_tokens(result.detail.get("usage") or {})
-        self._scroll_to_end()
+            self.status_label.setText("未纳入: " + ", ".join(skipped[:5]))
 
     def _on_delta(self, piece: str) -> None:
-        """流式增量追加(不重绘全文)."""
-        cursor = self.chat_browser.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(piece)
-        QApplication.processEvents()
+        """回答增量: 纯文本追加; 思考段后首个增量前隔开."""
+        if self._thinking_shown:
+            self._append_plain("\n\n")
+            self._thinking_shown = False
+        self._append_plain(piece)
+
+    def _on_thinking(self, piece: str) -> None:
+        """思考增量: 纯文本先行显示(完成后折叠进锚点行)."""
+        if not self._thinking_parts:
+            self._append_plain("· 思考\n")
+            self._thinking_shown = True
+        self._thinking_parts.append(piece)
+        self._append_plain(piece)
+
+    def _build_footnote(self, detail: dict) -> str:
+        """本轮脚注文本: 上下文统计 + 耗时."""
+        items = detail.get("context_items") or []
+        elapsed = (detail.get("elapsed_ms") or 0) / 1000
+        return (f"上下文 {len(items)} 条 "
+                f"{detail.get('context_chars', 0)} 字符 · {elapsed:.1f}s")
 
     def _update_tokens(self, usage: dict) -> None:
         """更新输入区下方的会话累计用量(可配窗口上限时一并显示)."""
@@ -327,8 +476,9 @@ class AiTab(QWidget):
     def _new_chat(self) -> None:
         """开始新对话(历史保留, 输入区清空)."""
         self._session_id = None
+        self._rounds = []
         self.session_box.setCurrentIndex(0)
-        self.chat_browser.clear()
+        self._rebuild_chat()
         self._reset_tokens()
 
     def _on_session_picked(self, index: int) -> None:
@@ -338,6 +488,7 @@ class AiTab(QWidget):
         if session_id == self._session_id:
             return
         self._session_id = session_id
+        self._load_rounds_from_storage()
         self._rebuild_chat()
         self._reset_tokens()
 
@@ -348,5 +499,7 @@ class AiTab(QWidget):
         result = self._ctl.ai_clear_history()
         self.status_message.emit(result.message)
         self._session_id = None
+        self._rounds = []
         self._refresh_sessions()
         self._rebuild_chat()
+        self._reset_tokens()
