@@ -123,6 +123,29 @@ class TestAiAsk:
         code, out, _err = run(capsys, db, "ai-ask", "问", "--no-stream")
         assert code == 0 and "整段回答" in out
 
+    def test_ask_think_flag(self, capsys, tmp_path, ai_cli):
+        """--think: 请求带 anthropic thinking 参数, 思考走 stderr."""
+        db = str(tmp_path / "t.db")
+        configure(capsys, tmp_path)
+        AiConfigStore(str(tmp_path / "ai-config.json")).save(
+            {"base_url": "https://open.bigmodel.cn/api/anthropic",
+             "model": "glm-5.3", "api_key": "k"})
+        ai_cli.add_stream([
+            "data: " + json.dumps({"type": "content_block_delta",
+                                   "delta": {"type": "thinking_delta",
+                                             "thinking": "想一想"}}),
+            "data: " + json.dumps({"type": "content_block_delta",
+                                   "delta": {"type": "text_delta",
+                                             "text": "答"}}),
+            "data: [DONE]"])
+        code, out, err = run(capsys, db, "ai-ask", "q", "--think")
+        assert code == 0
+        assert out.rstrip("\n") == "答"
+        assert "想一想" in err
+        body = ai_cli.requests[0][2]
+        assert body["thinking"] == {"type": "enabled",
+                                    "budget_tokens": 2000}
+
     def test_ask_auth_error(self, capsys, tmp_path, ai_cli):
         """鉴权失败: 退出码 2, stderr 有提示."""
         db = str(tmp_path / "t.db")

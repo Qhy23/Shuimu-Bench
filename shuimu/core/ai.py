@@ -33,6 +33,8 @@ CONFIG_KEYS = ("base_url", "model", "api_key")
 ERROR_KINDS = ("config", "auth", "rate_limit", "server", "network", "protocol")
 ANTHROPIC_VERSION = "2023-06-01"      # Anthropic Messages 协议版本头
 ANTHROPIC_MAX_TOKENS = 4096           # Anthropic 协议 max_tokens 必填
+THINKING_BUDGET = 2000                 # 深度思考的思考 token 预算
+ANTHROPIC_THINKING_MAX_TOKENS = 8192   # thinking 时 max_tokens 须大于预算
 ANTHROPIC_MARK = "/anthropic"         # base_url 含此片段则走 Anthropic 协议
 
 
@@ -66,12 +68,16 @@ class AiConfig:
 
 @dataclass
 class AiReply:
-    """一轮对话的结果; 流式时 usage 可能为空 dict(服务端未回传)."""
+    """一轮对话的结果; thinking 为思考文本(未请求或服务端未给则为空).
+
+    流式时 usage 可能为空 dict(服务端未回传).
+    """
 
     content: str
     finish_reason: str = ""
     usage: dict = field(default_factory=dict)
     model: str = ""
+    thinking: str = ""
 
 
 @dataclass
@@ -272,6 +278,26 @@ def parse_anthropic_delta(data: dict) -> str:
     return text if isinstance(text, str) else ""
 
 
+def parse_anthropic_thinking(data: dict) -> str:
+    """Anthropic SSE 载荷 -> thinking_delta 增量思考文本; 其余返回空串."""
+    if data.get("type") != "content_block_delta":
+        return ""
+    delta = data.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "thinking_delta":
+        return ""
+    text = delta.get("thinking")
+    return text if isinstance(text, str) else ""
+
+
+def _first_str(source: dict, keys: tuple) -> str:
+    """按序取 source 中第一个非空字符串键的值; 无则空串."""
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 def _split_system(messages: list) -> tuple:
     """messages -> (system 文本, 其余消息列表).
 
@@ -313,50 +339,67 @@ class AiClient:
             if ANTHROPIC_MARK in config.base_url else "openai"
 
     def chat(self, messages: list, stream: bool = False,
-             on_delta=None) -> AiReply:
+             on_delta=None, think: bool = False,
+             on_thinking=None) -> AiReply:
         """一轮对话. messages 为 [{'role','content'}, ...].
 
         stream=True 时逐 data: 载荷调 on_delta(增量文本)并聚合全文,
-        on_delta 为 None 也照常聚合. 网络层故障与非法响应统一转 AiError.
+        on_delta 为 None 也照常聚合. think=True 请求深度思考: Anthropic
+        协议带 thinking 参数, OpenAI 协议不特殊传参(reasoning 模型会
+        自行输出); 思考增量经 on_thinking 回调, 全文入 AiReply.thinking.
+        网络层故障与非法响应统一转 AiError.
         """
         if not self._config.base_url or not self._config.model:
             raise AiError("config", "base_url 与 model 未配置")
         if self._protocol == "anthropic":
-            return self._chat_anthropic(messages, stream, on_delta)
+            return self._chat_anthropic(messages, stream, on_delta,
+                                        think, on_thinking)
         body = {"model": self._config.model, "messages": messages,
                 "stream": bool(stream)}
         if stream:
-            return self._chat_stream(body, on_delta)
+            return self._chat_stream(body, on_delta, on_thinking)
         response = self._post_json(body)
         self._raise_for_status(response.status, response.text)
         data = self._parse_json(response.text)
         try:
             choice = data["choices"][0]
-            content = choice["message"]["content"]
+            message = choice["message"]
+            content = message["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise AiError("protocol", "响应缺少 choices/message 字段") from exc
         if not isinstance(content, str):
             raise AiError("protocol", "响应 content 不是字符串")
+        thinking = _first_str(message, ("reasoning_content", "reasoning"))
         usage = data.get("usage")
         finish = choice.get("finish_reason")
         return AiReply(content=content,
                        finish_reason=finish if isinstance(finish, str) else "",
                        usage=dict(usage) if isinstance(usage, dict) else {},
-                       model=self._echo_model(data))
+                       model=self._echo_model(data), thinking=thinking)
 
     # ---- Anthropic Messages 协议 ----
 
     def _chat_anthropic(self, messages: list, stream: bool,
-                        on_delta) -> AiReply:
-        """Anthropic 协议一轮对话: system 抽为顶层参数, max_tokens 必填."""
+                        on_delta, think: bool = False,
+                        on_thinking=None) -> AiReply:
+        """Anthropic 协议一轮对话: system 抽为顶层参数, max_tokens 必填.
+
+        think=True 时请求深度思考(thinking 参数, 预算 THINKING_BUDGET,
+        max_tokens 相应放大到大于预算), 思考增量经 on_thinking 回调.
+        """
         system, rest = _split_system(messages)
+        max_tokens = ANTHROPIC_THINKING_MAX_TOKENS if think \
+            else ANTHROPIC_MAX_TOKENS
         body = {"model": self._config.model,
-                "max_tokens": ANTHROPIC_MAX_TOKENS,
+                "max_tokens": max_tokens,
                 "messages": rest, "stream": bool(stream)}
         if system:
             body["system"] = system
+        if think:
+            body["thinking"] = {"type": "enabled",
+                                "budget_tokens": THINKING_BUDGET}
         if stream:
-            return self._chat_anthropic_stream(body, on_delta)
+            return self._chat_anthropic_stream(body, on_delta, on_thinking)
         response = self._post_json_anthropic(body)
         self._raise_for_status(response.status, response.text)
         data = self._parse_json(response.text)
@@ -366,15 +409,19 @@ class AiClient:
         content = "".join(
             block.get("text", "") for block in blocks
             if isinstance(block, dict) and block.get("type") == "text")
+        thinking = "".join(
+            block.get("thinking", "") for block in blocks
+            if isinstance(block, dict) and block.get("type") == "thinking")
         raw_usage = data.get("usage") if isinstance(
             data.get("usage"), dict) else {}
         finish = data.get("stop_reason")
         return AiReply(content=content,
                        finish_reason=finish if isinstance(finish, str) else "",
                        usage=_anthropic_usage(raw_usage),
-                       model=self._echo_model(data))
+                       model=self._echo_model(data), thinking=thinking)
 
-    def _chat_anthropic_stream(self, body: dict, on_delta) -> AiReply:
+    def _chat_anthropic_stream(self, body: dict, on_delta,
+                                on_thinking=None) -> AiReply:
         """Anthropic 流式: 逐 data: 载荷按 type 字段分派聚合."""
         try:
             response = self._transport.post_stream(
@@ -385,6 +432,7 @@ class AiClient:
             self._raise_for_status(response.status,
                                    "".join(response.lines))
         parts = []
+        thoughts = []
         finish = ""
         usage = {}
         model = ""
@@ -403,6 +451,11 @@ class AiClient:
                     parts.append(piece)
                     if on_delta is not None:
                         on_delta(piece)
+                thought = parse_anthropic_thinking(data)
+                if thought:
+                    thoughts.append(thought)
+                    if on_thinking is not None:
+                        on_thinking(thought)
             elif kind == "message_delta":
                 delta = data.get("delta")
                 if isinstance(delta, dict) and isinstance(
@@ -418,7 +471,8 @@ class AiClient:
                         usage.update(message["usage"])
         return AiReply(content="".join(parts), finish_reason=finish,
                        usage=_anthropic_usage(usage),
-                       model=model or self._config.model)
+                       model=model or self._config.model,
+                       thinking="".join(thoughts))
 
     def _post_json_anthropic(self, body: dict) -> HttpResponse:
         try:
@@ -427,7 +481,8 @@ class AiClient:
         except AiNetworkError as exc:
             raise AiError("network", str(exc)) from exc
 
-    def _chat_stream(self, body: dict, on_delta) -> AiReply:
+    def _chat_stream(self, body: dict, on_delta,
+                     on_thinking=None) -> AiReply:
         try:
             response = self._transport.post_stream(
                 self._endpoint(), self._headers(), body)
@@ -437,6 +492,7 @@ class AiClient:
             self._raise_for_status(response.status,
                                    "".join(response.lines))
         parts = []
+        thoughts = []
         finish = ""
         usage = {}
         model = ""
@@ -452,11 +508,18 @@ class AiClient:
             if isinstance(choices, list) and choices and isinstance(
                     choices[0], dict):
                 delta = choices[0].get("delta")
-                piece = delta.get("content") if isinstance(delta, dict) else None
-                if isinstance(piece, str) and piece:
-                    parts.append(piece)
-                    if on_delta is not None:
-                        on_delta(piece)
+                if isinstance(delta, dict):
+                    piece = _first_str(delta, ("content",))
+                    if piece:
+                        parts.append(piece)
+                        if on_delta is not None:
+                            on_delta(piece)
+                    thought = _first_str(delta, ("reasoning_content",
+                                                 "reasoning"))
+                    if thought:
+                        thoughts.append(thought)
+                        if on_thinking is not None:
+                            on_thinking(thought)
                 reason = choices[0].get("finish_reason")
                 if isinstance(reason, str) and reason:
                     finish = reason
@@ -464,7 +527,8 @@ class AiClient:
                 usage = data["usage"]
             model = self._echo_model(data) or model
         return AiReply(content="".join(parts), finish_reason=finish,
-                       usage=usage, model=model or self._config.model)
+                       usage=usage, model=model or self._config.model,
+                       thinking="".join(thoughts))
 
     def _post_json(self, body: dict) -> HttpResponse:
         try:

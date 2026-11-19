@@ -24,6 +24,8 @@ def build_ai_subcommands(sub) -> None:
                        help="附带学堂缓存(公告/作业描述)")
     p_ask.add_argument("--no-stream", action="store_true",
                        help="关闭流式, 等全部生成后一次性输出")
+    p_ask.add_argument("--think", action="store_true",
+                       help="深度思考(思考流打到 stderr, 回答仍走 stdout)")
     p_cfg = sub.add_parser("ai-config", help="查看/保存 AI 配置")
     p_cfg.add_argument("--base-url", help="OpenAI 兼容服务地址")
     p_cfg.add_argument("--model", help="模型名")
@@ -56,17 +58,27 @@ def _emit(result) -> int:
 
 
 def _ask(ctl: Controller, args) -> int:
-    """ai-ask: 流式逐段打印到 stdout(统计走 stderr, 保持 stdout 纯回答)."""
+    """ai-ask: 流式逐段打印到 stdout(思考与统计走 stderr, stdout 纯回答)."""
     course_ids = [args.course] if args.course else None
+
+    def on_thinking(piece: str) -> None:
+        print(piece, end="", file=sys.stderr, flush=True)
+
     if args.no_stream:
         result = ctl.ai_ask(args.question, course_ids=course_ids,
-                            include_learn=args.with_learn)
+                            include_learn=args.with_learn,
+                            think=args.think)
         if not result.ok:
             return _emit(result)
+        if result.detail.get("thinking"):
+            print(f"[思考] {result.detail['thinking']}",
+                  file=sys.stderr)
         print(result.detail["answer"])
     else:
         result = ctl.ai_ask(args.question, course_ids=course_ids,
                             include_learn=args.with_learn, stream=True,
+                            think=args.think,
+                            on_thinking=on_thinking,
                             on_delta=lambda piece: print(
                                 piece, end="", flush=True))
         if not result.ok:

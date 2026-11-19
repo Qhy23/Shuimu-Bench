@@ -31,6 +31,11 @@ params:
     label: 附带学堂缓存
     default: false
     help: 纳入关联课程的公告与作业描述
+  - name: think
+    type: bool
+    label: 深度思考
+    default: false
+    help: 回答前先深度思考(更慢, 消耗更多 tokens)
   - name: api_key
     type: secret
     label: API Key

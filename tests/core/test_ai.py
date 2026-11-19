@@ -496,3 +496,99 @@ class TestAnthropicStream:
             AiClient(_anthropic_config(), transport).chat(
                 MESSAGES, stream=True)
         assert exc.value.kind == "protocol"
+
+
+class TestThinking:
+    """深度思考(thinking/reasoning)解析."""
+
+    def test_anthropic_nonstream_thinking(self):
+        """anthropic 非流式: thinking 块与 text 块分离."""
+        transport = MemoryAiTransport()
+        transport.add_json(payload={
+            "type": "message", "model": "glm-5.3",
+            "content": [{"type": "thinking", "thinking": "先分析一下"},
+                        {"type": "text", "text": "结论"}],
+            "stop_reason": "end_turn", "usage": {}})
+        client = AiClient(AiConfig(ANTHROPIC_BASE, "k", "glm-5.3"),
+                          transport)
+        reply = client.chat(MESSAGES, think=True)
+        assert reply.content == "结论"
+        assert reply.thinking == "先分析一下"
+
+    def test_anthropic_think_request_body(self):
+        """think=True: 请求带 thinking 参数, max_tokens 放大."""
+        transport = MemoryAiTransport()
+        transport.add_json(payload=_anthropic_payload())
+        client = AiClient(AiConfig(ANTHROPIC_BASE, "k", "glm-5.3"),
+                          transport)
+        client.chat(MESSAGES, think=True)
+        body = transport.requests[0][2]
+        assert body["thinking"] == {"type": "enabled",
+                                    "budget_tokens": 2000}
+        assert body["max_tokens"] == 8192
+
+    def test_anthropic_no_think_without_flag(self):
+        """默认不带 thinking 参数, max_tokens 仍是基础值."""
+        transport = MemoryAiTransport()
+        transport.add_json(payload=_anthropic_payload())
+        client = AiClient(AiConfig(ANTHROPIC_BASE, "k", "glm-5.3"),
+                          transport)
+        client.chat(MESSAGES)
+        body = transport.requests[0][2]
+        assert "thinking" not in body
+        assert body["max_tokens"] == 4096
+
+    def test_anthropic_stream_thinking(self):
+        """anthropic 流式: thinking_delta 走 on_thinking, text 走 on_delta."""
+        transport = MemoryAiTransport()
+        lines = []
+        lines += _anth_event({"type": "content_block_delta",
+                              "delta": {"type": "thinking_delta",
+                                        "thinking": "想"}})
+        lines += _anth_event({"type": "content_block_delta",
+                              "delta": {"type": "signature_delta",
+                                        "signature": "sig"}})
+        lines += _anth_event({"type": "content_block_delta",
+                              "delta": {"type": "text_delta",
+                                        "text": "答"}})
+        lines.append("data: [DONE]")
+        transport.add_stream(lines)
+        thoughts, pieces = [], []
+        reply = AiClient(AiConfig(ANTHROPIC_BASE, "k", "glm-5.3"),
+                         transport).chat(MESSAGES, stream=True,
+                                         on_delta=pieces.append,
+                                         on_thinking=thoughts.append)
+        assert reply.content == "答"
+        assert reply.thinking == "想"
+        assert thoughts == ["想"]
+        assert pieces == ["答"]
+
+    def test_openai_reasoning_content_nonstream(self):
+        """OpenAI 协议非流式: reasoning_content 被动解析为思考."""
+        transport = MemoryAiTransport()
+        transport.add_json(payload={
+            "choices": [{"message": {"role": "assistant",
+                                     "content": "答",
+                                     "reasoning_content": "推理"},
+                         "finish_reason": "stop"}],
+            "usage": {}, "model": "m"})
+        reply = _client(transport).chat(MESSAGES)
+        assert reply.content == "答"
+        assert reply.thinking == "推理"
+
+    def test_openai_reasoning_stream(self):
+        """OpenAI 协议流式: delta.reasoning_content 走 on_thinking."""
+        transport = MemoryAiTransport()
+        lines = ["data: " + json.dumps({"choices": [
+            {"delta": {"reasoning_content": "思"}}]}),
+                 "data: " + json.dumps({"choices": [
+                     {"delta": {"content": "答"}}]}),
+                 "data: [DONE]"]
+        transport.add_stream(lines)
+        thoughts, pieces = [], []
+        reply = _client(transport).chat(MESSAGES, stream=True,
+                                        on_delta=pieces.append,
+                                        on_thinking=thoughts.append)
+        assert reply.content == "答"
+        assert reply.thinking == "思"
+        assert thoughts == ["思"] and pieces == ["答"]

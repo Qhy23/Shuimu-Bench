@@ -124,11 +124,15 @@ class AiActions:
 
     def ai_ask(self, question: str, course_ids=None, resource_ids=None,
                include_learn: bool = False, session_id=None,
-               stream: bool = False, on_delta=None) -> ActionResult:
+               stream: bool = False, on_delta=None, think: bool = False,
+               on_thinking=None) -> ActionResult:
         """提问: 构建上下文 -> 取会话历史 -> 调模型 -> 历史落库, 留痕.
 
+        think=True 请求深度思考, 思考增量经 on_thinking 回调, 全文进
+        detail["thinking"]; 思考不持久化(历史回放不含, 与 CLI 工具同款).
         留痕只记元数据(params: 问题前 60 字/课程 id/是否含学堂缓存;
-        detail: 模型/上下文统计/耗时/会话 id), 完整对话只进 ai_messages.
+        detail: 模型/上下文统计/耗时/会话 id/tokens), 完整对话只进
+        ai_messages.
         """
         gate = self._ai_gate()
         if gate is not None:
@@ -151,7 +155,8 @@ class AiActions:
         messages = self._ai_messages(question, context.text, session_id)
         client = AiClient(config, self._ai_transport_factory())
         try:
-            reply = client.chat(messages, stream=stream, on_delta=on_delta)
+            reply = client.chat(messages, stream=stream, on_delta=on_delta,
+                                think=think, on_thinking=on_thinking)
         except AiError as exc:
             return self._ai_fail(exc, question, course_ids, include_learn)
         elapsed_ms = int((time.time() - started) * 1000)
@@ -165,6 +170,8 @@ class AiActions:
             "context_chars": context.total_chars,
             "elapsed_ms": elapsed_ms,
             "session_id": session_id,
+            "tokens": (reply.usage or {}).get("total_tokens"),
+            "thought": bool(reply.thinking),
         }
         if pruned:
             log_detail["pruned"] = pruned
@@ -179,6 +186,8 @@ class AiActions:
                              "session_id": session_id,
                              "model": reply.model,
                              "elapsed_ms": elapsed_ms,
+                             "usage": dict(reply.usage),
+                             "thinking": reply.thinking,
                              "context_items": [_item_dict(item)
                                                for item in context.items],
                              "context_chars": context.total_chars})

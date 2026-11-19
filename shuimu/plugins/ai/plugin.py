@@ -112,7 +112,7 @@ def _ask(params: dict) -> PluginReport:
         messages.append({"role": "user", "content": question})
         client = AiClient(AiConfig(base_url, api_key, model, timeout),
                           _transport_factory())
-        reply = client.chat(messages)
+        reply = client.chat(messages, think=bool(params.get("think")))
         storage.ai_add_round(None, question, reply.content)
         storage.ai_prune_history(int(tuning.get("keep_messages", 200)))
     except AiError as exc:
@@ -122,15 +122,21 @@ def _ask(params: dict) -> PluginReport:
             summary="AI 调用失败")
     finally:
         storage.close()
-    findings = [
+    findings = []
+    if reply.thinking:
+        findings.append(finding(
+            "ok", "thinking", reply.thinking[:ANSWER_DETAIL_LIMIT],
+            "" if len(reply.thinking) <= ANSWER_DETAIL_LIMIT
+            else f"(思考共 {len(reply.thinking)} 字, 已截断)"))
+    findings.append(
         finding("ok", "answer", reply.content[:ANSWER_DETAIL_LIMIT],
                 "" if len(reply.content) <= ANSWER_DETAIL_LIMIT
-                else f"(回答共 {len(reply.content)} 字, 已截断)"),
+                else f"(回答共 {len(reply.content)} 字, 已截断)"))
+    findings.append(
         finding("ok", "context",
                 f"上下文 {len(context.items)} 条 {context.total_chars} 字符",
                 "; ".join(item.label for item in context.items[:10])
-                or "未附带资料"),
-    ]
+                or "未附带资料"))
     return make_report(findings, summary="已回答")
 
 
