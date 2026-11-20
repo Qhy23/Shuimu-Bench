@@ -6,21 +6,38 @@ schedule 与 quicklinks 的数据文件同为"用户可编辑的纯 YAML + GUI �
 
 import os
 import shutil
+import time
 
 import yaml
+
+
+def _replace_with_retry(src: str, dst: str, attempts: int = 5) -> None:
+    """os.replace 带重试.
+
+    Windows 下目标文件可能被杀毒/索引等进程短暂占用(PermissionError
+    竞态, CI 与真实用户均可偶发), 指数退避重试; 耗尽后原样上抛.
+    """
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05 * (2 ** i))
 
 
 def atomic_write_yaml(path: str, root: dict, header: str) -> None:
     """全量重写 YAML 文件: 先写头部说明再 dump, 原子替换(先 .tmp 再 os.replace).
 
-    OSError 由调用方处理.
+    替换带短暂占用重试; 其余 OSError 由调用方处理.
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(header)
         yaml.safe_dump(root, f, allow_unicode=True, sort_keys=False)
-    os.replace(tmp, path)
+    _replace_with_retry(tmp, path)
 
 
 def ensure_from_template(path: str, template_path, write_skeleton) -> bool:
