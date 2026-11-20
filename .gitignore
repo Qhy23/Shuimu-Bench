@@ -14,6 +14,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!shuimu.spec
 
 # 本地数据(开发期生成的数据库等)
 *.db
