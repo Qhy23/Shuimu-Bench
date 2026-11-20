@@ -20,6 +20,7 @@
 - **Commit**: 遵循 Conventional Commits 1.0.0 (https://www.conventionalcommits.org/zh-hans/v1.0.0/), `<description>` 使用中文. 示例: `feat: 新增课程工作区的 SQLite 索引`.
 - **lint**: 提交前运行 `.venv/bin/pylint --rcfile=../.pylintrc <changed-files>`; `.pylintrc` 位于课程根目录(项目外一层), PySide6 的 E0611 由其 extension-pkg-allow-list 处理, 不要用行内 disable 绕过.
 - **Commit 署名**: AI 参与生成的提交在 message 末尾加 trailer, 如实注明本次实际使用的 AI 工具与模型, 如 `Co-Authored-By: OpenCode (Kimi K3) <opencode-agent[bot]@users.noreply.github.com>`, `Co-Authored-By: Claude Code (GLM-5.3) <noreply@anthropic.com>`.
+- **Git 操作报批**: 一切修改仓库状态的 git 操作 (commit/merge/checkout/reset/rebase/tag/push 等) 须先经用户批准后执行 (2026-11-12 起; 只读命令不受限). 当前例外 (2026-11-20, CI 调试期): packaging 分支内的 commit 与向 github 远程该分支的 push 可直接执行, 调试结束由用户收回.
 - **安全**: 不提交 API Key 等凭据; `.env`, `.venv/`, `*.db` 已在 .gitignore.
 
 ## 范围控制
