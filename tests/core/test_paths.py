@@ -32,6 +32,7 @@ class TestDefaultDbPath:
         """打包后(frozen)落到平台用户数据目录."""
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("APPDATA", str(tmp_path))    # Windows 下 user_data_dir 读 APPDATA
         path = default_db_path()
         assert str(tmp_path) in path
         monkeypatch.delattr(sys, "frozen", raising=False)
@@ -40,11 +41,20 @@ class TestDefaultDbPath:
 class TestWorkspaceRoot:
     """中栏默认工作目录."""
 
-    def test_defaults_to_content_when_present(self):
+    def test_defaults_to_content_when_present(self, monkeypatch, tmp_path):
         """课程根目录存在 content/ 时以其为默认."""
+        (tmp_path / "content").mkdir()
+        monkeypatch.setattr("shuimu.core.paths.project_root",
+                            lambda: str(tmp_path / "project"))
         root = default_workspace_root()
         assert os.path.basename(root) == "content"
-        assert os.path.isdir(root)
+        assert root == str(tmp_path / "content")
+
+    def test_falls_back_to_home_without_content(self, monkeypatch, tmp_path):
+        """content/ 不存在时退回家目录(不依赖真实课程根布局, CI 可复现)."""
+        monkeypatch.setattr("shuimu.core.paths.project_root",
+                            lambda: str(tmp_path / "project"))
+        assert default_workspace_root() == os.path.expanduser("~")
 
 
 class TestConfigYamlExample:
@@ -74,6 +84,7 @@ class TestSchedulePaths:
         """打包后数据文件落到平台用户数据目录."""
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("APPDATA", str(tmp_path))    # Windows 下 user_data_dir 读 APPDATA
         path = default_schedule_path()
         assert str(tmp_path) in path
         monkeypatch.delattr(sys, "frozen", raising=False)
@@ -93,6 +104,7 @@ class TestLinksPaths:
         """打包后数据文件落到平台用户数据目录."""
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("APPDATA", str(tmp_path))    # Windows 下 user_data_dir 读 APPDATA
         path = default_links_path()
         assert str(tmp_path) in path
         monkeypatch.delattr(sys, "frozen", raising=False)
@@ -111,6 +123,7 @@ class TestAiConfigPath:
         """打包后落到平台用户数据目录."""
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("APPDATA", str(tmp_path))    # Windows 下 user_data_dir 读 APPDATA
         path = default_ai_config_path()
         assert str(tmp_path) in path
         monkeypatch.delattr(sys, "frozen", raising=False)
@@ -122,5 +135,6 @@ class TestCliHistoryPath:
     def test_under_user_data_dir(self, monkeypatch, tmp_path):
         """始终在用户数据目录下, 与 dev/frozen 无关."""
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("APPDATA", str(tmp_path))    # Windows 下 user_data_dir 读 APPDATA
         assert cli_history_path().endswith("cli_history")
         assert str(tmp_path) in cli_history_path()

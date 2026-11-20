@@ -124,10 +124,11 @@ class TestSessionStore:
     """会话持久化."""
 
     def test_save_load_roundtrip_and_mode(self, store):
-        """保存/读回一致且权限 0o600."""
+        """保存/读回一致且权限 0o600(Windows 无 POSIX 权限位, 跳过权限断言)."""
         store.save({"version": 1, "username": USER, "cookies": {}})
         assert store.load()["username"] == USER
-        assert os.stat(store._path).st_mode & 0o777 == 0o600  # pylint: disable=protected-access
+        if os.name != "nt":
+            assert os.stat(store._path).st_mode & 0o777 == 0o600  # pylint: disable=protected-access
 
     def test_load_missing_or_corrupt(self, store):
         """缺失/损坏返回 None."""

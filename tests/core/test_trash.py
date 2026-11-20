@@ -71,6 +71,8 @@ class TestMoveToTrash:
         assert (info / "a.txt.trashinfo").exists()
         assert (info / "a_1.txt.trashinfo").exists()
 
+    @pytest.mark.skipif(os.name == "nt",
+                        reason="Windows 文件名不允许 ? 等字符, 本用例测 POSIX trashinfo 转义")
     def test_special_chars_encoded(self, tmp_path, cfg):
         """文件名/路径中的 % # ? 按规范百分号转义."""
         f = tmp_path / "a#b?c%d.txt"

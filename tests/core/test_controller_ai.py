@@ -146,7 +146,8 @@ class TestAiConfig:
         headers = transport.requests[0][1]
         assert headers["Authorization"] == "Bearer sk-test"
         config_path = tmp_path / "ai-config.json"
-        assert stat.S_IMODE(os.stat(config_path).st_mode) == 0o600
+        if os.name != "nt":   # Windows 无 POSIX 权限位
+            assert stat.S_IMODE(os.stat(config_path).st_mode) == 0o600
 
     def test_config_log_has_no_key(self, ctl_ai):
         """配置留痕只记字段名, 无 key 值."""

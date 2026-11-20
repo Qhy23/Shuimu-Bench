@@ -210,7 +210,8 @@ class TestValidateParams:
 
     def test_path_expanduser(self, tmp_path, monkeypatch):
         """path 类型做 expanduser."""
-        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))          # POSIX
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))   # Windows ntpath 走 USERPROFILE
         manifest = manifest_with_params(
             [{"name": "p", "type": "path", "label": "P"}])
         params, _ = validate_params(manifest, {"p": "~/rules.yaml"})

@@ -6,6 +6,7 @@
 """
 
 import json
+import os
 from copy import deepcopy
 
 import pytest
@@ -16,6 +17,11 @@ from shuimu.core.config import DEFAULTS
 from shuimu.core.controller import Controller
 from shuimu.core.storage import Storage
 from shuimu.gui.file_page import FileBrowserPage
+
+
+def _norm(*paths):
+    """路径串列表统一分隔符后比较(Qt 惯用 /, Windows 下 os.path 拼为 \\)."""
+    return [os.path.normpath(p) for p in paths]
 
 
 @pytest.fixture()
@@ -68,7 +74,7 @@ class TestSelection:
         for idx in (idx_a, idx_b):
             sel.select(idx, QItemSelectionModel.SelectionFlag.Select
                        | QItemSelectionModel.SelectionFlag.Rows)
-        assert page.selected_paths() == [str(ws / "a.txt"), str(ws / "b.txt")]
+        assert _norm(*page.selected_paths()) == _norm(str(ws / "a.txt"), str(ws / "b.txt"))
         sel.clear()
         assert page.selected_paths() == []
 
@@ -145,7 +151,7 @@ class TestClipboardOps:
         other.mkdir()
         (other / "p.txt").write_text("p")
         page._clipboard = {"mode": "copy", "paths": [str(other / "p.txt")]}
-        assert page._paste_target() == str(sub)
+        assert _norm(page._paste_target()) == _norm(str(sub))
         page._paste()
         qtbot.waitUntil((sub / "p.txt").exists)
 
@@ -161,19 +167,19 @@ class TestClipboardOps:
         qtbot.waitUntil(lambda: idx_f.isValid() and idx_s.isValid())
         sel = page.file_view.selectionModel()
         # 无选中 -> 工作目录
-        assert page._paste_target() == str(ws)
+        assert _norm(page._paste_target()) == _norm(str(ws))
         # 选中单个文件 -> 工作目录(文件不是粘贴目标)
         sel.select(idx_f, QItemSelectionModel.SelectionFlag.ClearAndSelect
                    | QItemSelectionModel.SelectionFlag.Rows)
-        assert page._paste_target() == str(ws)
+        assert _norm(page._paste_target()) == _norm(str(ws))
         # 文件与目录多选 -> 工作目录
         sel.select(idx_s, QItemSelectionModel.SelectionFlag.Select
                    | QItemSelectionModel.SelectionFlag.Rows)
-        assert page._paste_target() == str(ws)
+        assert _norm(page._paste_target()) == _norm(str(ws))
         # 恰好一个目录 -> 该目录
         sel.select(idx_f, QItemSelectionModel.SelectionFlag.Deselect
                    | QItemSelectionModel.SelectionFlag.Rows)
-        assert page._paste_target() == str(sub)
+        assert _norm(page._paste_target()) == _norm(str(sub))
 
     def test_right_click_switches_selection(self, page, qtbot):
         """右键未选中的条目时, 选择切到该条目."""
@@ -184,12 +190,12 @@ class TestClipboardOps:
         idx_b = page.file_model.index(str(ws / "b.txt"))
         qtbot.waitUntil(lambda: idx_a.isValid() and idx_b.isValid())
         page.file_view.setCurrentIndex(idx_a)
-        assert page.selected_paths() == [str(ws / "a.txt")]
+        assert _norm(*page.selected_paths()) == _norm(str(ws / "a.txt"))
         page._ensure_clicked_selected(idx_b)
-        assert page.selected_paths() == [str(ws / "b.txt")]
+        assert _norm(*page.selected_paths()) == _norm(str(ws / "b.txt"))
         # 已在选中集内的条目不重置多选
         page._ensure_clicked_selected(idx_b)
-        assert page.selected_paths() == [str(ws / "b.txt")]
+        assert _norm(*page.selected_paths()) == _norm(str(ws / "b.txt"))
 
 
 class TestDelete:
@@ -209,7 +215,7 @@ class TestDelete:
         assert (ws.parent / "trash" / "files" / "del.txt").exists()
         op = ctl.storage.list_operations()[0]
         assert op["action"] == "file_delete"
-        assert json.loads(op["detail"])["items"][0]["src"] == str(ws / "del.txt")
+        assert _norm(json.loads(op["detail"])["items"][0]["src"]) == _norm(str(ws / "del.txt"))
 
     def test_delete_confirm_no(self, page, monkeypatch, qtbot):
         """取消删除磁盘不动且不留痕."""

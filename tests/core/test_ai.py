@@ -308,6 +308,8 @@ class TestAiConfigStore:
         assert store.load() == {"base_url": "https://api.example.com/v1",
                                 "model": "m", "api_key": "k"}
 
+    @pytest.mark.skipif(os.name == "nt",
+                        reason="Windows 无 POSIX 权限位, chmod 仅切只读标志")
     def test_file_mode_600(self, tmp_path):
         """文件权限 0o600."""
         path = str(tmp_path / "ai-config.json")
