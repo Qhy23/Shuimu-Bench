@@ -39,6 +39,8 @@ python cli.py --help  # 命令行(与 GUI 共用同一数据库)
 
 CLI 完整用法见 [docs/cli.md](docs/cli.md); 两种形态: `python cli.py <子命令>` 单次执行, 不带子命令进入交互 REPL(支持历史与 Tab 补全).
 
+不想装 Python 可用打包版本: 从 GitHub Releases 下载对应平台压缩包, 解压后运行目录内 `ShuimuBench`(图形界面) 或 `shuimu-cli`(命令行), 无需安装依赖. 打包版数据保存在用户数据目录(Windows `%APPDATA%\ShuimuBench`, Linux `~/.local/share/shuimu/`), 不在程序目录. 源码自行打包: `pyinstaller --noconfirm shuimu.spec`, 详见 [docs/packaging.md](docs/packaging.md).
+
 ## 数据与隐私
 
 - 所有数据保存在本机: 索引与留痕在 `data/shuimu.db`(SQLite), 日程在 `data/schedule.yaml`, 常用链接在 `data/links.yaml`
@@ -53,3 +55,4 @@ CLI 完整用法见 [docs/cli.md](docs/cli.md); 两种形态: `python cli.py <�
 - [插件: 网络学堂](docs/plugin-learn.md)
 - [插件: 清华云盘](docs/plugin-cloud.md)
 - [插件: AI 工具](docs/plugin-ai.md)
+- [打包与发布](docs/packaging.md)

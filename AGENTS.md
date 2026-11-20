@@ -10,7 +10,7 @@
 - GUI: PySide6 (Qt), 中栏文件浏览用 QFileSystemModel 直读磁盘
 - 存储: SQLite(标准库 sqlite3, WAL 模式), 不用 ORM
 - 测试: pytest + pytest-qt, 无头环境设 `QT_QPA_PLATFORM=offscreen`
-- 开发环境: Linux/WSL2 (WSLg); 第一版交付 Linux, Windows 打包(PyInstaller, 需 Windows 侧构建)后续处理
+- 开发环境: Linux/WSL2 (WSLg); 交付双平台: 打包 spec 在仓库根 `shuimu.spec`(PyInstaller onedir, GUI+CLI 双可执行), CI 在 `.github/workflows/build.yml`(Linux+Windows, 推 `v*` 标签自动发 Release, 标签须与 `shuimu/__init__.py` 的 APP_VERSION 一致), 详见 docs/packaging.md
 - 运行时零网络零模型依赖(核心功能); 校园服务四件自 2026-11-08 经助教确认转为**可选 network 插件**(显式授权联网), 见"范围控制"
 
 ## 代码与文档约定(必须遵守)
@@ -38,6 +38,7 @@ python main.py                                # 运行 GUI
 python cli.py --help                          # CLI(无头/外部测试用)
 QT_QPA_PLATFORM=offscreen pytest              # 测试
 pylint --rcfile=../.pylintrc main.py shuimu/ tests/   # lint(配置在课程根目录)
+pyinstaller --noconfirm shuimu.spec           # 本地打包(需先 pip install "pyinstaller>=6,<7", 产物 dist/ShuimuBench/)
 python cli.py plugins                         # 插件清单(含 network 状态)
 python cli.py plugin-enable campus --yes      # 启用校园插件(联网授权)
 python cli.py campus-login                    # 校园登录(密码交互输入)
