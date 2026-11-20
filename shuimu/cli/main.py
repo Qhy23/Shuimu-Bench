@@ -671,8 +671,25 @@ def _run_schedule_command(ctl: Controller, args) -> int:
     return _cmd_add_event(ctl, args)
 
 
+def _force_utf8_stdio() -> None:
+    """stdio 统一切 UTF-8.
+
+    Windows 下 stdout/stderr 接管道或重定向时回退本地编码(如 cp1252),
+    中文帮助与输出会 UnicodeEncodeError 直接崩(交互控制台不受影响,
+    Python 对真控制台走 Unicode API); 切 UTF-8 后任意环境可打印,
+    errors=replace 兜底不可编码字符. 无 reconfigure 的替身流(测试)跳过.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def main(argv=None) -> int:
     """CLI 入口: 带子命令则单次执行, 不带则进入交互模式."""
+    _force_utf8_stdio()
     args = build_parser().parse_args(argv)
     # CLI 无 Qt: 注册纯标准库的系统浏览器打开为 URL 分发层默认处理器.
     url_open.set_default(url_open.open_url_external)

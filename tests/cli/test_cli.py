@@ -1,8 +1,10 @@
 """cli.py 单元测试: 子命令行为与退出码."""
 
 import importlib
+import io
 import json
 import os
+import sys
 from copy import deepcopy
 
 import pytest
@@ -226,6 +228,21 @@ class TestDeleteCourseCommand:
         """删除不存在的课程返回退出码 2."""
         code, _ = run(capsys, db, "del-course", "999")
         assert code == 2
+
+
+def test_help_with_non_utf8_stdout(monkeypatch):
+    """stdio 为非 UTF-8 流(模拟 Windows cp1252 管道/重定向)时 --help 不崩.
+
+    回归: 入口 _force_utf8_stdio 把 stdout/stderr 切 UTF-8, 否则中文
+    帮助在 cp1252 下 UnicodeEncodeError.
+    """
+    monkeypatch.setattr(sys, "stdout",
+                        io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+    monkeypatch.setattr(sys, "stderr",
+                        io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
 
 
 class TestRepl:
