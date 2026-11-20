@@ -1,0 +1,120 @@
+name: build
+
+# 双平台打包: workflow_dispatch 手动构建 (产物在 artifact);
+# 推 v* 标签时构建并创建 GitHub Release 附双平台产物.
+# tag 须与 shuimu/__init__.py 的 APP_VERSION 一致 (构建中有校验).
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false        # 一腿红不取消另一腿
+      matrix:
+        include:
+          - { os: ubuntu-latest, platform: linux-x64 }
+          - { os: windows-latest, platform: win-x64 }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt "pyinstaller>=6,<7"
+      - name: pytest 门禁
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest
+      - name: 计算版本
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            base=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' shuimu/__init__.py)
+            V="$base-dev.$(git rev-parse --short HEAD)"
+          fi
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+      - name: 校验 tag 与 APP_VERSION 一致
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: grep -q "APP_VERSION = \"${GITHUB_REF_NAME#v}\"" shuimu/__init__.py
+      - name: PyInstaller 打包
+        run: python -m PyInstaller --noconfirm --clean shuimu.spec
+      - name: CLI 冒烟 (--help 与全插件发现)
+        shell: bash
+        run: |
+          SFX="${{ runner.os == 'Windows' && '.exe' || '' }}"
+          "dist/ShuimuBench/shuimu-cli$SFX" --help
+          "dist/ShuimuBench/shuimu-cli$SFX" plugins
+      - name: GUI 冒烟 (Linux)
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e; timeout 15 ./dist/ShuimuBench/ShuimuBench; code=$?; set -e
+          [ "$code" -eq 124 ] || exit 1   # 124 = 事件循环被 timeout 杀掉, 属正常
+      - name: GUI 冒烟 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath "dist\ShuimuBench\ShuimuBench.exe" -PassThru
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { throw "GUI 提前退出, 退出码 $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+      - name: hiddenimports 核对 (warn 文件无 shuimu 缺失)
+        shell: bash
+        run: |
+          hits=$(find build -name "warn-*.txt" -exec grep -l "missing module named shuimu" {} +)
+          if [ -n "$hits" ]; then echo "$hits"; exit 1; fi
+      - name: 产物打包 (tar.gz)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p release-out
+          tar -czf "release-out/ShuimuBench-${{ steps.ver.outputs.v }}-linux-x64.tar.gz" -C dist ShuimuBench
+      - name: 产物打包 (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-out | Out-Null
+          Compress-Archive -Path dist\ShuimuBench `
+            -DestinationPath "release-out\ShuimuBench-${{ steps.ver.outputs.v }}-win-x64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShuimuBench-${{ steps.ver.outputs.v }}-${{ matrix.platform }}
+          path: release-out/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ShuimuBench-*
+          path: release-assets
+          merge-multiple: true
+      - name: 创建 Release 并上载产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --verify-tag --generate-notes \
+            || gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
