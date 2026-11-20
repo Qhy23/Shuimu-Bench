@@ -85,7 +85,7 @@ jobs:
       - name: Check for missing shuimu modules
         shell: bash
         run: |
-          hits=$(find build -name "warn-*.txt" -exec grep -l "missing module named shuimu" {} +)
+          hits=$(find build -name "warn-*.txt" -exec grep -l "missing module named shuimu" {} + || true)
           if [ -n "$hits" ]; then echo "$hits"; exit 1; fi
       - name: Package artifacts (tar.gz)
         if: runner.os == 'Linux'
