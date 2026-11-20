@@ -1,5 +1,7 @@
 """pluginman.py 单元测试: manifest 校验, 双源发现, 加载与启用状态."""
 
+import os
+
 import pytest
 
 from shuimu.core.pluginman import (
@@ -215,7 +217,8 @@ class TestValidateParams:
         manifest = manifest_with_params(
             [{"name": "p", "type": "path", "label": "P"}])
         params, _ = validate_params(manifest, {"p": "~/rules.yaml"})
-        assert params["p"] == str(tmp_path / "rules.yaml")
+        # ntpath.expanduser 以字面替换 ~, 结果可能是混合分隔符, 归一后比较
+        assert os.path.normpath(params["p"]) == str(tmp_path / "rules.yaml")
 
     def test_optional_empty_string_omitted(self):
         """可选参数空串视为未提供, 键不出现."""
