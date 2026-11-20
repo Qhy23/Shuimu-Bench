@@ -373,14 +373,16 @@ class Storage:
     def resources_under(self, path: str) -> list:
         """路径本身与其子孙目录内的全部登记资源(跨课程, 按路径排序).
 
-        供文件操作同步索引: 前缀匹配以 / 为目录边界, 不误伤同前缀名.
+        供文件操作同步索引: 前缀匹配以 / 或 \\ 为目录边界, 不误伤同前缀名.
+        登记路径的分隔符风格随登记时平台(Windows 为反斜杠), 两种边界都要认.
         """
         esc = (path.replace("\\", "\\\\")
                .replace("%", "\\%").replace("_", "\\_"))
         return self._conn.execute(
             "SELECT * FROM resources WHERE path_or_url = ?"
+            " OR path_or_url LIKE ? ESCAPE '\\'"
             " OR path_or_url LIKE ? ESCAPE '\\' ORDER BY path_or_url",
-            (path, esc + "/%")).fetchall()
+            (path, esc + "/%", esc + "\\\\%")).fetchall()
 
     def retarget_resource(self, resource_id: int, new_path: str) -> None:
         """文件被移动/重命名后同步登记路径, 顺带刷新显示名与 size/mtime."""

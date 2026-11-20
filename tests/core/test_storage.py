@@ -199,6 +199,45 @@ class TestResource:
         assert exists
 
 
+class TestResourcesUnder:
+    """路径前缀匹配(目录边界识别, 供文件操作同步索引)."""
+
+    def _insert(self, storage, course_id, path):
+        """直接插行: 以字面路径串测 SQL 匹配语义, 不依赖运行平台文件系统."""
+        storage._conn.execute(  # pylint: disable=protected-access
+            "INSERT INTO resources(course_id, kind, path_or_url, display_name,"
+            " added_at) VALUES(?, 'file', ?, 'x', 0)", (course_id, path))
+        storage._conn.commit()  # pylint: disable=protected-access
+
+    def test_descendants_slash_boundary(self, storage, course_id):
+        """正斜杠路径: 自身与子孙命中, 同前缀名不误伤."""
+        base = "/home/t/ws"
+        self._insert(storage, course_id, base)
+        self._insert(storage, course_id, base + "/sub/a.txt")
+        self._insert(storage, course_id, base + "2/b.txt")
+        got = [r["path_or_url"] for r in storage.resources_under(base)]
+        assert got == [base, base + "/sub/a.txt"]
+
+    def test_descendants_backslash_boundary(self, storage, course_id):
+        """反斜杠路径(Windows 登记): 子孙同样命中, 同前缀名不误伤."""
+        base = "C:\\Users\\t\\ws"
+        self._insert(storage, course_id, base)
+        self._insert(storage, course_id, base + "\\sub\\a.txt")
+        self._insert(storage, course_id, base + "2\\b.txt")
+        got = [r["path_or_url"] for r in storage.resources_under(base)]
+        assert got == [base, base + "\\sub\\a.txt"]
+
+    def test_percent_in_path_not_wildcard(self, storage, course_id):
+        """路径中的 % 与 _ 按字面匹配, 不当通配符."""
+        base = "/home/t/a%b_c"
+        self._insert(storage, course_id, base)
+        self._insert(storage, course_id, base + "/x.txt")
+        self._insert(storage, course_id, "/home/t/aXbYc")     # 通配符误配陷阱
+        self._insert(storage, course_id, "/home/t/a%b_c/d.txt")
+        got = [r["path_or_url"] for r in storage.resources_under(base)]
+        assert got == [base, base + "/d.txt", base + "/x.txt"]
+
+
 class TestSearchResources:
     """跨课程关键词搜索."""
 
