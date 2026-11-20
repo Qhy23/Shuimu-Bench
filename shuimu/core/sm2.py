@@ -179,14 +179,8 @@ def sm2_encrypt(plaintext: bytes, public_key_hex: str,
     return (c1_bytes + c3 + c2).hex()
 
 
-def sm2_decrypt(cipher_hex: str, private_key: int) -> bytes:
-    """SM2 解密 (C1||C3||C2, 容忍 04 前缀); C3 不符抛 ValueError.
-
-    登录流程不需要解密, 供测试往返与将来扩展.
-    """
-    data = bytes.fromhex(cipher_hex)
-    if len(data) >= 1 + 2 * COORD_BYTES + SM3_LEN and data[0] == 0x04:
-        data = data[1:]
+def _decrypt_data(data: bytes, private_key: int) -> bytes:
+    """按无前缀格式 (C1||C3||C2) 解密, 任何校验失败抛 ValueError."""
     if len(data) < 2 * COORD_BYTES + SM3_LEN:
         raise ValueError("密文过短")
     c1 = (int.from_bytes(data[:COORD_BYTES], "big"),
@@ -203,3 +197,20 @@ def sm2_decrypt(cipher_hex: str, private_key: int) -> bytes:
     if sm3(x2 + plaintext + y2) != c3:
         raise ValueError("C3 校验失败")
     return plaintext
+
+
+def sm2_decrypt(cipher_hex: str, private_key: int) -> bytes:
+    """SM2 解密 (C1||C3||C2, 容忍 04 前缀); C3 不符抛 ValueError.
+
+    前缀歧义: C1 的 x 坐标首字节本有 ~1/256 概率恰为 0x04, 不能凭首
+    字节判定有无前缀(曾致解密偶发"C1 不在曲线上"); 先按无前缀解析,
+    失败且确实带 04 前缀时再剥一位重试. 登录流程不需要解密, 供测试
+    往返与将来扩展.
+    """
+    data = bytes.fromhex(cipher_hex)
+    try:
+        return _decrypt_data(data, private_key)
+    except ValueError:
+        if len(data) >= 1 + 2 * COORD_BYTES + SM3_LEN and data[0] == 0x04:
+            return _decrypt_data(data[1:], private_key)
+        raise

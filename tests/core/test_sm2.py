@@ -104,6 +104,21 @@ class TestEncryptDecrypt:
         second = sm2.sm2_encrypt(b"same", pub, rand_func=lambda: K_FIXED)
         assert first == second
 
+    def test_decrypt_c1_x_leading_04(self):
+        """C1 的 x 首字节恰为 0x04 时不得误剥前缀(罕见路径回归).
+
+        旧实现凭首字节 0x04 剥一位, 而合法 C1 的 x 首字节 ~1/256 概率
+        即为 0x04, 曾致解密偶发 "C1 不在曲线上"(HANDOFF 2026-11-13 记录
+        的未复现抖动同源); 以固定 k 构造该形态确定性复现.
+        """
+        pub = _public_hex(TEST_PRIVATE)
+        k = next(i for i in range(1, 4096)
+                 if sm2._scalar_mul(i, sm2.G)  # pylint: disable=protected-access
+                 [0].to_bytes(32, "big")[0] == 0x04)
+        cipher = sm2.sm2_encrypt(b"leading-04", pub, rand_func=lambda: k)
+        assert cipher[:2] == "04"        # 确认构造出的正是该形态
+        assert sm2.sm2_decrypt(cipher, TEST_PRIVATE) == b"leading-04"
+
     def test_cipher_is_c1c3c2(self):
         """密文序为 C1||C3||C2: 固定 k 下 C1 段可独立验证."""
         pub = _public_hex(TEST_PRIVATE)
