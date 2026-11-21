@@ -215,6 +215,7 @@ class MainWindow(QMainWindow):
         """显式授权后才后台获取公开 favicon; 关闭只停新任务."""
         self.favicon_service.set_enabled(enabled)
         if enabled:
+            request_course_favicons(self.course_tree, self.favicon_service)
             self.links_page.reload()
         self.statusBar().showMessage(
             "网站图标后台获取已开启(仅公开 favicon)" if enabled

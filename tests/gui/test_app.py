@@ -433,6 +433,34 @@ def test_course_link_uses_cached_favicon_and_survives_zoom(qtbot, tmp_path):
     storage.close()
 
 
+def test_course_link_fetches_and_updates_after_enable(qtbot, tmp_path):
+    """开启联网后重新登记左栏链接, 后台结果到达即更新图标."""
+    storage = Storage(str(tmp_path / "link-fetch.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
+                        links_path=str(tmp_path / "links.yaml"))
+    qtbot.addWidget(window)
+    icon_path = tmp_path / "site.png"
+    shuimu_app.file_icons._draw_type_icon("OK", "#3fb950", 16).save(str(icon_path))
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        return str(icon_path)
+
+    window.favicon_service.store.get = fetch
+    storage.add_resource(storage.ensure_default_course(), "link",
+                         "https://example.com/")
+    window.reload_courses()
+    leaf = window.course_tree.topLevelItem(0).child(0)
+    expected = leaf.icon(0).pixmap(16, 16).toImage()
+    window._toggle_favicons(True)
+    qtbot.waitUntil(lambda: bool(calls), timeout=5000)
+    qtbot.waitUntil(lambda: leaf.icon(0).pixmap(16, 16).toImage() != expected,
+                    timeout=5000)
+    assert "https://example.com/" in calls  # 左栏链接开启后确实进入后台获取
+    window.close()
+    storage.close()
+
+
 def test_course_tree_uses_file_type_icons(qtbot, tmp_path, monkeypatch):
     """首次构建课程树按后缀取文件图标, 而不是通用文件图标."""
     storage = Storage(str(tmp_path / "file-icons.db"))
