@@ -39,8 +39,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from shuimu.core.actions import ActionResult
 from shuimu.core.ai_math import extract_formulas, latex_to_html
 from shuimu.core.controller import Controller
+from shuimu.core.storage import Storage
 from shuimu.gui import theme
 from shuimu.gui.dialogs import confirm_network_enable, warn
 
@@ -180,9 +182,10 @@ class _AskJob(QRunnable):
     """只执行 controller 动作, 不触碰任何 Qt 控件."""
 
     def __init__(self, ctl, question, course_ids, include_learn, session_id,
-                 think):
+                 think, controller_factory=None):
         super().__init__()
         self._ctl = ctl
+        self._controller_factory = controller_factory
         self._question = question
         self._course_ids = course_ids
         self._include_learn = include_learn
@@ -192,12 +195,36 @@ class _AskJob(QRunnable):
         self._events = queue.Queue()
 
     def run(self) -> None:
-        result = self._ctl.ai_ask(
-            self._question, course_ids=self._course_ids,
-            include_learn=self._include_learn, session_id=self._session_id,
-            stream=True, think=self._think,
-            on_delta=lambda piece: self._events.put(("delta", piece)),
-            on_thinking=lambda piece: self._events.put(("thinking", piece)))
+        # SQLite 连接有线程亲和性: worker 使用独立连接与 Controller,
+        # 主线程连接只服务 GUI, 避免跨线程使用 sqlite3 对象.
+        if self._controller_factory is not None:
+            ctl, worker_storage = self._controller_factory()
+        else:
+            worker_storage = Storage(self._ctl.storage.db_path)
+            ctl = Controller(
+                worker_storage, config=self._ctl.config,
+                schedule_path=self._ctl.schedule_path,
+                links_path=self._ctl.links_path,
+                plugins_state_path=self._ctl._plugins_state_path,
+                external_plugins_dir=self._ctl._external_plugins_dir,
+                campus_session_path=self._ctl._campus_session_path,
+                campus_transport_factory=self._ctl._campus_transport_factory,
+                ai_transport_factory=self._ctl._ai_transport_factory,
+                ai_config_path=self._ctl._ai_config_path)
+        try:
+            result = ctl.ai_ask(
+                self._question, course_ids=self._course_ids,
+                include_learn=self._include_learn, session_id=self._session_id,
+                stream=True, think=self._think,
+                on_delta=lambda piece: self._events.put(("delta", piece)),
+                on_thinking=lambda piece: self._events.put(("thinking", piece)))
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # 后台异常须回传 UI 恢复按钮, 避免 worker 失败让界面永久等待
+            result = ActionResult(False, f"后台问答失败: {exc}",
+                                  {"state": "worker_error"})
+        finally:
+            if worker_storage is not None:
+                worker_storage.close()
         self.signals.finished.emit(result)
 
 
@@ -699,7 +726,8 @@ class AiTab(QWidget):
         self._ask_job = _AskJob(
             self._ctl, question, self._selected_course_ids(),
             self.learn_check.isChecked(), self._session_id,
-            self.think_check.isChecked())
+            self.think_check.isChecked(),
+            controller_factory=getattr(self, "_worker_controller_factory", None))
         self._ask_job.signals.finished.connect(self._ask_finished)
         self._ask_timer.start()
         self._ask_pool.start(self._ask_job)

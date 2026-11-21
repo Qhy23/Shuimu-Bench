@@ -8,6 +8,8 @@ import pytest
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QDialog
 
+from shuimu.core import ai_actions
+from shuimu.core.ai import AiError
 from shuimu.core.ai_actions import SYSTEM_PROMPT
 from shuimu.core.controller import ActionResult, Controller
 from shuimu.core.storage import Storage
@@ -122,6 +124,7 @@ def tab(qtbot):
     """已配置主视图态的页签 + 替身 controller."""
     ctl = FakeAiController(configured=True)
     widget = AiTab(ctl)
+    widget._worker_controller_factory = lambda: (ctl, None)
     qtbot.addWidget(widget)
     original_send = widget._send
 
@@ -382,35 +385,90 @@ class TestChat:
         assert "q1" in widget.chat_browser.toPlainText()   # 首轮仍在
         del ctl.ask_answer
 
-    def test_context_build_does_not_block_ui(self, qtbot):
-        """附带资料整理期间主窗口可继续处理 Qt 事件, 不阻塞界面."""
-        ctl = FakeAiController(configured=True)
-        entered = threading.Event()
-        release = threading.Event()
+def test_background_ask_uses_independent_storage(qtbot, tmp_path):
+    """真实 SQLite 下后台整理资料不跨线程复用主连接."""
+    storage = Storage(str(tmp_path / "thread.db"))
+    ctl = Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
+                     links_path=str(tmp_path / "l.yaml"),
+                     plugins_state_path=str(tmp_path / "plugins.yaml"),
+                     external_plugins_dir=str(tmp_path / "ext"),
+                     ai_config_path=str(tmp_path / "ai.json"))
+    cid = storage.ensure_default_course()
+    source = tmp_path / "资料.txt"
+    source.write_text("课程资料", encoding="utf-8")
+    storage.add_resource(cid, "file", str(source))
+    ctl.plugins.set_enabled("ai", True)
+    ctl._ai_store().save_profile("测试", {"base_url": "u", "model": "m"})
+    widget = AiTab(ctl)
+    qtbot.addWidget(widget)
 
-        def slow_ask(*_args, **_kwargs):
-            entered.set()
-            release.wait(2)
-            return ActionResult(True, "已回答", {
-                "answer": "答", "session_id": 1, "usage": {},
-                "context_items": []})
+    class FailingTransport:
+        """在模型调用阶段返回可控失败, 不发生网络请求."""
 
-        ctl.ai_ask = slow_ask
-        widget = AiTab(ctl)
-        qtbot.addWidget(widget)
+        def post_json(self, *_args, **_kwargs):
+            """非流式请求同样返回可控网络失败."""
+            raise AiError("network", "模拟网络不可用")
+
+        def post_stream(self, *_args, **_kwargs):
+            """流式请求返回可控网络失败, 不联网."""
+            raise AiError("network", "模拟网络不可用")
+
+    ctl._ai_transport_factory = FailingTransport
+    built = []
+    original_build = ai_actions.build_context
+
+    def record_build(*args, **kwargs):
+        result = original_build(*args, **kwargs)
+        built.append(result)
+        return result
+
+    ai_actions.build_context = record_build
+    try:
         widget.context_box.setCurrentIndex(1)
-        widget.input_edit.setPlainText("问")
+        widget.input_edit.setPlainText("问题")
         widget._send()
-        assert entered.wait(1)
-        started = time.monotonic()
-        for _ in range(10):
-            qtbot.wait(5)
-        assert time.monotonic() - started < 1
-        assert widget._ask_running
-        assert widget.send_button.isEnabled() is False
-        release.set()
         qtbot.waitUntil(lambda: not widget._ask_running, timeout=5000)
-        assert "答" in widget.chat_browser.toPlainText()
+    finally:
+        ai_actions.build_context = original_build
+    assert built and built[0].total_chars > 0
+    assert "暂时无法访问 AI 服务" in widget.chat_browser.toPlainText()
+    storage.close()
+
+
+def test_context_build_does_not_block_ui(qtbot):
+    """附带资料整理期间主窗口可继续处理 Qt 事件, 不阻塞界面."""
+    ctl = FakeAiController(configured=True)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_ask(*_args, **_kwargs):
+        entered.set()
+        release.wait(2)
+        return ActionResult(True, "已回答", {
+            "answer": "答", "session_id": 1, "usage": {},
+            "context_items": []})
+
+    ctl.ai_ask = slow_ask
+    widget = AiTab(ctl)
+    widget._worker_controller_factory = lambda: (ctl, None)
+    qtbot.addWidget(widget)
+    widget.context_box.setCurrentIndex(1)
+    widget.input_edit.setPlainText("问")
+    widget._send()
+    assert entered.wait(1)
+    started = time.monotonic()
+    for _ in range(10):
+        qtbot.wait(5)
+    assert time.monotonic() - started < 1
+    assert widget._ask_running
+    assert widget.send_button.isEnabled() is False
+    release.set()
+    qtbot.waitUntil(lambda: not widget._ask_running, timeout=5000)
+    assert "答" in widget.chat_browser.toPlainText()
+
+
+class TestChatActions:
+    """发送失败/上下文/会话与历史管理的后续测试."""
 
     def test_send_failure_appends_note(self, tab):
         """失败: 错误消息追加在消息流内."""
@@ -420,7 +478,6 @@ class TestChat:
         widget.input_edit.setPlainText("q")
         widget._send()
         assert "(鉴权失败)" in widget.chat_browser.toPlainText()
-
     def test_context_selection_all(self, tab):
         """上下文选择全部课程: course_ids 为两门课."""
         widget, ctl = tab
