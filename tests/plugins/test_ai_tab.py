@@ -6,8 +6,10 @@ import pytest
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QDialog
 
+from shuimu.core.ai_actions import SYSTEM_PROMPT
 from shuimu.core.controller import ActionResult, Controller
 from shuimu.core.storage import Storage
+from shuimu.gui import theme
 from shuimu.plugins.ai.ai_tab import (
     PAGE_CONFIG,
     PAGE_DISABLED,
@@ -214,6 +216,13 @@ def test_delete_profile_updates_config_page(qtbot, tmp_path, monkeypatch):
     storage.close()
 
 
+def test_system_prompt_restricts_formula_delimiters():
+    """共享提示词只允许 $ 公式环境, 禁止当前无法渲染的 \\[ \\] 形式."""
+    assert "$...$" in SYSTEM_PROMPT
+    assert "$$...$$" in SYSTEM_PROMPT
+    assert "不要使用 \\[...\\]" in SYSTEM_PROMPT
+
+
 class TestEnableAndConfig:
     """启用与配置动作."""
 
@@ -280,6 +289,17 @@ class TestChat:
         widget._new_chat()
         assert widget.tokens_label.text() == ""
 
+    def test_tokens_missing_usage_not_reported_as_zero(self, tab):
+        """服务端无 usage 时显示未提供, 不把未知用量误写成 0."""
+        widget, ctl = tab
+        ctl.ai_ask = lambda *args, **kwargs: ActionResult(True, "已回答", {
+            "answer": "答", "session_id": 99, "usage": {},
+            "context_items": []})
+        widget.input_edit.setPlainText("问")
+        widget._send()
+        assert widget.tokens_label.text() == "用量未提供"
+        assert widget._session_tokens == 0
+
     def test_thinking_inline_toggle(self, tab):
         """思考内嵌该轮回答前: 默认收起锚点行, 点击展开/再收起."""
         widget, ctl = tab
@@ -295,6 +315,19 @@ class TestChat:
         widget._on_anchor(QUrl("think:0"))
         assert "先想想" not in widget.chat_browser.toPlainText()
         assert "思考过程 (3 字)" in widget.chat_browser.toPlainText()
+
+    def test_thinking_answer_starts_separate_paragraph(self, tab):
+        """收起/展开思考区后回答另起段, 不与思考标签或内容同行."""
+        widget, _ctl = tab
+        widget.think_check.setChecked(True)
+        widget.input_edit.setPlainText("题")
+        widget._send()
+        text = widget.chat_browser.toPlainText()
+        assert "思考过程 (3 字)\n\n第一段第二段" in text
+        widget._on_anchor(QUrl("think:0"))
+        assert "先想想\n\n第一段第二段" in widget.chat_browser.toPlainText()
+        html = widget.chat_browser.toHtml()
+        assert theme.tokens().accent_hover in html
 
     def test_math_rendered(self, tab):
         """行内/行间公式经轻量转换渲染, 无占位符残留."""

@@ -48,9 +48,11 @@ CONTEXT_ALL = "all"      # 上下文下拉"全部课程"的 data 值
 
 USER_HEAD = '<p style="color:{primary};"><b>你</b></p>'
 AI_HEAD = '<p style="color:{dim};"><b>水木 AI</b></p>'
-THINK_TOGGLE = ('<p style="color:{dim};font-size:small">'
-                '<a href="{href}">{text}</a></p>')
-THINK_BODY = '<p style="color:{dim};font-size:small">{text}</p>'
+THINK_TOGGLE = ('<p style="color:{accent};font-size:small">'
+                '<a href="{href}" style="color:{accent};text-decoration:none">'
+                '{text}</a></p>')
+THINK_BODY = ('<p style="color:{accent};font-size:small;background-color:{panel};'
+              'padding:6px">{text}</p>')
 FOOTNOTE = '<p style="color:{dim};font-size:small">— {text}</p>'
 FAILED_NOTE = '<p style="color:{danger};">({text})</p>'
 
@@ -444,6 +446,7 @@ class AiTab(QWidget):
         self._append_html(cursor, "<p><br></p>")
         if one_round["thinking"]:
             self._render_thinking(cursor, index, one_round)
+            self._append_html(cursor, "<br><br>")
         if one_round["failed"]:
             self._append_html(cursor, FAILED_NOTE.format(
                 danger=theme.tokens().danger,
@@ -464,10 +467,12 @@ class AiTab(QWidget):
         label = (f"{marker} 思考过程" if opened
                  else f"{marker} 思考过程 ({len(thinking)} 字)")
         self._append_html(cursor, THINK_TOGGLE.format(
-            dim=theme.tokens().fg_dim, href=f"think:{index}", text=label))
+            accent=theme.tokens().accent_hover,
+            href=f"think:{index}", text=label))
         if opened:
             self._append_html(cursor, THINK_BODY.format(
-                dim=theme.tokens().fg_dim,
+                accent=theme.tokens().accent_hover,
+                panel=theme.tokens().panel,
                 text=html_mod.escape(thinking).replace("\n", "<br>")))
 
     def _on_anchor(self, url) -> None:
@@ -696,13 +701,16 @@ class AiTab(QWidget):
                 f"{detail.get('context_chars', 0)} 字符 · {elapsed:.1f}s")
 
     def _update_tokens(self, usage: dict) -> None:
-        """更新输入区下方的会话累计用量(可配窗口上限时一并显示)."""
+        """更新输入区下方的当前会话用量; 服务端未回传时不伪报为 0."""
         total = usage.get("total_tokens")
-        if isinstance(total, int):
+        if isinstance(total, int) and total > 0:
             self._session_tokens += total
         window = int(self._ctl.config.get("ai", {}).get(
             "context_tokens", 0) or 0)
-        text = f"本会话累计 {self._session_tokens} tokens"
+        if self._session_tokens > 0:
+            text = f"本会话累计 {self._session_tokens} tokens"
+        else:
+            text = "用量未提供"
         if window > 0:
             text += f" / 可用 {window}"
         self.tokens_label.setText(text)
