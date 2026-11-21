@@ -319,13 +319,13 @@ class TestAiConfigStore:
     def test_missing_returns_empty(self, tmp_path):
         """文件缺失返回空 dict."""
         store = AiConfigStore(str(tmp_path / "none.json"))
-        assert store.load() == {}
+        assert not store.load()
 
     def test_corrupt_returns_empty(self, tmp_path):
         """损坏 JSON 返回空 dict 不抛."""
         path = tmp_path / "ai-config.json"
         path.write_text("{bad", encoding="utf-8")
-        assert AiConfigStore(str(path)).load() == {}
+        assert not AiConfigStore(str(path)).load()
 
     def test_merge_save(self, tmp_path):
         """部分键写入只覆盖该键."""
@@ -347,6 +347,35 @@ class TestAiConfigStore:
         path.write_text(json.dumps({"base_url": "u", "extra": 1,
                                     "model": 5}), encoding="utf-8")
         assert AiConfigStore(str(path)).load() == {"base_url": "u"}
+
+
+    def test_profiles_save_switch_delete(self, tmp_path):
+        """多组配置可保存、切换当前组并删除, 旧接口始终读当前组."""
+        store = AiConfigStore(str(tmp_path / "profiles.json"))
+        store.save_profile("智谱", {"base_url": "u1", "model": "m1",
+                                    "api_key": "k1"})
+        store.save_profile("本地", {"base_url": "u2", "model": "m2"},
+                           activate=False)
+        assert store.load()["model"] == "m1"
+        store.set_active_profile("本地")
+        assert store.load()["model"] == "m2"
+        store.delete_profile("本地")
+        assert store.load()["model"] == "m1"
+        profiles, active = store.load_profiles()
+        assert list(profiles) == ["智谱"] and active == "智谱"
+
+    def test_legacy_config_becomes_default_profile(self, tmp_path):
+        """旧单组配置自动呈现为默认配置组, 保存后迁移为多组结构."""
+        path = tmp_path / "legacy.json"
+        path.write_text(json.dumps({"base_url": "u", "model": "m",
+                                    "api_key": "k"}), encoding="utf-8")
+        store = AiConfigStore(str(path))
+        assert store.load_profiles()[1] == "默认配置"
+        store.save({"model": "m2"})
+        profiles, active = store.load_profiles()
+        assert active == "默认配置"
+        assert profiles[active]["model"] == "m2"
+        assert store.load()["api_key"] == "k"
 
 
 ANTHROPIC_BASE = "https://open.bigmodel.cn/api/anthropic"

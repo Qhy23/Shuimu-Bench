@@ -160,6 +160,36 @@ class TestAiConfig:
         assert params == {"fields": ["base_url", "model", "api_key"]}
         assert "sk-secret" not in rows[0]["params"]
 
+    def test_switch_profile_changes_active_config(self, ctl_ai):
+        """切换配置组后, status 与问答均读取新当前组."""
+        controller, transport, _tmp_path = ctl_ai
+        store = controller._ai_store()
+        store.save_profile("A", {"base_url": "https://a.example/v1",
+                                 "model": "model-a", "api_key": "key-a"})
+        store.save_profile("B", {"base_url": "https://b.example/v1",
+                                 "model": "model-b", "api_key": "key-b"},
+                           activate=False)
+        result = controller.ai_profile_switch("B")
+        assert result.ok
+        detail = controller.ai_status().detail
+        assert detail["active_profile"] == "B"
+        assert detail["model"] == "model-b"
+        assert detail["profiles"] == ["A", "B"]
+        enable_ai(controller)
+        add_ok_reply(transport)
+        assert controller.ai_ask("你好").ok
+        assert transport.requests[0][1]["Authorization"] == "Bearer key-b"
+
+    def test_delete_active_profile_falls_back(self, ctl_ai):
+        """删除当前组后回退到剩余首组."""
+        controller, _, _ = ctl_ai
+        store = controller._ai_store()
+        store.save_profile("A", {"model": "a"})
+        store.save_profile("B", {"model": "b"}, activate=False)
+        assert controller.ai_profile_delete("A").ok
+        assert controller.ai_status().detail["active_profile"] == "B"
+        assert not controller.ai_profile_delete("missing").ok
+
     def test_clear_key(self, ctl_ai):
         """api_key 空串清除密钥, base_url/model 保留."""
         controller, _, tmp_path = ctl_ai
@@ -167,8 +197,9 @@ class TestAiConfig:
         controller.ai_config_set(api_key="")
         stored = json.loads((tmp_path / "ai-config.json").read_text(
             encoding="utf-8"))
-        assert "api_key" not in stored
-        assert stored["model"] == "test-model"
+        active = stored["active_profile"]
+        assert "api_key" not in stored["profiles"][active]
+        assert stored["profiles"][active]["model"] == "test-model"
 
 
 class TestAiAsk:

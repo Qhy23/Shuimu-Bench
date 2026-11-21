@@ -86,6 +86,9 @@ class AiActions:
             "sessions": len(sessions),
             "messages": message_count,
         }
+        profiles, active = self._ai_store().load_profiles()
+        detail["profiles"] = list(profiles)
+        detail["active_profile"] = active
         state = "已配置" if configured else "未配置"
         message = (f"AI 插件: {detail['plugin']}, {state}, "
                    f"历史 {len(sessions)} 会话 {message_count} 条")
@@ -121,6 +124,30 @@ class AiActions:
             detail={"key_cleared": key_cleared})
         return ActionResult(True, "AI 配置已保存",
                             {"fields": fields, "key_cleared": key_cleared})
+
+    def ai_profile_switch(self, name: str) -> ActionResult:
+        """切换当前 AI 配置组(零联网, 留痕不含密钥)."""
+        store = self._ai_store()
+        profiles, _active = store.load_profiles()
+        if name not in profiles:
+            return ActionResult(False, "配置组不存在")
+        store.set_active_profile(name)
+        self.storage.log_operation("ai_profile_switch",
+                                   detail={"profile": name})
+        return ActionResult(True, f"已切换到配置组「{name}」",
+                            {"profile": name})
+
+    def ai_profile_delete(self, name: str) -> ActionResult:
+        """删除指定 AI 配置组(零联网, 留痕不含密钥)."""
+        store = self._ai_store()
+        profiles, _active = store.load_profiles()
+        if name not in profiles:
+            return ActionResult(False, "配置组不存在")
+        store.delete_profile(name)
+        self.storage.log_operation("ai_profile_delete",
+                                   detail={"profile": name})
+        return ActionResult(True, f"已删除配置组「{name}」",
+                            {"profile": name})
 
     def ai_ask(self, question: str, course_ids=None, resource_ids=None,
                include_learn: bool = False, session_id=None,

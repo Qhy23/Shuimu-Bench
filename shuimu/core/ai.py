@@ -616,28 +616,94 @@ class AiConfigStore:
 
     def load(self) -> dict:
         """读配置; 缺失/损坏/结构非法返回空 dict."""
+        profiles, active = self.load_profiles()
+        return dict(profiles.get(active, {}))
+
+    def save(self, values: dict) -> None:
+        """合并写入(values 覆盖同键旧值); OSError 上抛调用方."""
+        profiles, active = self.load_profiles()
+        current = dict(profiles.get(active, {}))
+        current.update({key: values[key] for key in CONFIG_KEYS
+                        if key in values})
+        self.save_profile(active or "默认配置", current)
+
+    def clear_key(self) -> None:
+        """删除 api_key 键后重写(base_url/model 保留)."""
+        _profiles, active = self.load_profiles()
+        if active:
+            self.clear_profile_key(active)
+
+    def load_profiles(self) -> tuple:
+        """返回 ({配置组名: 三键配置}, 当前组名).
+
+        旧版单组文件自动呈现为默认组, 保持 load() 兼容; 空配置组名为
+        "默认配置", 首组自动成为当前组.
+        """
         try:
             with open(self._path, encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, ValueError):
-            return {}
+            return {}, ""
         if not isinstance(data, dict):
-            return {}
-        return {key: data[key] for key in CONFIG_KEYS
-                if isinstance(data.get(key), str)}
+            return {}, ""
+        raw_profiles = data.get("profiles")
+        if isinstance(raw_profiles, dict):
+            profiles = {}
+            for name, values in raw_profiles.items():
+                if not isinstance(name, str) or not name.strip() \
+                        or not isinstance(values, dict):
+                    continue
+                cleaned = {key: values[key] for key in CONFIG_KEYS
+                           if isinstance(values.get(key), str)}
+                profiles[name.strip()] = cleaned
+            active = data.get("active_profile", "")
+            if not isinstance(active, str) or active not in profiles:
+                active = next(iter(profiles), "")
+            return profiles, active
+        legacy = {key: data[key] for key in CONFIG_KEYS
+                  if isinstance(data.get(key), str)}
+        if legacy:
+            return {"默认配置": legacy}, "默认配置"
+        return {}, ""
 
-    def save(self, values: dict) -> None:
-        """合并写入(values 覆盖同键旧值); OSError 上抛调用方."""
-        merged = self.load()
-        merged.update({key: values[key] for key in CONFIG_KEYS
-                       if key in values})
-        self._rewrite(merged)
+    def save_profile(self, name: str, values: dict, activate: bool = True) -> None:
+        """新增或覆盖一组配置, 默认可选设为当前组."""
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("配置组名不能为空")
+        profiles, active = self.load_profiles()
+        cleaned = {key: values[key] for key in CONFIG_KEYS if key in values}
+        profiles[name] = cleaned
+        if activate or not active:
+            active = name
+        self._write_profiles(profiles, active)
 
-    def clear_key(self) -> None:
-        """删除 api_key 键后重写(base_url/model 保留)."""
-        merged = self.load()
-        merged.pop("api_key", None)
-        self._rewrite(merged)
+    def delete_profile(self, name: str) -> None:
+        """删除一组配置; 当前组被删时选择剩余首组."""
+        profiles, active = self.load_profiles()
+        if name not in profiles:
+            return
+        del profiles[name]
+        if active == name:
+            active = next(iter(profiles), "")
+        self._write_profiles(profiles, active)
+
+    def set_active_profile(self, name: str) -> None:
+        """切换当前配置组; 组不存在时不改动."""
+        profiles, _active = self.load_profiles()
+        if name in profiles:
+            self._write_profiles(profiles, name)
+
+    def clear_profile_key(self, name: str) -> None:
+        """清除指定配置组的 api_key, 保留其他字段."""
+        profiles, active = self.load_profiles()
+        if name in profiles:
+            profiles[name].pop("api_key", None)
+            self._write_profiles(profiles, active)
+
+    def _write_profiles(self, profiles: dict, active: str) -> None:
+        """多组结构落盘, 与单组配置共用原子写与权限约束."""
+        self._rewrite({"profiles": profiles, "active_profile": active})
 
     def _rewrite(self, values: dict) -> None:
         """全量重写为给定键值; 原子写 + 0o600."""
