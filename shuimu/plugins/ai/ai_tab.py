@@ -14,18 +14,21 @@ core/ai_math 轻量转换(占位符 -> LaTeX 子集 HTML). 思考不持久化,
 
 import html as html_mod
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFrame,
+    QDialog,
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -64,6 +67,104 @@ def _new_round(question: str, thinking: str = "", answer: str = "",
     return {"question": question, "thinking": thinking, "answer": answer,
             "footnote": footnote, "failed": failed,
             "thinking_open": False}
+
+
+class AiHistoryDialog(QDialog):
+    """历史会话管理: 打开/单独删除/清空全部, 不直接改数据库."""
+
+    def __init__(self, ctl: Controller, parent=None):
+        super().__init__(parent)
+        self._ctl = ctl
+        self.selected_session_id = None
+        self.setWindowTitle("历史会话")
+        self.resize(420, 480)
+        layout = QVBoxLayout(self)
+        hint = QLabel("选择会话可继续对话, 或仅删除选中的历史.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self.session_list = QListWidget()
+        self.session_list.setSelectionMode(
+            QListWidget.SelectionMode.SingleSelection)
+        self.session_list.currentItemChanged.connect(self._update_buttons)
+        self.session_list.itemDoubleClicked.connect(self._open_selected)
+        layout.addWidget(self.session_list, 1)
+        row = QHBoxLayout()
+        self.open_button = QPushButton("打开")
+        self.open_button.setProperty("primary", True)
+        self.open_button.clicked.connect(self._open_selected)
+        row.addWidget(self.open_button)
+        self.delete_button = QPushButton("删除选中")
+        self.delete_button.setProperty("danger", True)
+        self.delete_button.clicked.connect(self._delete_selected)
+        row.addWidget(self.delete_button)
+        row.addStretch(1)
+        layout.addLayout(row)
+        bottom = QHBoxLayout()
+        clear_button = QPushButton("清空全部...")
+        clear_button.setProperty("tool", True)
+        clear_button.clicked.connect(self._clear_all)
+        bottom.addWidget(clear_button)
+        bottom.addStretch(1)
+        close_button = QPushButton("关闭")
+        close_button.setProperty("tool", True)
+        close_button.clicked.connect(self.reject)
+        bottom.addWidget(close_button)
+        layout.addLayout(bottom)
+        self.reload()
+
+    def reload(self) -> None:
+        """从 controller 重建会话列表, 保留可选中状态."""
+        current = self._current_id()
+        self.session_list.clear()
+        sessions = self._ctl.ai_history(limit=1000).detail.get("sessions", [])
+        for row in sessions:
+            item = QListWidgetItem(f"#{row['id']}  {row['title']}")
+            item.setData(Qt.ItemDataRole.UserRole, row["id"])
+            item.setToolTip(f"{row['message_count']} 条消息")
+            self.session_list.addItem(item)
+            if row["id"] == current:
+                self.session_list.setCurrentItem(item)
+        if self.session_list.currentItem() is None and self.session_list.count():
+            self.session_list.setCurrentRow(0)
+        self._update_buttons()
+
+    def _current_id(self):
+        item = self.session_list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+
+    def _update_buttons(self, *_args) -> None:
+        """无选中时禁用打开与单删."""
+        enabled = self.session_list.currentItem() is not None
+        self.open_button.setEnabled(enabled)
+        self.delete_button.setEnabled(enabled)
+
+    def _open_selected(self, *_args) -> None:
+        """把选中的会话 id 交给调用方打开."""
+        if self._current_id() is None:
+            return
+        self.selected_session_id = self._current_id()
+        self.accept()
+
+    def _delete_selected(self) -> None:
+        """只删除当前选中会话, 其余历史保留."""
+        session_id = self._current_id()
+        if session_id is None:
+            return
+        item = self.session_list.currentItem()
+        if not _confirm(self, f"删除会话 {item.text()}?\n此操作不可撤销."):
+            return
+        result = self._ctl.ai_clear_history(session_id=session_id)
+        if result.ok:
+            self.reload()
+
+    def _clear_all(self) -> None:
+        """清空全部历史, 独立于单删的显式操作."""
+        if not _confirm(self, "清空全部 AI 对话历史?\n此操作不可撤销."):
+            return
+        result = self._ctl.ai_clear_history()
+        if result.ok:
+            self.session_list.clear()
+            self._update_buttons()
 
 
 class AiTab(QWidget):
@@ -242,6 +343,7 @@ class AiTab(QWidget):
         tools.addWidget(self.session_box, 1)
         self.history_button = QPushButton("历史", parent)
         self.history_button.setProperty("tool", True)
+        self.history_button.clicked.connect(self._show_history)
         tools.addWidget(self.history_button)
         self.settings_button = QPushButton("设置", parent)
         self.settings_button.setToolTip("修改服务地址、模型与 API Key")
@@ -631,6 +733,21 @@ class AiTab(QWidget):
             return
         self._session_id = session_id
         self._load_rounds_from_storage()
+        self._rebuild_chat()
+        self._reset_tokens()
+
+    def _show_history(self) -> None:
+        """打开历史管理; 打开会话或删除后同步消息流与下拉."""
+        dialog = AiHistoryDialog(self._ctl, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted \
+                and dialog.selected_session_id is not None:
+            self._session_id = dialog.selected_session_id
+            self._load_rounds_from_storage()
+        else:
+            # 删除当前会话后回到新对话, 不保留已删除消息流
+            self._session_id = None
+            self._rounds = []
+        self._refresh_sessions()
         self._rebuild_chat()
         self._reset_tokens()
 

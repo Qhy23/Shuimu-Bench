@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QUrl
+from PySide6.QtWidgets import QDialog
 
 from shuimu.core.controller import ActionResult, Controller
 from shuimu.core.storage import Storage
@@ -11,6 +12,7 @@ from shuimu.plugins.ai.ai_tab import (
     PAGE_CONFIG,
     PAGE_DISABLED,
     PAGE_MAIN,
+    AiHistoryDialog,
     AiTab,
 )
 
@@ -84,16 +86,21 @@ class FakeAiController:
                                "kind": "file", "chars": 10,
                                "truncated": False, "skipped": ""}]})
 
-    def ai_history(self):
+    def ai_history(self, limit=20):
         """历史替身."""
+        del limit
         return ActionResult(True, "n 个会话", {"sessions": self.sessions})
 
     def ai_clear_history(self, session_id=None):
-        """清除替身."""
-        del session_id
+        """清除替身: 按真实语义支持单会话或全部."""
         self.cleared += 1
-        self.sessions = []
-        self.messages = {}
+        if session_id is None:
+            self.sessions = []
+            self.messages = {}
+        else:
+            self.sessions = [row for row in self.sessions
+                             if row["id"] != session_id]
+            self.messages.pop(session_id, None)
         return ActionResult(True, "已清除", {"removed": 1})
 
     def set_plugin_enabled(self, plugin_id, enabled, confirm=None):
@@ -360,6 +367,66 @@ class TestChat:
         widget._send()
         widget._new_chat()
         assert widget.chat_browser.toPlainText() == ""
+
+    def test_history_dialog_delete_one(self, qtbot, tmp_path, monkeypatch):
+        """历史管理可单独删除选中会话, 不影响其他会话."""
+        storage = Storage(str(tmp_path / "history-one.db"))
+        ctl = Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
+                         links_path=str(tmp_path / "l.yaml"),
+                         plugins_state_path=str(tmp_path / "plugins.yaml"),
+                         external_plugins_dir=str(tmp_path / "ext"),
+                         ai_config_path=str(tmp_path / "ai.json"))
+        first = storage.ai_add_round(None, "第一问", "回答一")
+        second = storage.ai_add_round(None, "第二问", "回答二")
+        dialog = AiHistoryDialog(ctl)
+        qtbot.addWidget(dialog)
+        assert dialog.session_list.count() == 2
+        dialog.session_list.setCurrentRow(0)
+        monkeypatch.setattr("shuimu.plugins.ai.ai_tab._confirm",
+                            lambda *_args, **_kwargs: True)
+        dialog._delete_selected()
+        assert dialog.session_list.count() == 1
+        remaining = ctl.ai_history().detail["sessions"]
+        assert len(remaining) == 1
+        assert remaining[0]["id"] in (first, second)
+        storage.close()
+
+    def test_delete_current_session_resets_main_view(self, tab, monkeypatch):
+        """删除当前会话后消息流与新对话状态清空, 其他历史可继续选择."""
+        widget, _ctl = tab
+        widget.input_edit.setPlainText("第一问")
+        widget._send()
+        widget.input_edit.setPlainText("第二问")
+        widget._send()
+        current_id = widget._session_id
+        assert current_id is not None
+        monkeypatch.setattr("shuimu.plugins.ai.ai_tab._confirm",
+                            lambda *_args, **_kwargs: True)
+        widget._ctl.ai_clear_history(session_id=current_id)
+        widget._session_id = None
+        widget._rounds = []
+        widget._refresh_sessions()
+        widget._rebuild_chat()
+        assert widget.chat_browser.toPlainText() == ""
+        assert widget.session_box.currentData() is None
+        assert widget.session_box.count() == 2
+
+    def test_history_dialog_open_selected(self, qtbot, tmp_path):
+        """双击或打开按钮返回选中会话 id."""
+        storage = Storage(str(tmp_path / "history-open.db"))
+        ctl = Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
+                         links_path=str(tmp_path / "l.yaml"),
+                         plugins_state_path=str(tmp_path / "plugins.yaml"),
+                         external_plugins_dir=str(tmp_path / "ext"),
+                         ai_config_path=str(tmp_path / "ai.json"))
+        session_id = storage.ai_add_round(None, "可打开会话", "回答")
+        dialog = AiHistoryDialog(ctl)
+        qtbot.addWidget(dialog)
+        dialog.session_list.setCurrentRow(0)
+        dialog._open_selected()
+        assert dialog.selected_session_id == session_id
+        assert dialog.result() == QDialog.DialogCode.Accepted
+        storage.close()
 
     def test_clear_history_confirm(self, tab, monkeypatch):
         """清除历史经确认后调用并重置."""
