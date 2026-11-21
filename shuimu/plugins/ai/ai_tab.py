@@ -733,12 +733,18 @@ class AiTab(QWidget):
         self._ask_pool.start(self._ask_job)
 
     def _drain_ask_events(self) -> None:
-        """在 UI 线程按后台产生顺序消费流式增量."""
-        if self._ask_job is None:
+        """在 UI 线程按后台产生顺序消费流式增量.
+
+        追加文本会 processEvents, 期间可能收到 finished 并清空 _ask_job
+        (Windows 慢机上实测可复现); 以入口捕获的 job 取事件, 每轮确认
+        它仍是当前 job, 结束后立即停止, 不再访问已清空的引用.
+        """
+        job = self._ask_job
+        if job is None:
             return
-        while True:
+        while self._ask_job is job:
             try:
-                kind, piece = self._ask_job._events.get_nowait()
+                kind, piece = job._events.get_nowait()
             except queue.Empty:
                 break
             if kind == "delta":

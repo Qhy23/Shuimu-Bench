@@ -81,7 +81,7 @@ class TestSelection:
         index = page.file_model.index(str(path))
         assert index.isValid()
         assert not page.file_model.data(index, Qt.ItemDataRole.DecorationRole).isNull()
-        assert str(path) in calls
+        assert os.path.normpath(str(path)) in _norm(*calls)
         calls.clear()
         for column in (1, 2, 3):
             other = index.sibling(index.row(), column)

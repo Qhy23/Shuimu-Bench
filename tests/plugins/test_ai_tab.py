@@ -1,6 +1,7 @@
 """ai_tab 测试: 三态页签/配置/流式对话/会话切换(offscreen, 假 controller)."""
 
 from types import SimpleNamespace
+import queue
 import threading
 import time
 
@@ -287,6 +288,23 @@ class TestChat:
         assert "第一段第二段" in text
         assert widget.input_edit.toPlainText() == ""
         assert widget.session_box.count() == 2   # 新对话 + 1 个会话
+
+    def test_drain_stops_when_job_cleared_mid_loop(self, tab):
+        """finished 在追加文本的 processEvents 中到达后不再访问空 job."""
+        widget, _ctl = tab
+        job = SimpleNamespace(_events=queue.Queue())
+        job._events.put(("delta", "第一段"))
+        job._events.put(("delta", "第二段"))
+        widget._ask_job = job
+        seen = []
+
+        def finish_after_first(piece):
+            seen.append(piece)
+            widget._ask_job = None      # 模拟 _ask_finished 已清空引用
+
+        widget._on_delta = finish_after_first
+        widget._drain_ask_events()      # 旧实现在第二个事件处 AttributeError
+        assert seen == ["第一段"]
 
     def test_tokens_accumulate_and_reset(self, tab):
         """tokens 常驻输入区下方: 逐轮累计, 新对话清零, 可配窗口上限."""
