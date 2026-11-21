@@ -341,6 +341,24 @@ class TestChat:
         assert "\u2063" not in widget.chat_browser.toPlainText()
         del ctl.ask_answer
 
+    def test_many_formulas_leave_no_placeholders(self, tab):
+        """多公式与跨轮渲染后, F28/F29 等占位符不会残留."""
+        widget, ctl = tab
+        ctl.ask_answer = " ".join(f"$x_{{{i}}}$" for i in range(1, 36))
+        widget.input_edit.setPlainText("公式")
+        widget._send()
+        text = widget.chat_browser.toPlainText()
+        assert "F28" not in text and "F29" not in text
+        assert "⁣" not in text
+        for i in range(1, 36):
+            assert f"x{i}" in text
+        ctl.ask_answer = "第二轮 $y_{42}$"
+        widget.input_edit.setPlainText("再问")
+        widget._send()
+        assert "y42" in widget.chat_browser.toPlainText()
+        assert "⁣" not in widget.chat_browser.toPlainText()
+        del ctl.ask_answer
+
     def test_answer_rendered_as_markdown(self, tab):
         """完成后整流重渲染: 标题/加粗生效, 历史轮次不丢."""
         widget, ctl = tab

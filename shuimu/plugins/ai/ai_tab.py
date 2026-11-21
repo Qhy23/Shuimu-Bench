@@ -511,10 +511,10 @@ class AiTab(QWidget):
         cursor.insertMarkdown(plain)
         scope_end = document.characterCount()
         for index, latex in enumerate(formulas):
-            finder = QTextCursor(document)
-            finder.setPosition(scope_start)
-            hit = document.find(f"⁣F{index}⁣", finder)
-            if not hit.isNull() and hit.position() <= scope_end:
+            # 仅在当前消息范围内替换; 每个占位符按序号精确定位,
+            # 不搜索或修改此前轮次的文本.
+            hit = document.find(f"⁣F{index}⁣", scope_start)
+            if not hit.isNull() and hit.position() + len(f"F{index}") <= scope_end:
                 hit.insertHtml(latex_to_html(latex))
 
     def _append_plain(self, piece: str) -> None:
