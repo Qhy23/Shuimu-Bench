@@ -27,8 +27,6 @@ def make_external_plugin(ext, dirname, *, manifest=None, body=None):
 @pytest.fixture()
 def ctl(tmp_path, monkeypatch):
     """每个测试用独立的 controller + 临时数据库 + 临时日程/链接文件(模板隔离)."""
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr("shuimu.core.controller.template_links_path",
                         lambda: str(tmp_path / "no-such-links-template.yaml"))
     storage = Storage(str(tmp_path / "ctl.db"))
@@ -42,8 +40,6 @@ def ctl(tmp_path, monkeypatch):
 @pytest.fixture()
 def ctl_ext(tmp_path, monkeypatch):
     """带外部插件目录的 controller: 返回 (controller, 外部目录)."""
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr("shuimu.core.controller.template_links_path",
                         lambda: str(tmp_path / "no-such-links-template.yaml"))
     ext = tmp_path / "ext"
@@ -59,8 +55,6 @@ def ctl_ext(tmp_path, monkeypatch):
 @pytest.fixture()
 def ctl_trash(tmp_path, monkeypatch):
     """带独立 trash_dir 配置的 controller(删除测试不碰真实回收站)."""
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr("shuimu.core.controller.template_links_path",
                         lambda: str(tmp_path / "no-such-links-template.yaml"))
     cfg = deepcopy(DEFAULTS)
@@ -408,8 +402,6 @@ class TestUndo:
 
     def test_undo_stack_not_persisted(self, tmp_path, monkeypatch):
         """栈随 controller 实例, 不跨实例共享."""
-        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                            lambda: str(tmp_path / "no-such-template.yaml"))
         monkeypatch.setattr("shuimu.core.controller.template_links_path",
                             lambda: str(tmp_path / "no-such-links-template.yaml"))
         storage = Storage(str(tmp_path / "x.db"))
@@ -498,10 +490,8 @@ class TestScheduleActions:
 class TestSemesterConfig:
     """学期配置访问器."""
 
-    def test_week_count_from_config(self, tmp_path, monkeypatch):
+    def test_week_count_from_config(self, tmp_path):
         """week_count 经配置注入, 非法值回退 0."""
-        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                            lambda: str(tmp_path / "no-tpl.yaml"))
         cfg = deepcopy(DEFAULTS)
         cfg["schedule"]["week_count"] = 18
         storage = Storage(str(tmp_path / "sem.db"))

@@ -207,9 +207,6 @@ class TestRunPluginChannel:
             "shuimu.core.pluginman.builtin_plugins_dir",
             lambda: str(tmp_path / "fake-builtin"))
         monkeypatch.setattr(
-            "shuimu.core.controller.template_schedule_path",
-            lambda: str(tmp_path / "no.yaml"))
-        monkeypatch.setattr(
             "shuimu.core.controller.template_links_path",
             lambda: str(tmp_path / "no.yaml"))
         storage = Storage(str(tmp_path / "run.db"))

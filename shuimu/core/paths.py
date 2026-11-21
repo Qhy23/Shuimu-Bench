@@ -30,14 +30,6 @@ def default_schedule_path() -> str:
     return os.path.join(project_root(), "data", "schedule.yaml")
 
 
-def template_schedule_path() -> str:
-    """随仓库/包分发的日程模板位置(首次运行复制为数据文件)."""
-    if getattr(sys, "frozen", False):
-        base = getattr(sys, "_MEIPASS", "")
-        return os.path.join(base, "data", "schedule.example.yaml")
-    return os.path.join(project_root(), "data", "schedule.example.yaml")
-
-
 def default_links_path() -> str:
     """常用链接 YAML 位置. 与 default_db_path 同款分叉: dev 在项目 data/,
     frozen 在用户数据目录."""

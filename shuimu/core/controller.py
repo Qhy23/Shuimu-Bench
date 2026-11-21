@@ -38,7 +38,6 @@ from shuimu.core.paths import (
     default_links_path,
     default_schedule_path,
     template_links_path,
-    template_schedule_path,
 )
 from shuimu.core.pluginapi import PluginJob, PluginReport
 from shuimu.core.pluginman import (
@@ -645,7 +644,7 @@ class Controller(FolderActions, LearnActions, CloudActions, AiActions):
     def schedule_snapshot(self) -> ScheduleData:
         """当前日程快照. 首次调用或数据文件缺失时(重新)播种."""
         if not self._schedule_seeded or not os.path.isfile(self.schedule_path):
-            ensure_schedule_file(self.schedule_path, template_schedule_path())
+            ensure_schedule_file(self.schedule_path)
             self._schedule_seeded = True
         return load_schedule(self.schedule_path)
 

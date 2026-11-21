@@ -27,7 +27,6 @@ ICON = "assets/shuimu.ico" if WIN else None   # icon 仅 Windows 生效
 # 公共 datas: 两可执行运行时都经 paths.py 读到它们
 DATAS = [
     ("config.yaml", "."),                        # _MEIPASS/config.yaml
-    ("data/schedule.example.yaml", "data"),      # 首启日程模板
     ("data/links.example.yaml", "data"),         # 首启链接模板
     ("assets/shuimu.png", "assets"),             # Linux 桌面集成备用
 ]

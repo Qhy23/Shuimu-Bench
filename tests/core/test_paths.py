@@ -15,7 +15,6 @@ from shuimu.core.paths import (
     default_workspace_root,
     project_root,
     template_links_path,
-    template_schedule_path,
 )
 
 
@@ -74,11 +73,10 @@ class TestSchedulePaths:
     """日程数据文件与模板路径."""
 
     def test_dev_mode_under_project(self):
-        """源码运行时数据文件与模板都在项目 data/ 下."""
+        """源码运行时数据文件在项目 data/ 下."""
         path = default_schedule_path()
         assert path.endswith(os.path.join("data", "schedule.yaml"))
         assert project_root() in path
-        assert template_schedule_path().endswith("schedule.example.yaml")
 
     def test_frozen_mode_uses_user_dir(self, monkeypatch, tmp_path):
         """打包后数据文件落到平台用户数据目录."""

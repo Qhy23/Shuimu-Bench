@@ -15,8 +15,8 @@
 | spec 数据 | 落点 | 用途 |
 |---|---|---|
 | `config.yaml` | `_MEIPASS/` | frozen 下 `project_root()` == `_MEIPASS`, 作为配置合并的"项目根"层 |
-| `data/schedule.example.yaml` | `_MEIPASS/data/` | 首启日程模板 |
 | `data/links.example.yaml` | `_MEIPASS/data/` | 首启链接模板 |
+| (日程无模板文件) | - | 首启由 `ensure_schedule_file` 写空骨架 (HEADER + 空三段) |
 | `shuimu/plugins/`(整目录 Tree) | `_MEIPASS/shuimu_plugins/` | 内置插件发现与按文件路径 importlib 加载 |
 | `assets/shuimu.png` | `_MEIPASS/assets/` | Linux 桌面集成备用 |
 

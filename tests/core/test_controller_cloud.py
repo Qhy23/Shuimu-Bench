@@ -55,8 +55,6 @@ def ctl_cloud(tmp_path, monkeypatch):
     外部目录放 cloud 替身插件且默认未启用(门禁用例需要), 其余用例自行
     调用 enable().
     """
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr("shuimu.core.controller.template_links_path",
                         lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr(

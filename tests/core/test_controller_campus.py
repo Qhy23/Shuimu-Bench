@@ -32,8 +32,6 @@ def ctl_campus(tmp_path, monkeypatch):
 
     campus 插件在隔离状态文件中预先启用(network 授权).
     """
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr("shuimu.core.controller.template_links_path",
                         lambda: str(tmp_path / "no-such-links-template.yaml"))
     monkeypatch.setattr(
@@ -80,8 +78,6 @@ class TestCampusActions:
 
     def test_login_blocked_when_plugin_disabled(self, tmp_path, monkeypatch):
         """插件未启用: 拒绝且零请求零留痕."""
-        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                            lambda: str(tmp_path / "no-such-template.yaml"))
         monkeypatch.setattr("shuimu.core.controller.template_links_path",
                             lambda: str(tmp_path / "no-such-links-template.yaml"))
         monkeypatch.setattr(

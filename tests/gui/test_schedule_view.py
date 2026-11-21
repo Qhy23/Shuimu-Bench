@@ -23,14 +23,11 @@ from shuimu.core.storage import Storage
 
 
 @pytest.fixture()
-def sched_env(qtbot, tmp_path, monkeypatch):
-    """隔离到 tmp_path 的 Controller + ScheduleTab(模板含一条待办)."""
-    tpl_path = tmp_path / "schedule.example.yaml"
-    tpl_path.write_text(
-        "todos:\n  - {id: 1, title: 模板任务, done: false}\n", encoding="utf-8")
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tpl_path))
+def sched_env(qtbot, tmp_path):
+    """隔离到 tmp_path 的 Controller + ScheduleTab(预置一条待办)."""
     yaml_path = tmp_path / "schedule.yaml"
+    yaml_path.write_text(
+        "todos:\n  - {id: 1, title: 模板任务, done: false}\n", encoding="utf-8")
     storage = Storage(str(tmp_path / "sched.db"))
     ctl = Controller(storage, schedule_path=str(yaml_path))
     tab = ScheduleTab(ctl)
@@ -163,13 +160,13 @@ class TestWatcher:
         assert len(calls) == 1
 
     def test_dir_changed_reseeds(self, sched_env):
-        """文件被删除后 _on_dir_changed 重新播种(回到模板初始状态)."""
+        """文件被删除后 _on_dir_changed 重新播种(空骨架)."""
         _ctl, tab, yaml_path = sched_env
         yaml_path.unlink()
         tab._on_dir_changed("")
         assert yaml_path.exists()
-        assert tab.todo_tree.topLevelItemCount() == 1  # 模板里的 模板任务
-        assert tab.todo_tree.topLevelItem(0).text(0) == "模板任务"
+        assert "水木工作台日程数据" in yaml_path.read_text(encoding="utf-8")
+        assert tab.todo_tree.topLevelItemCount() == 0
 
 
 class TestImportCourses:
@@ -218,12 +215,8 @@ class TestSemesterRange:
     """学期周次显示与翻周夹取."""
 
     @pytest.fixture()
-    def sem_env(self, qtbot, tmp_path, monkeypatch):
+    def sem_env(self, qtbot, tmp_path):
         """配置了学期起点与总周数的隔离环境(第 1 周 = 2026-10-19, 共 4 周)."""
-        tpl_path = tmp_path / "schedule.example.yaml"
-        tpl_path.write_text("todos: []\n", encoding="utf-8")
-        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                            lambda: str(tpl_path))
         cfg = deepcopy(DEFAULTS)
         cfg["schedule"]["semester_start"] = "2026-10-19"
         cfg["schedule"]["week_count"] = 4

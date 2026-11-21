@@ -19,6 +19,8 @@ import yaml
 from shuimu.core.yamlio import atomic_write_yaml, ensure_from_template
 
 HEADER = ("# 水木工作台日程数据(courses=导入课程, manual=手动事件, todos=待办).\n"
+          "# 事件字段: date/start/end/title/location; 待办字段: "
+          "title(必填)/due/course/done.\n"
           "# 注意: GUI 保存会重写本文件, 手写注释会丢失.\n")
 
 WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]

@@ -69,8 +69,6 @@ def ctl_learn(tmp_path, monkeypatch):
     会话文件预写(有效 webvpn cookie); 外部目录放 learn 替身插件且默认
     未启用(门禁用例需要), 其余用例自行调用 enable().
     """
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr("shuimu.core.controller.template_links_path",
                         lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr(

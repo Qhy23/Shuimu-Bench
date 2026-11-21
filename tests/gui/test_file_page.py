@@ -28,8 +28,6 @@ def _norm(*paths):
 @pytest.fixture()
 def page(tmp_path, monkeypatch, qtbot):
     """带独立 controller 与回收站目录的文件页(workspace 指向临时目录)."""
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr("shuimu.core.controller.template_links_path",
                         lambda: str(tmp_path / "no-such-links-template.yaml"))
     cfg = deepcopy(DEFAULTS)

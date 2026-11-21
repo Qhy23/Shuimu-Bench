@@ -55,12 +55,8 @@ def db(tmp_path):
 
 
 @pytest.fixture()
-def sched(tmp_path, monkeypatch):
-    """独立的日程 YAML 路径(模板指向空文件, 隔离仓库模板)."""
-    tpl = tmp_path / "tpl.yaml"
-    tpl.write_text("todos: []\n", encoding="utf-8")
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tpl))
+def sched(tmp_path):
+    """独立的日程 YAML 路径."""
     return str(tmp_path / "schedule.yaml")
 
 

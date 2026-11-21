@@ -32,8 +32,6 @@ def ctl_ai(tmp_path, monkeypatch):
     外部目录放 ai 替身插件且默认未启用(门禁用例需要), 其余用例自行
     enable(); 配置文件路径指向 tmp; transport 为 MemoryAiTransport.
     """
-    monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                        lambda: str(tmp_path / "no-such-template.yaml"))
     monkeypatch.setattr("shuimu.core.controller.template_links_path",
                         lambda: str(tmp_path / "no-such-template.yaml"))
     write_stub_plugin(tmp_path)
@@ -84,8 +82,6 @@ class TestAiGate:
 
     def test_not_installed(self, tmp_path, monkeypatch):
         """无 ai 插件(内置/外部都指向空目录): 明确提示未安装."""
-        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                            lambda: str(tmp_path / "no.yaml"))
         monkeypatch.setattr("shuimu.core.controller.template_links_path",
                             lambda: str(tmp_path / "no.yaml"))
         monkeypatch.setattr(

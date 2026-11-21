@@ -74,12 +74,8 @@ class TestEmptyStates:
         grid.set_week(date(2026, 10, 19), days)
         assert grid._empty.isHidden()
 
-    def test_todo_empty_hint(self, qtbot, tmp_path, monkeypatch):
+    def test_todo_empty_hint(self, qtbot, tmp_path):
         """待办为空时树上有占位提示部件."""
-        tpl = tmp_path / "tpl.yaml"
-        tpl.write_text("todos: []\n", encoding="utf-8")
-        monkeypatch.setattr("shuimu.core.controller.template_schedule_path",
-                            lambda: str(tpl))
         storage = Storage(str(tmp_path / "t.db"))
         ctl = Controller(storage, schedule_path=str(tmp_path / "s.yaml"))
         tab = ScheduleTab(ctl)
