@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -77,6 +78,7 @@ class AiTab(QWidget):
         self._rounds = []            # 当前会话的轮次渲染结构
         self._thinking_parts = []    # 本轮流式的思考增量缓存
         self._thinking_shown = False # 本轮流式是否已显示过思考段
+        self._config_loading = False  # 刷新配置表单时避免下拉触发切换动作
         self.new_chat_button = None
         self.session_box = None
         self.clear_history_button = None
@@ -111,6 +113,21 @@ class AiTab(QWidget):
         """页 1: 配置表单(服务地址/模型/密钥)."""
         page = QWidget()
         column = QVBoxLayout(page)
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("配置组:"))
+        self.profile_box = QComboBox()
+        self.profile_box.setToolTip("切换当前使用的服务配置")
+        self.profile_box.currentIndexChanged.connect(self._on_profile_changed)
+        profile_row.addWidget(self.profile_box, 1)
+        self.save_profile_button = QPushButton("另存为")
+        self.save_profile_button.setProperty("tool", True)
+        self.save_profile_button.clicked.connect(self._save_profile_as)
+        profile_row.addWidget(self.save_profile_button)
+        self.delete_profile_button = QPushButton("删除")
+        self.delete_profile_button.setProperty("danger", True)
+        self.delete_profile_button.clicked.connect(self._delete_profile)
+        profile_row.addWidget(self.delete_profile_button)
+        column.addLayout(profile_row)
         form = QFormLayout()
         self.base_url_edit = QLineEdit()
         self.base_url_edit.setPlaceholderText(
@@ -225,16 +242,26 @@ class AiTab(QWidget):
     def refresh_state(self) -> None:
         """按插件与配置状态切换页面(零联网)."""
         record = self._ctl.plugins.get("ai")
-        if record is None or record.status != "ok":
-            self.stack.setCurrentIndex(PAGE_DISABLED)
-            return
         result = self._ctl.ai_status()
         detail = result.detail
+        self._config_loading = True
+        self.profile_box.blockSignals(True)
+        self.profile_box.clear()
+        profiles = detail.get("profiles", [])
+        self.profile_box.addItems(profiles)
+        active = detail.get("active_profile", "")
+        self.profile_box.setCurrentIndex(max(self.profile_box.findText(active), 0))
+        self.profile_box.blockSignals(False)
+        self.delete_profile_button.setEnabled(bool(profiles))
+        self._config_loading = False
         self.base_url_edit.setText(detail.get("base_url", ""))
         self.model_edit.setText(detail.get("model", ""))
         self.key_edit.clear()
         self.key_edit.setPlaceholderText(
             "已保存, 留空保持不变" if detail.get("has_key") else "未保存")
+        if record is None or record.status != "ok":
+            self.stack.setCurrentIndex(PAGE_DISABLED)
+            return
         if not detail.get("configured"):
             self.stack.setCurrentIndex(PAGE_CONFIG)
             return
@@ -392,6 +419,47 @@ class AiTab(QWidget):
         if not result.ok:
             warn(self, "未能启用 AI 插件", result.message)
         self.refresh_state()
+
+    def _on_profile_changed(self, index: int) -> None:
+        """下拉切换当前配置组并刷新表单(不发出网络请求)."""
+        if self._config_loading or index < 0:
+            return
+        result = self._ctl.ai_profile_switch(self.profile_box.currentText())
+        self.status_message.emit(result.message)
+        if result.ok:
+            self.refresh_state()
+
+    def _save_profile_as(self) -> None:
+        """把表单与密钥另存为新配置组并设为当前组."""
+        name, accepted = QInputDialog.getText(self, "另存配置组", "配置组名:")
+        name = name.strip()
+        if not accepted or not name:
+            return
+        store = self._ctl._ai_store()
+        values = {
+            "base_url": self.base_url_edit.text().strip(),
+            "model": self.model_edit.text().strip()}
+        new_key = self.key_edit.text().strip()
+        if new_key:
+            values["api_key"] = new_key
+        else:
+            _profiles, active = store.load_profiles()
+            old_key = _profiles.get(active, {}).get("api_key")
+            if old_key:
+                values["api_key"] = old_key
+        store.save_profile(name, values)
+        self.status_message.emit(f"已保存配置组「{name}」")
+        self.refresh_state()
+
+    def _delete_profile(self) -> None:
+        """删除当前配置组(确认框), 删除后由状态机选择剩余组."""
+        name = self.profile_box.currentText()
+        if not name or not _confirm(self, f"删除配置组「{name}」及其已存密钥?"):
+            return
+        result = self._ctl.ai_profile_delete(name)
+        self.status_message.emit(result.message)
+        if result.ok:
+            self.refresh_state()
 
     def _save_config(self) -> None:
         """保存配置; 密钥留空表示保持不变."""

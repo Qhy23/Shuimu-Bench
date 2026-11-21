@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QUrl
 
-from shuimu.core.controller import ActionResult
+from shuimu.core.controller import ActionResult, Controller
+from shuimu.core.storage import Storage
 from shuimu.plugins.ai.ai_tab import (
     PAGE_CONFIG,
     PAGE_DISABLED,
@@ -151,6 +152,59 @@ class TestStates:
         labels = [widget.context_box.itemText(i)
                   for i in range(widget.context_box.count())]
         assert labels == ["不附带", "全部课程", "高数", "AI 编程"]
+
+
+def test_profile_switch_and_save_as(qtbot, tmp_path, monkeypatch):
+    """配置页可切换已有组并另存新组, 当前组同步更新."""
+    storage = Storage(str(tmp_path / "profiles.db"))
+    ctl = Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
+                     links_path=str(tmp_path / "l.yaml"),
+                     plugins_state_path=str(tmp_path / "plugins.yaml"),
+                     external_plugins_dir=str(tmp_path / "ext"),
+                     ai_config_path=str(tmp_path / "ai.json"))
+    store = ctl._ai_store()
+    store.save_profile("A", {"base_url": "https://a.example/v1", "model": "a",
+                             "api_key": "key-a"})
+    store.save_profile("B", {"base_url": "https://b.example/v1", "model": "b"},
+                       activate=False)
+    widget = AiTab(ctl)
+    qtbot.addWidget(widget)
+    widget._show_config()
+    widget.profile_box.setCurrentText("B")
+    assert widget.base_url_edit.text() == "https://b.example/v1"
+    assert widget.model_edit.text() == "b"
+    assert ctl.ai_status().detail["active_profile"] == "B"
+    monkeypatch.setattr("shuimu.plugins.ai.ai_tab.QInputDialog.getText",
+                        lambda *_args, **_kwargs: ("C", True))
+    widget.key_edit.setText("key-c")
+    widget._save_profile_as()
+    detail = ctl.ai_status().detail
+    assert detail["active_profile"] == "C"
+    assert detail["model"] == "b"
+    assert set(detail["profiles"]) == {"A", "B", "C"}
+    storage.close()
+
+
+def test_delete_profile_updates_config_page(qtbot, tmp_path, monkeypatch):
+    """删除当前配置组后配置页回退到剩余组."""
+    storage = Storage(str(tmp_path / "profiles-delete.db"))
+    ctl = Controller(storage, schedule_path=str(tmp_path / "s.yaml"),
+                     links_path=str(tmp_path / "l.yaml"),
+                     plugins_state_path=str(tmp_path / "plugins.yaml"),
+                     external_plugins_dir=str(tmp_path / "ext"),
+                     ai_config_path=str(tmp_path / "ai.json"))
+    store = ctl._ai_store()
+    store.save_profile("A", {"model": "a"})
+    store.save_profile("B", {"model": "b"}, activate=False)
+    widget = AiTab(ctl)
+    qtbot.addWidget(widget)
+    widget._show_config()
+    monkeypatch.setattr("shuimu.plugins.ai.ai_tab._confirm",
+                        lambda *_args, **_kwargs: True)
+    widget._delete_profile()
+    assert ctl.ai_status().detail["active_profile"] == "B"
+    assert widget.profile_box.currentText() == "B"
+    storage.close()
 
 
 class TestEnableAndConfig:
