@@ -47,7 +47,7 @@ pip install pillow && python tools/make_icon.py
 ## CI 触发与 Release
 
 - 手动: 仓库 Actions 页 `build` -> Run workflow, 只构建与冒烟, 产物在 artifact(90 天)
-- 发版: 推 `v*` 标签(如 `v0.1.0`), 两平台构建通过后自动创建 GitHub Release 并附产物; **标签版本必须与 `APP_VERSION` 一致**, 不一致构建直接红
+- 发版: 推 `v*` 标签(如 `v0.0.1`), 两平台构建通过后自动创建 GitHub Release 并附产物; **标签版本必须与 `APP_VERSION` 一致**, 不一致构建直接红
 - 重跑发布不冲突: 已存在 Release 时改为上载覆盖(`--clobber`)
 
 ## 已知限制
