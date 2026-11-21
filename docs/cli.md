@@ -131,6 +131,7 @@ python cli.py rm-event #5 --series
 | 段 | 字段 | 说明 |
 |---|---|---|
 | app | window_size / splitter_sizes / font_size | 界面尺寸与字号(界面内 Ctrl+=/-/0 可调) |
+| app | theme | 启动主题 dark/light/用户主题 id; 界面切换见 [主题说明](theme.md) |
 | organize | categories / fallback_category | 整理规则: 类别 -> 扩展名 |
 | schedule | semester_start / week_count | 学期第 1 周的周一(YYYY-MM-DD)与总周数; 填写后界面显示学期周次 |
 | fileops | trash_dir | 文件页删除的回收站目录; 留空用系统回收站(WSL 建议自建目录) |

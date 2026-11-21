@@ -40,8 +40,9 @@ from PySide6.QtWidgets import (
 
 from shuimu import APP_VERSION
 from shuimu.core import url_open
-from shuimu.core.config import font_size_value
-from shuimu.core.controller import KIND_LABEL, Controller
+from shuimu.core.config import font_size_value, theme_name_value
+from shuimu.core.controller import Controller
+from shuimu.core.paths import user_themes_dir
 from shuimu.core.storage import Storage
 from shuimu.core.url_open import wslview_open as _wslview_open
 from shuimu.gui import artwork, dialogs, theme
@@ -115,13 +116,22 @@ class MainWindow(QMainWindow):
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
+        # config 指定的主题在构建任何子部件前生效(会话级, 运行时齿轮菜单可换)
+        theme.theme_choices()  # 扫描用户主题刷新切换快照
+        try:
+            theme.apply_theme(QApplication.instance(),
+                              theme=theme_name_value(self.ctl.config))
+        except ValueError:
+            pass  # 未知主题 id 保持默认深色
+
         container = QWidget(self)
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
         self.title_bar = TitleBar(self, self.ctl.config["app"]["title"],
                                   on_about=self._show_about,
-                                  on_log=self._open_log_dialog)
+                                  on_log=self._open_log_dialog,
+                                  on_settings=self._show_settings_menu)
         self.setWindowIcon(QIcon(artwork.bench_icon(256)))
         container_layout.addWidget(self.title_bar)
 
@@ -161,6 +171,49 @@ class MainWindow(QMainWindow):
             "本地优先的课程学习工作台\n"
             "清华大学《AI 编程进阶: 方法与实践》课程项目")
         box.exec()
+
+    # ---- 主题 ----
+
+    def _show_settings_menu(self, btn) -> None:
+        """标题栏齿轮菜单: 主题单选切换 + 打开用户主题目录."""
+        menu = QMenu(self)
+        current = theme.current_name()
+        for name, label in theme.theme_choices():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(name == current)
+            action.triggered.connect(
+                lambda _checked=False, n=name: self.set_app_theme(n))
+        menu.addSeparator()
+        open_action = menu.addAction("打开主题目录...")
+        open_action.setToolTip("用户主题 YAML 文件放这里, 重启后出现在列表")
+        open_action.triggered.connect(self._open_themes_dir)
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _open_themes_dir(self) -> None:
+        """用系统文件管理器打开用户主题目录(不存在则先建)."""
+        os.makedirs(user_themes_dir(), exist_ok=True)
+        path = user_themes_dir()
+        via_wsl = _wslview_open(path)
+        if via_wsl is None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def set_app_theme(self, name: str) -> None:
+        """切换全局主题并联动全部自绘/缓存部件."""
+        if name == theme.current_name():
+            return
+        theme.apply_theme(QApplication.instance(), theme=name)
+        self.title_bar.refresh_theme()
+        self.schedule_tab.refresh_theme()
+        self.links_page.refresh_theme()
+        self.campus_tab.refresh_theme()
+        self.ai_tab.refresh_theme()
+        self.learn_page.refresh_theme()
+        self.cloud_page.refresh_theme()
+        self._log_dialog = None  # 下次打开按新主题重建
+        self.reload_courses()  # 课程树图标随主题重建
+        label = dict(theme.theme_choices()).get(name, name)
+        self.statusBar().showMessage(f"主题: {label} (重启后保持需写入 config.yaml)")
 
     # ---- 界面缩放 ----
 
@@ -417,8 +470,13 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
         row2 = QHBoxLayout()
         row2.addWidget(_button("用中栏选中目录", self._use_browser_dir))
-        row2.addWidget(_button("生成预览", self._preview_plan))
-        row2.addWidget(_button("执行整理", self._execute_plan))
+        preview_btn = _button("生成预览", self._preview_plan)
+        preview_btn.setProperty("primary", True)
+        row2.addWidget(preview_btn)
+        execute_btn = _button("执行整理", self._execute_plan)
+        execute_btn.setProperty("danger", True)
+        row2.addWidget(execute_btn)
+        row2.addStretch(1)
         layout.addLayout(row2)
         self.plan_table = QTableWidget(0, 2)
         self.plan_table.setHorizontalHeaderLabels(["源文件", "目标位置"])
@@ -428,14 +486,19 @@ class MainWindow(QMainWindow):
     # ---- 左栏: 课程与资源索引 ----
 
     def reload_courses(self) -> None:
-        """从索引重建课程树: 虚拟文件夹在前 + 索引条目在后, 展开状态记忆."""
+        """从索引重建课程树: 虚拟文件夹 + 索引条目, 课程稳定配色与状态记忆."""
         self.course_tree.clear()
+        icon_size = tree_icon_size()
         for course in self.storage.list_courses():
             node = QTreeWidgetItem(self.course_tree, [course["name"]])
             node.setData(0, ROLE_COURSE_ID, course["id"])
             node.setToolTip(0, f"课程: {course['name']}")
             node.setIcon(0, QIcon(artwork.kind_icon(
-                "course", size=tree_icon_size())))
+                "course", size=icon_size,
+                color=theme.course_color(course["name"]))))
+            font = node.font(0)
+            font.setBold(True)
+            node.setFont(0, font)
             self._fill_course_node(
                 node,
                 self.storage.list_folders(course["id"]),
@@ -471,8 +534,6 @@ class MainWindow(QMainWindow):
                 continue
             exists, changed = Storage.check_resource(res)
             label = res["display_name"]
-            if res["kind"] == "link":
-                label = f"[{KIND_LABEL['link']}] " + label
             if not exists:
                 label += " (失效)"
             elif changed:

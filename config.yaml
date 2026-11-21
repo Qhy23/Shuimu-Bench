@@ -7,6 +7,8 @@ app:
   window_size: [1200, 720]        # 主窗口初始尺寸(宽, 高)
   splitter_sizes: [240, 520, 400] # 三栏初始宽度(左/中/右)
   font_size: 13                   # 界面字号(px), 9-20, 运行时 Ctrl+=/- 可调
+  theme: dark                     # 主题(dark/light/用户主题 id), 标题栏齿轮可切换;
+                                  # 用户主题放用户数据目录 themes/<id>.yaml, 见 docs/theme.md
 
 course:
   default_name: "未分组"          # 空工作区时自动创建的默认课程名

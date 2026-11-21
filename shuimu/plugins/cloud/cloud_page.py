@@ -87,7 +87,7 @@ class CloudPage(QWidget):
         column.addLayout(top)
 
         self.share_label = QLabel("")
-        self.share_label.setStyleSheet(f"color: {theme.FG_DIM};")
+        self.share_label.setStyleSheet(f"color: {theme.tokens().fg_dim};")
         column.addWidget(self.share_label)
         self.hint_label = QLabel("浏览后, 与子课程同名的目录会自动匹配;"
                                  " 点击\"挂载到课程\"登记为链接资源.")
@@ -113,6 +113,10 @@ class CloudPage(QWidget):
         self.stack.setCurrentIndex(PAGE_MAIN)
 
     # ---- 动作 ----
+
+    def refresh_theme(self) -> None:
+        """主题切换后刷新内联次要文字颜色."""
+        self.share_label.setStyleSheet(f"color: {theme.tokens().fg_dim};")
 
     def _enable_plugin(self) -> None:
         """启用云盘插件(经网络权限确认框)."""

@@ -170,7 +170,7 @@ class AiTab(QWidget):
         self.chat_browser.anchorClicked.connect(self._on_anchor)
         column.addWidget(self.chat_browser, 1)
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet(f"color: {theme.FG_DIM};")
+        self.status_label.setStyleSheet(f"color: {theme.tokens().fg_dim};")
         column.addWidget(self.status_label)
         # 输入区
         self.input_edit = QPlainTextEdit()
@@ -179,7 +179,7 @@ class AiTab(QWidget):
         column.addWidget(self.input_edit)
         send_row = QHBoxLayout()
         self.tokens_label = QLabel("")
-        self.tokens_label.setStyleSheet(f"color: {theme.FG_DIM};")
+        self.tokens_label.setStyleSheet(f"color: {theme.tokens().fg_dim};")
         send_row.addWidget(self.tokens_label, 1)
         self.send_button = QPushButton("发送")
         self.send_button.clicked.connect(self._send)
@@ -260,20 +260,20 @@ class AiTab(QWidget):
         """渲染单轮: 问题 / 思考折叠区 / 回答 / 脚注."""
         if index > 0:
             self._append_html(cursor, "<p><br></p>")
-        self._append_html(cursor, USER_HEAD.format(primary=theme.PRIMARY))
+        self._append_html(cursor, USER_HEAD.format(primary=theme.tokens().accent))
         self._insert_markdown_math(cursor, one_round["question"])
         self._append_html(cursor, "<p><br></p>" + AI_HEAD)
         if one_round["thinking"]:
             self._render_thinking(cursor, index, one_round)
         if one_round["failed"]:
             self._append_html(cursor, FAILED_NOTE.format(
-                danger=theme.DANGER,
+                danger=theme.tokens().danger,
                 text=html_mod.escape(one_round["answer"])))
         else:
             self._insert_markdown_math(cursor, one_round["answer"])
         if one_round["footnote"]:
             self._append_html(cursor, "<p><br></p>" + FOOTNOTE.format(
-                dim=theme.FG_DIM,
+                dim=theme.tokens().fg_dim,
                 text=html_mod.escape(one_round["footnote"])))
 
     def _render_thinking(self, cursor: QTextCursor, index: int,
@@ -285,10 +285,10 @@ class AiTab(QWidget):
         label = (f"{marker} 思考过程" if opened
                  else f"{marker} 思考过程 ({len(thinking)} 字)")
         self._append_html(cursor, THINK_TOGGLE.format(
-            dim=theme.FG_DIM, href=f"think:{index}", text=label))
+            dim=theme.tokens().fg_dim, href=f"think:{index}", text=label))
         if opened:
             self._append_html(cursor, THINK_BODY.format(
-                dim=theme.FG_DIM,
+                dim=theme.tokens().fg_dim,
                 text=html_mod.escape(thinking).replace("\n", "<br>")))
 
     def _on_anchor(self, url) -> None:
@@ -342,6 +342,13 @@ class AiTab(QWidget):
 
     # ---- 动作 ----
 
+    def refresh_theme(self) -> None:
+        """切换主题后刷新内联取色, 并保留当前对话重渲染."""
+        dim = theme.tokens().fg_dim
+        for label in (self.status_label, self.tokens_label):
+            label.setStyleSheet(f"color: {dim};")
+        self._rebuild_chat()
+
     def _enable_plugin(self) -> None:
         """启用 AI 插件(经网络权限确认框)."""
         result = self._ctl.set_plugin_enabled(
@@ -391,7 +398,7 @@ class AiTab(QWidget):
         cursor = self.chat_browser.textCursor()
         if self._rounds:
             self._append_html(cursor, "<p><br></p>")
-        self._append_html(cursor, USER_HEAD.format(primary=theme.PRIMARY))
+        self._append_html(cursor, USER_HEAD.format(primary=theme.tokens().accent))
         self._append_plain(question)
         self._append_html(cursor, "<p><br></p>" + AI_HEAD)
         self._thinking_parts = []

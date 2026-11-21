@@ -53,10 +53,11 @@ class TestLinksPage:
         tree = page.tree
         assert tree.topLevelItemCount() == 3
         assert [tree.topLevelItem(i).text(0) for i in range(3)] == \
-            ["信息化服务", "信息门户", "未分组"]
+            ["信息化服务 (1)", "信息门户 (1)", "未分组 (1)"]
         first_group = tree.topLevelItem(0)
         assert first_group.childCount() == 1
         assert "学堂" in first_group.child(0).text(0)
+        assert "learn" in first_group.child(0).text(1)  # URL 第二列
         assert tree.topLevelItem(2).child(0).data(0, ROLE_LINK).name == "散链"
 
     def test_double_click_opens_leaf(self, qtbot, ctl, fake_opener):
@@ -90,7 +91,7 @@ class TestLinksPage:
         page.reload()
         assert page.tree.topLevelItemCount() == 2
         assert [page.tree.topLevelItem(i).text(0) for i in range(2)] == \
-            ["信息化服务", "未分组"]
+            ["信息化服务 (1)", "未分组 (1)"]
 
     def test_font_scaling_updates_icons(self, qtbot, ctl, monkeypatch):
         """字号联动刷新两级图标尺寸(与当前全局字号无关的相对断言)."""
@@ -99,7 +100,8 @@ class TestLinksPage:
         leaf = page.tree.topLevelItem(0).child(0)
         small = max(s.width() for s in leaf.icon(0).availableSizes())
         bigger_px = theme.current_font_px() + 7
-        monkeypatch.setattr(theme, "_state", {"font_px": bigger_px})
+        monkeypatch.setattr(theme, "_state",
+                            {**theme._state, "font_px": bigger_px})
         page.set_font_px(bigger_px)
         big = max(s.width() for s in leaf.icon(0).availableSizes())
         assert big > small

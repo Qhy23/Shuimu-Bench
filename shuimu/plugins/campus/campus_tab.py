@@ -7,6 +7,7 @@
 
 import time
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
 
 from shuimu.core.campus import CampusProfile
 from shuimu.core.controller import Controller
-from shuimu.gui import theme
+from shuimu.gui import artwork, theme
 from shuimu.gui.dialogs import confirm_network_enable, warn
 
 PAGE_DISABLED, PAGE_LOGIN, PAGE_LOGGED = 0, 1, 2
@@ -103,57 +104,81 @@ class CampusTab(QWidget):
     # ---- 三页构建 ----
 
     def _build_disabled_page(self) -> None:
-        """页 0: 未启用(说明 + 启用按钮)."""
+        """页 0: 未启用(插图 + 说明 + 居中启用按钮)."""
         page = QWidget()
         column = QVBoxLayout(page)
+        column.addStretch(1)
+        badge = QLabel()
+        badge.setPixmap(artwork.badge_icon(64))
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        column.addWidget(badge)
         hint = QLabel("校园服务可登录清华统一认证(WebVPN), 获取本人信息, "
                       "并为将来的学堂/云盘插件提供会话.\n"
                       "该插件需要访问网络, 默认禁用.")
         hint.setWordWrap(True)
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         column.addWidget(hint)
         self.enable_button = QPushButton("启用校园插件")
+        self.enable_button.setProperty("primary", True)
         self.enable_button.clicked.connect(self._enable_plugin)
-        column.addWidget(self.enable_button)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.enable_button)
+        btn_row.addStretch(1)
+        column.addLayout(btn_row)
         column.addStretch(1)
         self.stack.addWidget(page)
 
     def _build_login_page(self) -> None:
-        """页 1: 登录表单."""
+        """页 1: 登录表单(卡片化居中)."""
         page = QWidget()
         column = QVBoxLayout(page)
+        column.addStretch(1)
+        badge = QLabel()
+        badge.setPixmap(artwork.badge_icon(48))
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        column.addWidget(badge)
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.username_edit = QLineEdit()
-        form.addRow("学号:", self.username_edit)
+        self.username_edit.setPlaceholderText("学号")
+        form.addRow("学号", self.username_edit)
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("密码:", self.password_edit)
+        self.password_edit.setPlaceholderText("密码")
+        form.addRow("密码", self.password_edit)
         column.addLayout(form)
-        row = QHBoxLayout()
         self.login_button = QPushButton("登录")
+        self.login_button.setProperty("primary", True)
         self.login_button.clicked.connect(self._login)
-        row.addWidget(self.login_button)
-        row.addStretch(1)
-        column.addLayout(row)
-        note = QLabel("密码仅用于本次登录, 不会保存; 登录态保存在本机 data/ 下.")
+        column.addWidget(self.login_button)
+        note = QLabel("密码仅用于本次登录, 不会保存;\n"
+                      "登录态保存在本机 data/ 下.")
         note.setWordWrap(True)
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         column.addWidget(note)
         self.status_label = QLabel("未登录")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         column.addWidget(self.status_label)
         column.addStretch(1)
         self.stack.addWidget(page)
 
     def _build_logged_page(self) -> None:
-        """页 2: 本人信息 + 刷新/重新登录/登出."""
+        """页 2: 本人信息 + 刷新/重新登录/登出(危险)."""
         page = QWidget()
         column = QVBoxLayout(page)
         self.logged_label = QLabel("")
         self.logged_label.setWordWrap(True)
+        font = self.logged_label.font()
+        font.setBold(True)
+        self.logged_label.setFont(font)
         column.addWidget(self.logged_label)
         self.profile_label = QLabel("")
         self.profile_label.setWordWrap(True)
         column.addWidget(self.profile_label)
         self.notice_label = QLabel("")
-        self.notice_label.setStyleSheet(f"color: {theme.DANGER};")
+        self.notice_label.setStyleSheet(
+            f"color: {theme.tokens().danger};")
         self.notice_label.hide()
         column.addWidget(self.notice_label)
         row = QHBoxLayout()
@@ -166,6 +191,7 @@ class CampusTab(QWidget):
         self.relogin_button.hide()
         row.addWidget(self.relogin_button)
         self.logout_button = QPushButton("登出")
+        self.logout_button.setProperty("danger", True)
         self.logout_button.clicked.connect(self._logout)
         row.addWidget(self.logout_button)
         row.addStretch(1)
@@ -208,6 +234,11 @@ class CampusTab(QWidget):
         self.relogin_button.hide()
 
     # ---- 动作 ----
+
+    def refresh_theme(self) -> None:
+        """主题切换后刷新内联颜色(其余由全局 QSS 接管)."""
+        self.notice_label.setStyleSheet(
+            f"color: {theme.tokens().danger};")
 
     def _enable_plugin(self) -> None:
         """启用校园插件(经网络权限确认框)."""

@@ -39,7 +39,7 @@ class TestFolderTree:
         f1_node = course.child(0)
         assert [f1_node.child(i).text(0)
                 for i in range(f1_node.childCount())] \
-            == ["第1周", "[链接] https://example.com/"]
+            == ["第1周", "https://example.com/"]
 
     def test_legacy_dir_resources_hidden(self, qtbot, tmp_path):
         """历史目录索引行不再显示(目录索引概念已废)."""

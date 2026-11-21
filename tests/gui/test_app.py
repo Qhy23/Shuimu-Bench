@@ -34,6 +34,7 @@ def test_main_window_structure(qtbot, tmp_path):
                                                           "校园", "AI"]
     assert not window.tabs.isTabVisible(2)          # 校园: 未启用隐藏
     assert not window.tabs.isTabVisible(3)          # AI: 未启用隐藏
+    assert window.title_bar.findChild(QPushButton, "settings") is not None
     # 左栏插件面板: 内置插件全部列出(含未启用)
     assert window.plugin_tree.topLevelItemCount() == 5
     storage.close()
@@ -61,7 +62,9 @@ def test_add_link_via_controller_shows_in_tree(qtbot, tmp_path):
     window.reload_courses()
     course_node = window.course_tree.topLevelItem(0)
     assert course_node.childCount() == 1
-    assert "[链接]" in course_node.child(0).text(0)
+    leaf = course_node.child(0)
+    assert "learn.tsinghua.edu.cn" in leaf.text(0)
+    assert leaf.toolTip(0) == "https://learn.tsinghua.edu.cn"
     storage.close()
 
 
@@ -228,7 +231,9 @@ def test_titlebar_log_button_opens_preview(qtbot, tmp_path):
     dialog = window._log_dialog
     assert dialog is not None and dialog.isVisible()
     assert not dialog.isModal()
-    assert "add_resource" in dialog.view.toPlainText()
+    actions = [dialog.table.item(row, 1).text()
+               for row in range(dialog.table.rowCount())]
+    assert "add_resource" in actions
     dialog.close()
     assert window._log_dialog is None  # 关闭后清引用, 可重建
     storage.close()
@@ -300,6 +305,52 @@ class TestZoom:
         window._zoom_reset()
         assert theme.current_font_px() == 13
         storage.close()
+
+
+def test_theme_switch_refreshes_all_panels(qtbot, tmp_path, qapp,
+                                           monkeypatch):
+    """运行时切浅色后各服务页签与已打开留痕按新 token 更新."""
+    monkeypatch.setattr("shuimu.gui.theme.user_themes_dir",
+                        lambda: str(tmp_path / "themes"))
+    storage = Storage(str(tmp_path / "theme.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
+                        links_path=str(tmp_path / "links.yaml"))
+    qtbot.addWidget(window)
+    window._open_log_dialog()
+    old_dialog = window._log_dialog
+    assert theme.current_name() == "dark"
+    window.set_app_theme("light")
+    assert theme.current_name() == "light"
+    assert theme.LIGHT_TOKENS.base in qapp.styleSheet()
+    assert window.ai_tab.status_label.styleSheet() == \
+        f"color: {theme.LIGHT_TOKENS.fg_dim};"
+    assert window.learn_page.refreshed_label.styleSheet() == \
+        f"color: {theme.LIGHT_TOKENS.fg_dim};"
+    assert window.cloud_page.share_label.styleSheet() == \
+        f"color: {theme.LIGHT_TOKENS.fg_dim};"
+    assert window._log_dialog is None
+    window._open_log_dialog()
+    assert window._log_dialog is not old_dialog
+    assert window._log_dialog.isVisible()
+    window._log_dialog.close()
+    window.set_app_theme("dark")
+    assert theme.current_name() == "dark"
+    storage.close()
+
+
+def test_config_theme_applied_before_panels(qtbot, tmp_path, monkeypatch):
+    """config app.theme 在主窗口构建前生效."""
+    monkeypatch.setattr("shuimu.gui.main_window.theme_name_value",
+                        lambda _cfg: "light")
+    monkeypatch.setattr("shuimu.gui.theme.user_themes_dir",
+                        lambda: str(tmp_path / "themes"))
+    storage = Storage(str(tmp_path / "config-theme.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
+                        links_path=str(tmp_path / "links.yaml"))
+    qtbot.addWidget(window)
+    assert theme.current_name() == "light"
+    window.set_app_theme("dark")
+    storage.close()
 
 
 def test_tree_icons_scale_with_font(qtbot, tmp_path):

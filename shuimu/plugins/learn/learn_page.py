@@ -150,11 +150,11 @@ class LearnPage(QWidget):
         self.semester_label = QLabel("")
         top.addWidget(self.semester_label)
         self.refreshed_label = QLabel("")
-        self.refreshed_label.setStyleSheet(f"color: {theme.FG_DIM};")
+        self.refreshed_label.setStyleSheet(f"color: {theme.tokens().fg_dim};")
         top.addWidget(self.refreshed_label)
         top.addStretch(1)
         self.progress_label = QLabel("")
-        self.progress_label.setStyleSheet(f"color: {theme.FG_DIM};")
+        self.progress_label.setStyleSheet(f"color: {theme.tokens().fg_dim};")
         self.progress_label.hide()
         top.addWidget(self.progress_label)
         self.todos_button = QPushButton("同步待办")
@@ -410,6 +410,12 @@ class LearnPage(QWidget):
                 return
 
     # ---- 动作 ----
+
+    def refresh_theme(self) -> None:
+        """主题切换后刷新内联次要文字颜色."""
+        dim = theme.tokens().fg_dim
+        for label in (self.refreshed_label, self.progress_label):
+            label.setStyleSheet(f"color: {dim};")
 
     def _enable_plugin(self) -> None:
         """启用学堂插件(经网络权限确认框)."""

@@ -125,6 +125,11 @@ def user_data_dir() -> str:
     return os.path.join(base, "shuimu")
 
 
+def user_themes_dir() -> str:
+    """用户自定义主题目录(YAML 主题文件放此, 加载见 gui/theme.py)."""
+    return os.path.join(user_data_dir(), "themes")
+
+
 def cli_history_path() -> str:
     """REPL 命令历史文件(用户级, 跨会话持久; dev 模式也不入仓库)."""
     return os.path.join(user_data_dir(), "cli_history")

@@ -34,11 +34,12 @@ from shuimu.gui.dialogs import ok_cancel_box, warn
 
 def _severity_color(severity: str) -> QColor:
     """严重度 -> 前景色(错误警示红, 警告橙, 通过用次要文字色)."""
+    tk = theme.tokens()
     if severity == "error":
-        return QColor(theme.DANGER)
+        return QColor(tk.danger)
     if severity == "warn":
-        return QColor(theme.WARN)
-    return QColor(theme.FG_DIM)
+        return QColor(tk.warn)
+    return QColor(tk.fg_dim)
 
 
 class PluginRunDialog(QDialog):

@@ -51,6 +51,7 @@ CLI 完整用法见 [docs/cli.md](docs/cli.md); 两种形态: `python cli.py <�
 ## 文档
 
 - [CLI 使用说明](docs/cli.md): 全部核心子命令, REPL, 配置与退出码
+- [界面主题](docs/theme.md): 亮/暗主题切换与自定义主题 YAML
 - [插件: 校园账户登录](docs/plugin-campus.md)
 - [插件: 网络学堂](docs/plugin-learn.md)
 - [插件: 清华云盘](docs/plugin-cloud.md)

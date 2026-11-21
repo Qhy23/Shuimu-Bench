@@ -25,6 +25,7 @@ DEFAULTS = {
         "window_size": [1200, 720],
         "splitter_sizes": [240, 520, 400],
         "font_size": DEFAULT_FONT_PX,  # 界面字号(px), 9-20; 运行时 Ctrl+=/- 可调
+        "theme": "dark",               # 主题(dark/light/用户主题 id), 见 gui/theme.py
     },
     "course": {
         "default_name": "未分组",
@@ -142,6 +143,16 @@ def trash_dir_value(cfg: dict) -> str:
     """
     raw = (cfg.get("fileops") or {}).get("trash_dir", "")
     return raw if isinstance(raw, str) else ""
+
+
+def theme_name_value(cfg: dict) -> str:
+    """提取主题 id; 缺省/非字符串返回 "dark".
+
+    主题解析(内置/用户主题文件是否存在)由 gui/theme.py 负责, 此处
+    只做原始值提取, 保证 core 不依赖 gui.
+    """
+    raw = (cfg.get("app") or {}).get("theme", "dark")
+    return raw if isinstance(raw, str) and raw.strip() else "dark"
 
 
 def _candidates(path):

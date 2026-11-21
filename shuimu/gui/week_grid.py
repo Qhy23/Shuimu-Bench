@@ -235,7 +235,7 @@ class WeekGridWidget(QWidget):
     # ---- 卡片 ----
 
     def _make_card(self, entry: DayEntry) -> QFrame:
-        """一张条目卡片: 左侧稳定配色条 + 时段/标题/地点三行."""
+        """一张条目卡片: 左侧稳定配色条 + 课程色淡底 + 时段/标题/地点三行."""
         card = QFrame(self)
         card.setObjectName("slotcard-manual" if entry.is_manual else "slotcard")
         outer = QHBoxLayout(card)
@@ -243,9 +243,14 @@ class WeekGridWidget(QWidget):
         outer.setSpacing(0)
         color = (theme.ACCENT if entry.is_manual
                  else theme.course_color(entry.title))
+        # 课程色淡底提升课程辨识度(主题无关, alpha 叠色)
+        tint = QColor(color)
+        tint.setAlpha(26)
+        card.setStyleSheet(
+            f"background-color: {tint.name(QColor.NameFormat.HexArgb)};")
         color_bar = QFrame(card)
         color_bar.setObjectName("cardbar")
-        color_bar.setFixedWidth(3)
+        color_bar.setFixedWidth(4)
         color_bar.setStyleSheet(f"background:{color};")
         outer.addWidget(color_bar)
         body = QWidget(card)
@@ -297,6 +302,7 @@ class WeekGridWidget(QWidget):
 
     def _draw_axis(self, painter) -> None:
         """左侧小时刻度文字与横向网格线."""
+        tk = theme.tokens()
         axis_font = QFont(self.font())
         axis_font.setFamilies(["JetBrainsMono NFM", "DejaVu Sans Mono",
                                "monospace"])
@@ -305,9 +311,9 @@ class WeekGridWidget(QWidget):
         hour_step = self._m.ppm * 60
         for i in range(DAY_MINUTES // 60 + 1):
             y = self._m.header_h + i * hour_step
-            painter.setPen(QColor(theme.BORDER))
+            painter.setPen(QColor(tk.border))
             painter.drawLine(self._m.axis_w, int(y), self.width(), int(y))
-            painter.setPen(QColor(theme.FG_DIM))
+            painter.setPen(QColor(tk.fg_dim))
             painter.drawText(QRectF(0, y - 12, self._m.axis_w - 6, 12),
                              Qt.AlignmentFlag.AlignRight
                              | Qt.AlignmentFlag.AlignVCenter,
@@ -315,17 +321,18 @@ class WeekGridWidget(QWidget):
 
     def _draw_headers(self, painter, col_w: float, today_column) -> None:
         """日分隔竖线与日头文字(今天加粗高亮)."""
+        tk = theme.tokens()
         header_font = QFont(self.font())
         header_font.setPixelSize(theme.current_font_px())
         for weekday in range(1, DAY_COUNT + 1):
             x = self._m.axis_w + (weekday - 1) * col_w
-            painter.setPen(QColor(theme.BORDER))
+            painter.setPen(QColor(tk.border))
             painter.drawLine(int(x), 0, int(x), self.height())
             day = self._monday + timedelta(days=weekday - 1)
             is_today = weekday == today_column
             header_font.setBold(is_today)
             painter.setFont(header_font)
-            painter.setPen(QColor(theme.PRIMARY if is_today else theme.FG_DIM))
+            painter.setPen(QColor(tk.accent if is_today else tk.fg_dim))
             painter.drawText(QRectF(x, 0, col_w, self._m.header_h),
                              Qt.AlignmentFlag.AlignCenter,
                              f"{WEEKDAY_NAMES[weekday - 1]} {day.strftime('%m/%d')}")
@@ -333,30 +340,32 @@ class WeekGridWidget(QWidget):
                 underline = QRectF(x + col_w / 2 - col_w * 0.09,
                                    self._m.header_h - 6, col_w * 0.18, 2)
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(theme.PRIMARY))
+                painter.setBrush(QColor(tk.accent))
                 painter.drawRoundedRect(underline, 1, 1)
         right = self._m.axis_w + int(DAY_COUNT * col_w)
-        painter.setPen(QColor(theme.BORDER))
+        painter.setPen(QColor(tk.border))
         painter.drawLine(right, 0, right, self.height())
 
     def _draw_now_line(self, painter, col_w: float) -> None:
         """当前时刻的红色横线与左端圆点."""
+        tk = theme.tokens()
         now = datetime.now()
         minutes_now = now.hour * 60 + now.minute
         m = self._m
         y = m.header_h + (minutes_now - minutes_of_day(DAY_START)) * m.ppm
         bottom = min(m.header_h + DAY_MINUTES * m.ppm, self.height())
         if m.header_h <= y <= bottom:
-            pen = QPen(QColor(theme.DANGER))
+            pen = QPen(QColor(tk.danger))
             pen.setWidth(1)
             painter.setPen(pen)
             painter.drawLine(m.axis_w, int(y),
                              m.axis_w + int(DAY_COUNT * col_w), int(y))
-            painter.setBrush(QColor(theme.DANGER))
+            painter.setBrush(QColor(tk.danger))
             painter.drawEllipse(int(m.axis_w - 3), int(y - 3), 6, 6)
 
     def paintEvent(self, _event) -> None:
         """画时刻轴/小时横线/日分隔线/日头/今天列底色/当前时刻线."""
+        tk = theme.tokens()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         m = self._m
@@ -364,9 +373,9 @@ class WeekGridWidget(QWidget):
         grid_bottom = m.header_h + DAY_MINUTES * m.ppm
         today_column = self.today_column()
 
-        painter.fillRect(self.rect(), QColor(theme.BG_BASE))
+        painter.fillRect(self.rect(), QColor(tk.base))
         if today_column:
-            tint = QColor(theme.PRIMARY)
+            tint = QColor(tk.accent)
             tint.setAlpha(36)
             x = m.axis_w + (today_column - 1) * col_w
             painter.fillRect(QRectF(x, m.header_h, col_w,

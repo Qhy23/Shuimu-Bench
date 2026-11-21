@@ -7,14 +7,14 @@ from shuimu.gui.titlebar import TitleBar
 
 
 def test_titlebar_has_three_buttons(qtbot):
-    """标题栏有最小化/最大化/关闭按钮且高度固定."""
+    """标题栏有最小化/最大化/关闭按钮且高度固定(图标化)."""
     win = QMainWindow()
     qtbot.addWidget(win)
     title_bar = TitleBar(win, "测试标题")
     assert title_bar.height() == TitleBar.HEIGHT
-    assert title_bar.btn_min.text() == "—"
-    assert title_bar.btn_max.text() == "▢"
-    assert title_bar.btn_close.text() == "✕"
+    for btn in (title_bar.btn_min, title_bar.btn_max, title_bar.btn_close):
+        assert not btn.icon().isNull()
+        assert btn.text() == ""
     assert title_bar.btn_close.objectName() == "close"
 
 
@@ -39,6 +39,18 @@ def test_log_button_wired_to_callback(qtbot):
     assert called == [True]
     plain_bar = TitleBar(win, "标题")
     assert plain_bar.findChild(QPushButton, "log") is None
+
+
+def test_titlebar_settings_callback(qtbot):
+    """设置按钮存在且携带按钮自身传给主题菜单回调."""
+    win = QMainWindow()
+    qtbot.addWidget(win)
+    seen = []
+    title_bar = TitleBar(win, "标题", on_settings=seen.append)
+    btn = title_bar.findChild(QPushButton, "settings")
+    assert btn is not None and not btn.icon().isNull()
+    btn.click()
+    assert seen == [btn]
 
 
 def test_titlebar_logo_scales_with_font(qtbot):
