@@ -414,6 +414,25 @@ def test_zoom_updates_icons_without_reloading_or_disk_checks(
     storage.close()
 
 
+def test_course_link_uses_cached_favicon_and_survives_zoom(qtbot, tmp_path):
+    """左栏链接用 favicon 缓存, 缩放时不会被默认 WEB 覆盖."""
+    storage = Storage(str(tmp_path / "link-icon.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
+                        links_path=str(tmp_path / "links.yaml"))
+    qtbot.addWidget(window)
+    icon_path = tmp_path / "site.png"
+    shuimu_app.file_icons._draw_type_icon("OK", "#3fb950", 16).save(str(icon_path))
+    window.favicon_service.store.cached_icon_path = lambda _url: str(icon_path)
+    storage.add_resource(storage.ensure_default_course(), "link",
+                         "https://example.com/")
+    window.reload_courses()
+    leaf = window.course_tree.topLevelItem(0).child(0)
+    expected = leaf.icon(0).pixmap(16, 16).toImage()
+    window.set_app_font(20)
+    assert leaf.icon(0).pixmap(16, 16).toImage() == expected
+    storage.close()
+
+
 def test_course_tree_uses_file_type_icons(qtbot, tmp_path, monkeypatch):
     """首次构建课程树按后缀取文件图标, 而不是通用文件图标."""
     storage = Storage(str(tmp_path / "file-icons.db"))

@@ -28,13 +28,21 @@ def test_system_icon_preferred(qapp, monkeypatch):
     class Provider:
         """返回固定系统图标的替身."""
 
-        def icon(self, _info):
-            """返回预设图标."""
+        def __init__(self):
+            self.calls = []
+
+        def icon(self, info):
+            """返回预设图标并记录查询."""
+            self.calls.append(info.filePath())
             return sentinel
 
-    monkeypatch.setattr(file_icons, "QFileIconProvider", Provider)
+    provider = Provider()
+    monkeypatch.setattr(file_icons, "QFileIconProvider", lambda: provider)
     file_icons.clear_cache()
     assert file_icons.file_type_icon("a.pdf") is sentinel
+    assert file_icons.file_type_icon("another.pdf") is sentinel
+    file_icons.file_type_icon("third.pdf", size=20)
+    assert provider.calls == ["file.pdf"]  # 同类型不重复查系统
     file_icons.clear_cache()
 
 

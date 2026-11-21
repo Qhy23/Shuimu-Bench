@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 
 from shuimu.core.controller import Controller, detect_kind
 from shuimu.core.paths import default_workspace_root
-from shuimu.gui import dialogs
+from shuimu.gui import dialogs, file_icons
 from shuimu.gui.dialogs import warn
 
 
@@ -41,6 +41,16 @@ def _button(text: str, slot) -> QPushButton:
     btn: QPushButton = QPushButton(text)
     btn.clicked.connect(slot)
     return btn
+
+
+class FileSystemModel(QFileSystemModel):
+    """文件系统模型: 文件按后缀取图标, 目录保持 Qt 默认图标."""
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.DecorationRole and not self.isDir(index):
+            return file_icons.file_type_icon(
+                self.filePath(index), size=16, failed=False)
+        return super().data(index, role)
 
 
 class FileBrowserPage(QWidget):
@@ -73,7 +83,7 @@ class FileBrowserPage(QWidget):
         row.addWidget(_button("上级", self._go_up))
         row.addWidget(_button("浏览...", self._pick_workspace_root))
         layout.addLayout(row)
-        self.file_model = QFileSystemModel(self)
+        self.file_model = FileSystemModel(self)
         self.file_model.setRootPath("")  # 模型挂载整个文件系统, 视图定位到工作目录
         self.file_view = QTreeView(self)
         self.file_view.setModel(self.file_model)

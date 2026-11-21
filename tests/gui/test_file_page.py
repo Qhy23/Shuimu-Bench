@@ -10,13 +10,14 @@ import os
 from copy import deepcopy
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, QTimer
+from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QCheckBox, QMessageBox
 
 from shuimu.core.config import DEFAULTS
 from shuimu.core.controller import Controller
 from shuimu.core.storage import Storage
 from shuimu.gui.file_page import FileBrowserPage
+from shuimu.gui import file_page as shuimu_file_page
 
 
 def _norm(*paths):
@@ -60,7 +61,33 @@ class _FakeBox:
 
 
 class TestSelection:
-    """多选与选中读取."""
+    """文件路径选择、图标展示与多选读取."""
+
+    def test_file_browser_uses_type_icon_for_files(self, qtbot, tmp_path,
+                                                   monkeypatch):
+        """中栏文件模型对文件走后缀图标, 目录保持默认."""
+        page = FileBrowserPage(workspace_root=str(tmp_path))
+        qtbot.addWidget(page)
+        path = tmp_path / "demo.pdf"
+        path.write_text("x", encoding="utf-8")
+        directory = tmp_path / "folder"
+        directory.mkdir()
+        calls = []
+        original = shuimu_file_page.file_icons.file_type_icon
+
+        def record(file_path, **kwargs):
+            calls.append(file_path)
+            return original(file_path, **kwargs)
+
+        monkeypatch.setattr(shuimu_file_page.file_icons, "file_type_icon", record)
+        index = page.file_model.index(str(path))
+        assert index.isValid()
+        assert not page.file_model.data(index, Qt.ItemDataRole.DecorationRole).isNull()
+        assert str(path) in calls
+        directory_index = page.file_model.index(str(directory))
+        calls.clear()
+        page.file_model.data(directory_index, Qt.ItemDataRole.DecorationRole)
+        assert not calls
 
     def test_selected_paths_multi(self, page, qtbot):
         """多选时 selected_paths 返回全部, 无选中为空."""

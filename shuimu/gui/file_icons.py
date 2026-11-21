@@ -1,8 +1,8 @@
 """文件类型图标: 系统图标优先, 内置彩色扩展名图标回退.
 
 QFileSystemModel 的 Type 列图标本就走系统 QFileIconProvider; 课程树
-需要自行补图标. Windows 上沿用资源管理器图标; 无图标的 offscreen/精简
-桌面环境按扩展名绘制, 不依赖第三方资源包或联网.
+与文件页在无系统图标时按扩展名绘制. 图标缓存只按类型与尺寸区分,
+不按完整路径区分, 避免字号变化时每个文件重复查询系统图标.
 """
 
 import functools
@@ -47,17 +47,29 @@ def extension(path: str) -> str:
     return os.path.splitext(path)[1].lstrip(".").lower()
 
 
-@functools.lru_cache(maxsize=128)
-def file_type_icon(path: str, size: int = 16, failed: bool = False) -> QIcon:
-    """按文件后缀返回类型图标, 结果按路径/尺寸/失效态缓存."""
-    if not failed:
-        system = QFileIconProvider().icon(QFileInfo(path))
-        if not system.isNull():
-            return system
-    label, color = _TYPE_STYLES.get(extension(path), ("FILE", "#78838f"))
+@functools.lru_cache(maxsize=32)
+def _system_icon(ext: str) -> QIcon:
+    """每种扩展名只查询一次系统图标, 空结果也缓存."""
+    return QFileIconProvider().icon(QFileInfo("file." + (ext or "txt")))
+
+
+@functools.lru_cache(maxsize=256)
+def _fallback_icon(ext: str, size: int, failed: bool) -> QIcon:
+    """内置类型图标按扩展名/尺寸缓存, 不随文件路径增长."""
+    label, color = _TYPE_STYLES.get(ext, ("FILE", "#78838f"))
     if failed:
         color = "#78838f"
     return QIcon(_draw_type_icon(label, color, size))
+
+
+def file_type_icon(path: str, size: int = 16, failed: bool = False) -> QIcon:
+    """按文件后缀返回类型图标; 系统查询与绘制均按类型缓存."""
+    ext = extension(path)
+    if not failed:
+        system = _system_icon(ext)
+        if not system.isNull():
+            return system
+    return _fallback_icon(ext, size, failed)
 
 
 def _draw_type_icon(label: str, color: str, size: int) -> QPixmap:
@@ -83,5 +95,6 @@ def _draw_type_icon(label: str, color: str, size: int) -> QPixmap:
 
 
 def clear_cache() -> None:
-    """清空按尺寸缓存的扩展名图标."""
-    file_type_icon.cache_clear()
+    """清空系统与内置扩展名图标缓存."""
+    _system_icon.cache_clear()
+    _fallback_icon.cache_clear()

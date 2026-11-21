@@ -60,7 +60,9 @@ from shuimu.gui.tree_icons import (
     ROLE_RESOURCE_KIND,
     ROLE_RESOURCE_PATH,
     refresh_course_icons,
+    request_course_favicons,
     tree_icon_size,
+    update_course_favicon,
 )
 from shuimu.gui.titlebar import TitleBar
 
@@ -112,6 +114,9 @@ class MainWindow(QMainWindow):
         self.plan_table = None
         self._log_dialog = None
         self.favicon_service = favicons.FaviconService(parent=self)
+        self.favicon_service.icon_ready.connect(
+            lambda url, path: update_course_favicon(
+                self.course_tree, url, path))
         # 课程树展开状态记忆(会话内, 键见 _tree_state_key); 重建树后恢复
         self._tree_expanded: dict = {}
         # 应用内部剪贴板(与文件页共享, 左栏/中栏互通; 原地变异不重绑)
@@ -228,7 +233,7 @@ class MainWindow(QMainWindow):
         self.learn_page.refresh_theme()
         self.cloud_page.refresh_theme()
         self._log_dialog = None  # 下次打开按新主题重建
-        refresh_course_icons(self.course_tree)  # 图标按主题代次原地更新
+        refresh_course_icons(self.course_tree, self.favicon_service.store)  # 图标按主题代次原地更新
         label = dict(theme.theme_choices()).get(name, name)
         self.statusBar().showMessage(f"主题: {label} (重启后保持需写入 config.yaml)")
 
@@ -269,7 +274,7 @@ class MainWindow(QMainWindow):
         self.schedule_tab.set_font_px(theme.current_font_px())
         self.links_page.set_font_px(theme.current_font_px())
         self.title_bar.set_font_px(theme.current_font_px())
-        refresh_course_icons(self.course_tree)  # 只换图标, 不重建树或重查索引
+        refresh_course_icons(self.course_tree, self.favicon_service.store)  # 只换图标, 不重建树或重查索引
         if not quiet:
             self.statusBar().showMessage(
                 f"字号 {theme.current_font_px()}px (Ctrl+0 重置)")
@@ -524,6 +529,7 @@ class MainWindow(QMainWindow):
                 self.storage.list_resources(course["id"]))
             node.setExpanded(self._tree_expanded.get(
                 ("course", course["id"]), False))
+        request_course_favicons(self.course_tree, self.favicon_service)
 
     def _fill_course_node(self, course_node,
                           folders: list, resources: list) -> None:
@@ -569,7 +575,8 @@ class MainWindow(QMainWindow):
             icon = (file_icons.file_type_icon(
                 res["path_or_url"], size=tree_icon_size(), failed=not exists)
                 if res["kind"] == "file" else QIcon(artwork.kind_icon(
-                    res["kind"], failed=not exists, size=tree_icon_size())))
+                    "web" if res["kind"] == "link" else res["kind"],
+                    failed=not exists, size=tree_icon_size())))
             item.setIcon(0, icon)
             if not exists:
                 item.setForeground(0, QBrush(Qt.GlobalColor.gray))
