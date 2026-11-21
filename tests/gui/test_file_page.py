@@ -84,6 +84,11 @@ class TestSelection:
         assert index.isValid()
         assert not page.file_model.data(index, Qt.ItemDataRole.DecorationRole).isNull()
         assert str(path) in calls
+        calls.clear()
+        for column in (1, 2, 3):
+            other = index.sibling(index.row(), column)
+            page.file_model.data(other, Qt.ItemDataRole.DecorationRole)
+        assert not calls  # Size/Type/Modified 列不添加文件图标
         directory_index = page.file_model.index(str(directory))
         calls.clear()
         page.file_model.data(directory_index, Qt.ItemDataRole.DecorationRole)

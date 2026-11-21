@@ -47,7 +47,8 @@ class FileSystemModel(QFileSystemModel):
     """文件系统模型: 文件按后缀取图标, 目录保持 Qt 默认图标."""
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if role == Qt.ItemDataRole.DecorationRole and not self.isDir(index):
+        if (role == Qt.ItemDataRole.DecorationRole and index.column() == 0
+                and not self.isDir(index)):
             return file_icons.file_type_icon(
                 self.filePath(index), size=16, failed=False)
         return super().data(index, role)
