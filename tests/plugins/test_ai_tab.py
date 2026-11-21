@@ -254,7 +254,8 @@ class TestChat:
         assert ctl.ask_calls[0][0] == "什么是特征值"
         assert ctl.ask_calls[0][4] is False    # 默认不深度思考
         text = widget.chat_browser.toPlainText()
-        assert "什么是特征值" in text and "我" in text
+        assert "什么是特征值" in text and "你" in text
+        assert "水木 AI" in text
         assert "第一段第二段" in text
         assert widget.input_edit.toPlainText() == ""
         assert widget.session_box.count() == 2   # 新对话 + 1 个会话

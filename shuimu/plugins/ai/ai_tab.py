@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QFrame,
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
@@ -42,8 +43,8 @@ from shuimu.gui.dialogs import confirm_network_enable, warn
 PAGE_DISABLED, PAGE_CONFIG, PAGE_MAIN = 0, 1, 2
 CONTEXT_ALL = "all"      # 上下文下拉"全部课程"的 data 值
 
-USER_HEAD = '<p style="color:{primary};"><b>我</b></p>'
-AI_HEAD = '<p><b>AI</b></p>'
+USER_HEAD = '<p style="color:{primary};"><b>你</b></p>'
+AI_HEAD = '<p style="color:{dim};"><b>水木 AI</b></p>'
 THINK_TOGGLE = ('<p style="color:{dim};font-size:small">'
                 '<a href="{href}">{text}</a></p>')
 THINK_BODY = '<p style="color:{dim};font-size:small">{text}</p>'
@@ -79,9 +80,16 @@ class AiTab(QWidget):
         self._thinking_parts = []    # 本轮流式的思考增量缓存
         self._thinking_shown = False # 本轮流式是否已显示过思考段
         self._config_loading = False  # 刷新配置表单时避免下拉触发切换动作
+        self.context_box = None
+        self.learn_check = None
+        self.think_check = None
+        self.input_edit = None
+        self.tokens_label = None
+        self.send_button = None
         self.new_chat_button = None
         self.session_box = None
-        self.clear_history_button = None
+        self.history_button = None
+        self.clear_history_button = None  # 保留给历史管理阶段接线
         self.settings_button = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -158,79 +166,83 @@ class AiTab(QWidget):
         self.stack.addWidget(page)
 
     def _build_main_page(self) -> None:
-        """页 2: 对话主视图(工具行/上下文行/消息流/输入区)."""
+        """页 2: 对话主视图(轻量工具行/消息流/上下文/输入卡片)."""
         page = QWidget()
         column = QVBoxLayout(page)
-        # 工具行
+        column.setContentsMargins(6, 6, 6, 6)
+        column.setSpacing(8)
         column.addLayout(self._build_chat_tools(page))
-        # 上下文行
-        context = QHBoxLayout()
-        context.addWidget(QLabel("上下文:"))
-        self.context_box = QComboBox()
-        context.addWidget(self.context_box, 1)
-        self.learn_check = QCheckBox("含学堂缓存")
-        self.learn_check.setChecked(True)
-        context.addWidget(self.learn_check)
-        self.think_check = QCheckBox("深度思考")
-        self.think_check.setToolTip("回答前先深度思考(更慢, 消耗更多 tokens)")
-        context.addWidget(self.think_check)
-        column.addLayout(context)
-        # 消息流
+        # 消息流保持纯文本/Markdown 阅读区, 不再叠加重工具栏
         self.chat_browser = QTextBrowser()
+        self.chat_browser.setObjectName("aiChatBrowser")
         self.chat_browser.setOpenExternalLinks(False)
         self.chat_browser.anchorClicked.connect(self._on_anchor)
+        self.chat_browser.setPlaceholderText(
+            "从一个课程问题开始\n\n例如: 帮我梳理这周作业的要求")
         column.addWidget(self.chat_browser, 1)
         self.status_label = QLabel("")
         self.status_label.setStyleSheet(f"color: {theme.tokens().fg_dim};")
+        self.status_label.setWordWrap(True)
         column.addWidget(self.status_label)
-        # 输入区
+        # 上下文与输入合并为底部工作台, 视觉重心接近 CLI 输入区
+        composer = QFrame()
+        self._build_composer(composer)
+        column.addWidget(composer)
+        shortcut = QShortcut(QKeySequence("Ctrl+Return"), self.input_edit)
+        shortcut.activated.connect(self._send)
+        self.stack.addWidget(page)
+        self._refresh_chat_chrome()
+
+    def _build_composer(self, composer) -> None:
+        """构建输入卡片: 上下文选项 + 多行输入 + 用量/发送."""
+        composer.setObjectName("aiComposer")
+        layout = QVBoxLayout(composer)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(5)
+        context = QHBoxLayout()
+        context.addWidget(QLabel("上下文"))
+        self.context_box = QComboBox()
+        context.addWidget(self.context_box, 1)
+        self.learn_check = QCheckBox("学堂")
+        self.learn_check.setChecked(True)
+        self.learn_check.setToolTip("包含网络学堂缓存")
+        context.addWidget(self.learn_check)
+        self.think_check = QCheckBox("思考")
+        self.think_check.setToolTip("回答前先深度思考(更慢, 消耗更多 tokens)")
+        context.addWidget(self.think_check)
+        layout.addLayout(context)
         self.input_edit = QPlainTextEdit()
-        self.input_edit.setPlaceholderText("输入问题, Ctrl+Enter 发送")
-        self.input_edit.setFixedHeight(72)
-        column.addWidget(self.input_edit)
+        self.input_edit.setObjectName("aiInput")
+        self.input_edit.setPlaceholderText("询问课程问题…  Ctrl+Enter 发送")
+        self.input_edit.setFixedHeight(82)
+        layout.addWidget(self.input_edit)
         send_row = QHBoxLayout()
         self.tokens_label = QLabel("")
         self.tokens_label.setStyleSheet(f"color: {theme.tokens().fg_dim};")
         send_row.addWidget(self.tokens_label, 1)
-        self.send_button = QPushButton("发送")
+        self.send_button = QPushButton("发送 ↵")
+        self.send_button.setProperty("primary", True)
+        self.send_button.setToolTip("Ctrl+Enter")
         self.send_button.clicked.connect(self._send)
         send_row.addWidget(self.send_button)
-        column.addLayout(send_row)
-        shortcut = QShortcut(QKeySequence("Ctrl+Return"), self.input_edit)
-        shortcut.activated.connect(self._send)
-        self.stack.addWidget(page)
+        layout.addLayout(send_row)
 
     def _build_chat_tools(self, parent) -> QHBoxLayout:
-        """构建对话工具行: 新对话/历史/清历史/设置."""
+        """轻量工具行: 新对话/历史/当前会话/设置."""
         tools = QHBoxLayout()
-        self.new_chat_button = QPushButton("新对话", parent)
+        tools.setSpacing(4)
+        self.new_chat_button = QPushButton("＋ 新对话", parent)
+        self.new_chat_button.setProperty("tool", True)
         self.new_chat_button.clicked.connect(self._new_chat)
         tools.addWidget(self.new_chat_button)
         self.session_box = QComboBox(parent)
         self.session_box.currentIndexChanged.connect(self._on_session_picked)
+        self.session_box.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents)
         tools.addWidget(self.session_box, 1)
-        self.clear_history_button = QPushButton("清除历史", parent)
-        self.clear_history_button.clicked.connect(self._clear_history)
-        tools.addWidget(self.clear_history_button)
-        self.settings_button = QPushButton("设置", parent)
-        self.settings_button.setToolTip("修改服务地址、模型与 API Key")
-        self.settings_button.setProperty("tool", True)
-        self.settings_button.clicked.connect(self._show_config)
-        tools.addWidget(self.settings_button)
-        return tools
-
-    def _build_chat_tools(self, parent) -> QHBoxLayout:
-        """构建对话工具行: 新对话/历史/清历史/设置."""
-        tools = QHBoxLayout()
-        self.new_chat_button = QPushButton("新对话", parent)
-        self.new_chat_button.clicked.connect(self._new_chat)
-        tools.addWidget(self.new_chat_button)
-        self.session_box = QComboBox(parent)
-        self.session_box.currentIndexChanged.connect(self._on_session_picked)
-        tools.addWidget(self.session_box, 1)
-        self.clear_history_button = QPushButton("清除历史", parent)
-        self.clear_history_button.clicked.connect(self._clear_history)
-        tools.addWidget(self.clear_history_button)
+        self.history_button = QPushButton("历史", parent)
+        self.history_button.setProperty("tool", True)
+        tools.addWidget(self.history_button)
         self.settings_button = QPushButton("设置", parent)
         self.settings_button.setToolTip("修改服务地址、模型与 API Key")
         self.settings_button.setProperty("tool", True)
@@ -323,8 +335,11 @@ class AiTab(QWidget):
         if index > 0:
             self._append_html(cursor, "<p><br></p>")
         self._append_html(cursor, USER_HEAD.format(primary=theme.tokens().accent))
+        self._append_html(cursor, "<p><br></p>")
         self._insert_markdown_math(cursor, one_round["question"])
-        self._append_html(cursor, "<p><br></p>" + AI_HEAD)
+        self._append_html(cursor, "<p><br></p>" + AI_HEAD.format(
+            dim=theme.tokens().fg_dim))
+        self._append_html(cursor, "<p><br></p>")
         if one_round["thinking"]:
             self._render_thinking(cursor, index, one_round)
         if one_round["failed"]:
@@ -409,7 +424,22 @@ class AiTab(QWidget):
         dim = theme.tokens().fg_dim
         for label in (self.status_label, self.tokens_label):
             label.setStyleSheet(f"color: {dim};")
+        self._refresh_chat_chrome()
         self._rebuild_chat()
+
+    def _refresh_chat_chrome(self) -> None:
+        """对话区/输入卡片使用主题面板色, 不覆盖富文本消息着色."""
+        tk = theme.tokens()
+        self.chat_browser.setStyleSheet(
+            f"QTextBrowser#aiChatBrowser {{"
+            f"background-color: {tk.base}; border: 1px solid {tk.border};"
+            f"border-radius: 6px; padding: 12px; }}"
+            f"QTextBrowser#aiChatBrowser a {{color: {tk.accent_hover};}}")
+        composer = self.input_edit.parentWidget()
+        composer.setStyleSheet(
+            f"QFrame#aiComposer {{background-color: {tk.panel};"
+            f"border: 1px solid {tk.border}; border-radius: 8px;}}"
+            f"QFrame#aiComposer QLabel {{color: {tk.fg_dim};}}")
 
     def _enable_plugin(self) -> None:
         """启用 AI 插件(经网络权限确认框)."""
@@ -503,7 +533,9 @@ class AiTab(QWidget):
             self._append_html(cursor, "<p><br></p>")
         self._append_html(cursor, USER_HEAD.format(primary=theme.tokens().accent))
         self._append_plain(question)
-        self._append_html(cursor, "<p><br></p>" + AI_HEAD)
+        self._append_html(cursor, "<p><br></p>" + AI_HEAD.format(
+            dim=theme.tokens().fg_dim))
+        self._append_html(cursor, "<p><br></p>")
         self._thinking_parts = []
         self._thinking_shown = False
         self.input_edit.clear()
