@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
 from shuimu.core import url_open
+from shuimu.gui import artwork as shuimu_gui_artwork
 from shuimu.gui import main_window as shuimu_app
 from shuimu.gui import theme
 from shuimu.gui.main_window import MainWindow, tree_icon_size
@@ -354,7 +355,7 @@ def test_config_theme_applied_before_panels(qtbot, tmp_path, monkeypatch):
 
 
 def test_tree_icons_scale_with_font(qtbot, tmp_path):
-    """课程树节点图标随全局字号放大."""
+    """课程树节点图标随全局字号放大, 不重建节点."""
     default_size = tree_icon_size()
     assert default_size == 16  # 默认 13px 字号
     storage = Storage(str(tmp_path / "icons.db"))
@@ -365,10 +366,105 @@ def test_tree_icons_scale_with_font(qtbot, tmp_path):
     window.ctl.add_resource(course_id, "https://example.com/")
     window.reload_courses()
     node = window.course_tree.topLevelItem(0)
-    small = max(s.width() for s in node.child(0).icon(0).availableSizes())
+    leaf = node.child(0)
+    small = max(s.width() for s in leaf.icon(0).availableSizes())
     assert small == default_size
     window.set_app_font(20)
-    big = max(s.width() for s in
-              window.course_tree.topLevelItem(0).child(0).icon(0).availableSizes())
+    assert window.course_tree.topLevelItem(0) is node
+    assert node.child(0) is leaf
+    big = max(s.width() for s in leaf.icon(0).availableSizes())
     assert big == tree_icon_size() and big > small
+    storage.close()
+
+
+def test_zoom_updates_icons_without_reloading_or_disk_checks(
+        qtbot, tmp_path, monkeypatch):
+    """缩放不重建课程树, 不查询资源或检查磁盘, 保留选中和展开状态."""
+    storage = Storage(str(tmp_path / "zoom-tree.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
+                        links_path=str(tmp_path / "links.yaml"))
+    qtbot.addWidget(window)
+    cid = storage.ensure_default_course()
+    fid = storage.add_folder(cid, None, "课件")
+    missing = tmp_path / "missing.pdf"
+    storage.add_resource(cid, "file", str(missing), folder_id=fid)
+    window.reload_courses()
+    course = window.course_tree.topLevelItem(0)
+    folder = course.child(0)
+    leaf = folder.child(0)
+    course.setExpanded(True)
+    folder.setExpanded(True)
+    window.course_tree.setCurrentItem(leaf)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("字号缩放不应重载索引或检查磁盘")
+
+    monkeypatch.setattr(window, "reload_courses", forbidden)
+    monkeypatch.setattr(storage, "get_course", forbidden)
+    monkeypatch.setattr(storage, "get_resource", forbidden)
+    monkeypatch.setattr(Storage, "check_resource", staticmethod(forbidden))
+    window.set_app_font(20)
+    assert window.course_tree.currentItem() is leaf
+    assert course.isExpanded() and folder.isExpanded()
+    assert leaf.text(0).endswith("(失效)")
+    assert max(s.width() for s in leaf.icon(0).availableSizes()) \
+        == tree_icon_size()
+    assert max(s.width() for s in folder.icon(0).availableSizes()) \
+        == tree_icon_size()
+    storage.close()
+
+
+def test_course_tree_uses_file_type_icons(qtbot, tmp_path, monkeypatch):
+    """首次构建课程树按后缀取文件图标, 而不是通用文件图标."""
+    storage = Storage(str(tmp_path / "file-icons.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
+                        links_path=str(tmp_path / "links.yaml"))
+    qtbot.addWidget(window)
+    cid = storage.ensure_default_course()
+    for name in ("讲义.pdf", "代码.py"):
+        path = tmp_path / name
+        path.write_text("x", encoding="utf-8")
+        storage.add_resource(cid, "file", str(path))
+    calls = []
+    original = shuimu_app.file_icons.file_type_icon
+
+    def record(path, **kwargs):
+        calls.append(path)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(shuimu_app.file_icons, "file_type_icon", record)
+    window.reload_courses()
+    assert calls == [str(tmp_path / "讲义.pdf"), str(tmp_path / "代码.py")]
+    storage.close()
+
+
+def test_zoom_repeated_same_size_skips_icon_repaints(qtbot, tmp_path,
+                                                     monkeypatch):
+    """相同字号/主题重复刷新不重复生成树图标."""
+    storage = Storage(str(tmp_path / "zoom-cache.db"))
+    window = MainWindow(storage, schedule_path=str(tmp_path / "s.yaml"),
+                        links_path=str(tmp_path / "links.yaml"))
+    qtbot.addWidget(window)
+    storage.add_resource(storage.ensure_default_course(),
+                         "link", "https://example.com/")
+    window.reload_courses()
+    calls = []
+    original = shuimu_gui_artwork.kind_icon
+
+    def record(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(shuimu_gui_artwork, "kind_icon", record)
+    record.cache_clear = original.cache_clear  # 主题切换仍需能清缓存
+    window.set_app_font(14)
+    count = len(calls)
+    assert count > 0
+    window.set_app_font(14)
+    assert len(calls) == count + 2  # 仅链接页两个图标, 课程树无重绘
+    assert calls[count:] == [(("web",), {"size": 18}),
+                             (("dir",), {"size": 18})]
+    window.set_app_theme("light")
+    assert len(calls) > count  # 主题代次变化必须刷新图标颜色
+    window.set_app_theme("dark")
     storage.close()

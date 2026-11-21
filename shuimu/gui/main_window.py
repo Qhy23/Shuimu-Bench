@@ -45,7 +45,7 @@ from shuimu.core.controller import Controller
 from shuimu.core.paths import user_themes_dir
 from shuimu.core.storage import Storage
 from shuimu.core.url_open import wslview_open as _wslview_open
-from shuimu.gui import artwork, dialogs, theme
+from shuimu.gui import artwork, dialogs, favicons, file_icons, theme
 from shuimu.gui.dialogs import LogPreviewDialog, confirm_network_enable, warn
 from shuimu.gui.file_page import FileBrowserPage
 from shuimu.gui.links_page import LinksPage
@@ -55,16 +55,18 @@ from shuimu.plugins.cloud.cloud_page import CloudPage
 from shuimu.plugins.ai.ai_tab import AiTab
 from shuimu.gui.plugin_runner import run_plugin_dialogs
 from shuimu.gui.schedule_view import ScheduleTab
+from shuimu.gui.tree_icons import (
+    ROLE_RESOURCE_FAILED,
+    ROLE_RESOURCE_KIND,
+    ROLE_RESOURCE_PATH,
+    refresh_course_icons,
+    tree_icon_size,
+)
 from shuimu.gui.titlebar import TitleBar
 
 ROLE_RESOURCE_ID = Qt.UserRole
 ROLE_COURSE_ID = Qt.UserRole + 1
 ROLE_FOLDER_ID = Qt.UserRole + 2
-
-
-def tree_icon_size() -> int:
-    """课程树节点图标边长, 随全局字号."""
-    return max(12, round(theme.current_font_px() * 1.25))
 
 
 def _button(text: str, slot) -> QPushButton:
@@ -109,6 +111,7 @@ class MainWindow(QMainWindow):
         self.dir_edit = None
         self.plan_table = None
         self._log_dialog = None
+        self.favicon_service = favicons.FaviconService(parent=self)
         # 课程树展开状态记忆(会话内, 键见 _tree_state_key); 重建树后恢复
         self._tree_expanded: dict = {}
         # 应用内部剪贴板(与文件页共享, 左栏/中栏互通; 原地变异不重绑)
@@ -185,6 +188,11 @@ class MainWindow(QMainWindow):
             action.triggered.connect(
                 lambda _checked=False, n=name: self.set_app_theme(n))
         menu.addSeparator()
+        fetch_action = menu.addAction("联网获取网站图标(favicon)")
+        fetch_action.setCheckable(True)
+        fetch_action.setChecked(self.favicon_service.is_enabled())
+        fetch_action.setToolTip("默认关闭; 仅访问目标网站公开图标, 后台加载并缓存")
+        fetch_action.triggered.connect(self._toggle_favicons)
         open_action = menu.addAction("打开主题目录...")
         open_action.setToolTip("用户主题 YAML 文件放这里, 重启后出现在列表")
         open_action.triggered.connect(self._open_themes_dir)
@@ -197,6 +205,15 @@ class MainWindow(QMainWindow):
         via_wsl = _wslview_open(path)
         if via_wsl is None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _toggle_favicons(self, enabled: bool) -> None:
+        """显式授权后才后台获取公开 favicon; 关闭只停新任务."""
+        self.favicon_service.set_enabled(enabled)
+        if enabled:
+            self.links_page.reload()
+        self.statusBar().showMessage(
+            "网站图标后台获取已开启(仅公开 favicon)" if enabled
+            else "网站图标联网获取已关闭")
 
     def set_app_theme(self, name: str) -> None:
         """切换全局主题并联动全部自绘/缓存部件."""
@@ -211,7 +228,7 @@ class MainWindow(QMainWindow):
         self.learn_page.refresh_theme()
         self.cloud_page.refresh_theme()
         self._log_dialog = None  # 下次打开按新主题重建
-        self.reload_courses()  # 课程树图标随主题重建
+        refresh_course_icons(self.course_tree)  # 图标按主题代次原地更新
         label = dict(theme.theme_choices()).get(name, name)
         self.statusBar().showMessage(f"主题: {label} (重启后保持需写入 config.yaml)")
 
@@ -252,7 +269,7 @@ class MainWindow(QMainWindow):
         self.schedule_tab.set_font_px(theme.current_font_px())
         self.links_page.set_font_px(theme.current_font_px())
         self.title_bar.set_font_px(theme.current_font_px())
-        self.reload_courses()  # 树节点图标随字号重建
+        refresh_course_icons(self.course_tree)  # 只换图标, 不重建树或重查索引
         if not quiet:
             self.statusBar().showMessage(
                 f"字号 {theme.current_font_px()}px (Ctrl+0 重置)")
@@ -365,7 +382,8 @@ class MainWindow(QMainWindow):
         self.file_page.set_plugin_catalog(self.ctl.plugins.catalog())
         self.file_page.plugin_requested.connect(self._on_plugin_requested)
         self.center_tabs.addTab(self.file_page, "文件")
-        self.links_page = LinksPage(self.ctl, self.center_tabs)
+        self.links_page = LinksPage(self.ctl, self.center_tabs,
+                                    favicon_service=self.favicon_service)
         self.center_tabs.addTab(self.links_page, "链接")
         self.learn_page = LearnPage(self.ctl, self.center_tabs)
         self.learn_page.status_message.connect(self.statusBar().showMessage)
@@ -492,6 +510,7 @@ class MainWindow(QMainWindow):
         for course in self.storage.list_courses():
             node = QTreeWidgetItem(self.course_tree, [course["name"]])
             node.setData(0, ROLE_COURSE_ID, course["id"])
+            node.setData(0, ROLE_RESOURCE_KIND, "course")
             node.setToolTip(0, f"课程: {course['name']}")
             node.setIcon(0, QIcon(artwork.kind_icon(
                 "course", size=icon_size,
@@ -518,6 +537,7 @@ class MainWindow(QMainWindow):
             for folder in by_parent.get(parent_id, []):
                 item = QTreeWidgetItem(parent_item, [folder["name"]])
                 item.setData(0, ROLE_FOLDER_ID, folder["id"])
+                item.setData(0, ROLE_RESOURCE_KIND, "dir")
                 item.setToolTip(0, f"文件夹: {folder['name']}")
                 item.setIcon(0, QIcon(artwork.kind_icon(
                     "dir", size=tree_icon_size())))
@@ -542,10 +562,15 @@ class MainWindow(QMainWindow):
             item = QTreeWidgetItem(nodes.get(res["folder_id"], course_node),
                                    [label])
             item.setData(0, ROLE_RESOURCE_ID, res["id"])
+            item.setData(0, ROLE_RESOURCE_KIND, res["kind"])
+            item.setData(0, ROLE_RESOURCE_FAILED, not exists)
+            item.setData(0, ROLE_RESOURCE_PATH, res["path_or_url"])
             item.setToolTip(0, res["path_or_url"])
-            item.setIcon(0, QIcon(artwork.kind_icon(
-                res["kind"], failed=not exists,
-                size=tree_icon_size())))
+            icon = (file_icons.file_type_icon(
+                res["path_or_url"], size=tree_icon_size(), failed=not exists)
+                if res["kind"] == "file" else QIcon(artwork.kind_icon(
+                    res["kind"], failed=not exists, size=tree_icon_size())))
+            item.setIcon(0, icon)
             if not exists:
                 item.setForeground(0, QBrush(Qt.GlobalColor.gray))
 
@@ -956,3 +981,8 @@ class MainWindow(QMainWindow):
         self.plan_table.setRowCount(0)
         self._plan = []
         self.statusBar().showMessage(result.message)
+
+    def closeEvent(self, event) -> None:
+        """关闭前停止 favicon 后台队列, 避免晚到结果访问已销毁页面."""
+        self.favicon_service.shutdown()
+        super().closeEvent(event)

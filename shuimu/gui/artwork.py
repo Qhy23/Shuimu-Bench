@@ -140,11 +140,19 @@ def kind_icon(kind: str, failed: bool = False, size: int = 16,
                                 4, 4)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRect(QRectF(s * 0.12, s * 0.18, s * 0.34, s * 0.14))
-    elif kind == "link":
-        painter.setPen(_pen(accent, max(1.8, size * 0.16)))
-        painter.drawEllipse(QRectF(s * 0.22, s * 0.22, s * 0.56, s * 0.56))
-        painter.drawLine(round(s * 0.36), round(s * 0.62),
-                         round(s * 0.64), round(s * 0.38))
+    elif kind in ("link", "web"):
+        if kind == "web":
+            # 无 favicon 时的地球 WEB 图标: 外环 + 经纬线
+            painter.setPen(_pen(accent, max(1.4, size * 0.11)))
+            painter.drawEllipse(QRectF(s * 0.18, s * 0.18, s * 0.64, s * 0.64))
+            painter.drawEllipse(QRectF(s * 0.36, s * 0.18, s * 0.28, s * 0.64))
+            painter.drawLine(round(s * 0.18), round(s * 0.5),
+                             round(s * 0.82), round(s * 0.5))
+        else:
+            painter.setPen(_pen(accent, max(1.8, size * 0.16)))
+            painter.drawEllipse(QRectF(s * 0.22, s * 0.22, s * 0.56, s * 0.56))
+            painter.drawLine(round(s * 0.36), round(s * 0.62),
+                             round(s * 0.64), round(s * 0.38))
     else:  # file
         painter.setPen(edge_pen)
         painter.setBrush(fill)

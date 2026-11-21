@@ -112,7 +112,7 @@ BUILTIN_THEMES = {t.name: t for t in (DARK_TOKENS, LIGHT_TOKENS)}
 # ---- 运行时状态 ----
 
 _state = {"font_px": DEFAULT_FONT_PX, "theme": DARK_TOKENS.name,
-          "tokens": DARK_TOKENS}
+          "tokens": DARK_TOKENS, "revision": 0}
 _last_user_themes = {}  # theme_choices 调用时刷新的用户主题快照
 
 
@@ -124,6 +124,11 @@ def tokens() -> ThemeTokens:
 def current_name() -> str:
     """当前主题 id."""
     return _state["theme"]
+
+
+def theme_revision() -> int:
+    """主题配色代次, 切换主题时递增, 供按色缓存判断."""
+    return _state["revision"]
 
 
 def current_font_px() -> int:
@@ -567,6 +572,7 @@ def apply_theme(app, font_px: int = None, theme: str = None) -> None:
         if all_themes[theme] is not _state["tokens"]:
             _state["theme"] = theme
             _state["tokens"] = all_themes[theme]
+            _state["revision"] += 1
             for listener in list(_listeners):
                 listener()
     app.setStyleSheet(build_qss())

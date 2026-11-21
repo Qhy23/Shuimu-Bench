@@ -100,9 +100,13 @@ class LinkDialog(QDialog):
 class LinksPage(QWidget):
     """链接页(中栏"链接"页签): 分组树 + 增删改 + 打开."""
 
-    def __init__(self, controller: Controller, parent=None):
+    def __init__(self, controller: Controller, parent=None,
+                 favicon_service=None):
         super().__init__(parent)
         self.controller = controller
+        self.favicon_service = favicon_service
+        if self.favicon_service is not None:
+            self.favicon_service.icon_ready.connect(self._on_favicon_ready)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         hint = QLabel("常用网站: 双击条目或点\"打开\"经系统浏览器访问; "
@@ -132,7 +136,7 @@ class LinksPage(QWidget):
     def reload(self) -> None:
         """从控制器重建分组树(组按首现顺序, 未分组末尾)."""
         self.tree.clear()
-        link_icon = QIcon(artwork.kind_icon("link", size=_link_icon_size()))
+        link_icon = QIcon(artwork.kind_icon("web", size=_link_icon_size()))
         group_icon = QIcon(artwork.kind_icon("dir", size=_link_icon_size()))
         for group, links in grouped_links(self.controller.list_quick_links()):
             node = QTreeWidgetItem(
@@ -148,21 +152,49 @@ class LinksPage(QWidget):
                 item.setToolTip(0, link.url)
                 item.setToolTip(1, link.url)
                 item.setData(0, ROLE_LINK, link)
-                item.setIcon(0, link_icon)
+                item.setIcon(0, self._icon_for_link(link, link_icon))
                 item.setForeground(
                     1, QBrush(QColor(theme.tokens().fg_dim)))
         self.tree.expandAll()
 
+    def _icon_for_link(self, link, fallback) -> QIcon:
+        """先取 favicon 缓存, 无缓存用默认 WEB 图标并按需登记后台任务."""
+        if self.favicon_service is None:
+            return fallback
+        cached = self.favicon_service.store.cached_icon_path(link.url)
+        if cached:
+            icon = QIcon(cached)
+            if not icon.isNull():
+                return icon
+        self.favicon_service.request(link.url)
+        return fallback
+
+    def _on_favicon_ready(self, url: str, icon_path: str) -> None:
+        """后台 favicon 完成后仅更新对应 URL 的节点."""
+        icon = QIcon(icon_path)
+        if icon.isNull():
+            return
+        root = self.tree.invisibleRootItem()
+        for gi in range(root.childCount()):
+            group = root.child(gi)
+            for li in range(group.childCount()):
+                item = group.child(li)
+                link = item.data(0, ROLE_LINK)
+                if link is not None and link.url == url:
+                    item.setIcon(0, icon)
+
     def set_font_px(self, _font_px: int) -> None:
         """随全局字号更新两级图标(尺寸读 theme 当前值, 参数保持接口一致)."""
-        link_icon = QIcon(artwork.kind_icon("link", size=_link_icon_size()))
+        link_icon = QIcon(artwork.kind_icon("web", size=_link_icon_size()))
         group_icon = QIcon(artwork.kind_icon("dir", size=_link_icon_size()))
         root = self.tree.invisibleRootItem()
         for gi in range(root.childCount()):
             group_node = root.child(gi)
             group_node.setIcon(0, group_icon)
             for li in range(group_node.childCount()):
-                group_node.child(li).setIcon(0, link_icon)
+                leaf = group_node.child(li)
+                link = leaf.data(0, ROLE_LINK)
+                leaf.setIcon(0, self._icon_for_link(link, link_icon))
 
     def refresh_theme(self) -> None:
         """主题切换后重建分组树(图标颜色随缓存清除重建)."""

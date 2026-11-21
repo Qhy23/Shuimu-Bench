@@ -125,6 +125,11 @@ def user_data_dir() -> str:
     return os.path.join(base, "shuimu")
 
 
+def default_favicon_cache_dir() -> str:
+    """网页 favicon 缓存目录(只存公开图标, 不存网页内容或凭据)."""
+    return os.path.join(user_data_dir(), "favicons")
+
+
 def user_themes_dir() -> str:
     """用户自定义主题目录(YAML 主题文件放此, 加载见 gui/theme.py)."""
     return os.path.join(user_data_dir(), "themes")
