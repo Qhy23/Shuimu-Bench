@@ -77,6 +77,10 @@ class AiTab(QWidget):
         self._rounds = []            # 当前会话的轮次渲染结构
         self._thinking_parts = []    # 本轮流式的思考增量缓存
         self._thinking_shown = False # 本轮流式是否已显示过思考段
+        self.new_chat_button = None
+        self.session_box = None
+        self.clear_history_button = None
+        self.settings_button = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.stack = QStackedWidget()
@@ -141,17 +145,7 @@ class AiTab(QWidget):
         page = QWidget()
         column = QVBoxLayout(page)
         # 工具行
-        tools = QHBoxLayout()
-        self.new_chat_button = QPushButton("新对话")
-        self.new_chat_button.clicked.connect(self._new_chat)
-        tools.addWidget(self.new_chat_button)
-        self.session_box = QComboBox()
-        self.session_box.currentIndexChanged.connect(self._on_session_picked)
-        tools.addWidget(self.session_box, 1)
-        self.clear_history_button = QPushButton("清除历史")
-        self.clear_history_button.clicked.connect(self._clear_history)
-        tools.addWidget(self.clear_history_button)
-        column.addLayout(tools)
+        column.addLayout(self._build_chat_tools(page))
         # 上下文行
         context = QHBoxLayout()
         context.addWidget(QLabel("上下文:"))
@@ -189,8 +183,45 @@ class AiTab(QWidget):
         shortcut.activated.connect(self._send)
         self.stack.addWidget(page)
 
-    # ---- 状态机 ----
+    def _build_chat_tools(self, parent) -> QHBoxLayout:
+        """构建对话工具行: 新对话/历史/清历史/设置."""
+        tools = QHBoxLayout()
+        self.new_chat_button = QPushButton("新对话", parent)
+        self.new_chat_button.clicked.connect(self._new_chat)
+        tools.addWidget(self.new_chat_button)
+        self.session_box = QComboBox(parent)
+        self.session_box.currentIndexChanged.connect(self._on_session_picked)
+        tools.addWidget(self.session_box, 1)
+        self.clear_history_button = QPushButton("清除历史", parent)
+        self.clear_history_button.clicked.connect(self._clear_history)
+        tools.addWidget(self.clear_history_button)
+        self.settings_button = QPushButton("设置", parent)
+        self.settings_button.setToolTip("修改服务地址、模型与 API Key")
+        self.settings_button.setProperty("tool", True)
+        self.settings_button.clicked.connect(self._show_config)
+        tools.addWidget(self.settings_button)
+        return tools
 
+    def _build_chat_tools(self, parent) -> QHBoxLayout:
+        """构建对话工具行: 新对话/历史/清历史/设置."""
+        tools = QHBoxLayout()
+        self.new_chat_button = QPushButton("新对话", parent)
+        self.new_chat_button.clicked.connect(self._new_chat)
+        tools.addWidget(self.new_chat_button)
+        self.session_box = QComboBox(parent)
+        self.session_box.currentIndexChanged.connect(self._on_session_picked)
+        tools.addWidget(self.session_box, 1)
+        self.clear_history_button = QPushButton("清除历史", parent)
+        self.clear_history_button.clicked.connect(self._clear_history)
+        tools.addWidget(self.clear_history_button)
+        self.settings_button = QPushButton("设置", parent)
+        self.settings_button.setToolTip("修改服务地址、模型与 API Key")
+        self.settings_button.setProperty("tool", True)
+        self.settings_button.clicked.connect(self._show_config)
+        tools.addWidget(self.settings_button)
+        return tools
+
+    # ---- 状态机 ----
     def refresh_state(self) -> None:
         """按插件与配置状态切换页面(零联网)."""
         record = self._ctl.plugins.get("ai")
@@ -211,6 +242,10 @@ class AiTab(QWidget):
         self._refresh_sessions()
         self._rebuild_chat()
         self.stack.setCurrentIndex(PAGE_MAIN)
+
+    def _show_config(self) -> None:
+        """从问答页返回配置表单, 保留当前会话与对话状态."""
+        self.stack.setCurrentIndex(PAGE_CONFIG)
 
     def _refresh_course_choices(self) -> None:
         """上下文下拉: 不附带 / 全部课程 / 各课程."""

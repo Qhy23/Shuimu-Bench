@@ -136,6 +136,15 @@ class TestStates:
         widget, _ctl = tab
         assert widget.stack.currentIndex() == PAGE_MAIN
 
+    def test_settings_returns_to_config(self, tab):
+        """已配置问答页可返回配置页, 配置内容保持可编辑."""
+        widget, _ctl = tab
+        widget.settings_button.click()
+        assert widget.stack.currentIndex() == PAGE_CONFIG
+        assert widget.base_url_edit.isEnabled()
+        assert widget.model_edit.isEnabled()
+        assert widget.key_edit.isEnabled()
+
     def test_course_choices_filled(self, tab):
         """上下文下拉含 不附带/全部课程/各课程."""
         widget, _ctl = tab
