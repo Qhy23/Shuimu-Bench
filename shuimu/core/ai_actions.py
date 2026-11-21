@@ -18,7 +18,9 @@ from shuimu.core.ai import (
 from shuimu.core.ai_context import build_context
 
 SYSTEM_PROMPT = ("你是水木工作台里的课程学习助手. 请依据下面提供的课程资料"
-                 "回答问题; 资料不足以回答时如实说明.\n\n")
+                 "回答问题; 资料不足以回答时如实说明.\n"
+                 "公式只能使用行内 $...$ 或独立行 $$...$$ 的 LaTeX 环境;"
+                 "不要使用 \\[...\\], \\(...\\) 或其他公式环境.\n\n")
 AI_ERROR_MESSAGES = {
     "auth": "鉴权失败: 请检查 API Key 与服务地址",
     "rate_limit": "请求过于频繁, 请稍后再试",
