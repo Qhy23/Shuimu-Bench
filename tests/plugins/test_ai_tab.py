@@ -1,6 +1,8 @@
 """ai_tab 测试: 三态页签/配置/流式对话/会话切换(offscreen, 假 controller)."""
 
 from types import SimpleNamespace
+import threading
+import time
 
 import pytest
 from PySide6.QtCore import QUrl
@@ -121,6 +123,13 @@ def tab(qtbot):
     ctl = FakeAiController(configured=True)
     widget = AiTab(ctl)
     qtbot.addWidget(widget)
+    original_send = widget._send
+
+    def send_and_wait():
+        original_send()
+        qtbot.waitUntil(lambda: not widget._ask_running, timeout=5000)
+
+    widget._send = send_and_wait
     return widget, ctl
 
 
@@ -372,6 +381,36 @@ class TestChat:
         assert "xx-large" in html                  # h1 生效
         assert "q1" in widget.chat_browser.toPlainText()   # 首轮仍在
         del ctl.ask_answer
+
+    def test_context_build_does_not_block_ui(self, qtbot):
+        """附带资料整理期间主窗口可继续处理 Qt 事件, 不阻塞界面."""
+        ctl = FakeAiController(configured=True)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_ask(*_args, **_kwargs):
+            entered.set()
+            release.wait(2)
+            return ActionResult(True, "已回答", {
+                "answer": "答", "session_id": 1, "usage": {},
+                "context_items": []})
+
+        ctl.ai_ask = slow_ask
+        widget = AiTab(ctl)
+        qtbot.addWidget(widget)
+        widget.context_box.setCurrentIndex(1)
+        widget.input_edit.setPlainText("问")
+        widget._send()
+        assert entered.wait(1)
+        started = time.monotonic()
+        for _ in range(10):
+            qtbot.wait(5)
+        assert time.monotonic() - started < 1
+        assert widget._ask_running
+        assert widget.send_button.isEnabled() is False
+        release.set()
+        qtbot.waitUntil(lambda: not widget._ask_running, timeout=5000)
+        assert "答" in widget.chat_browser.toPlainText()
 
     def test_send_failure_appends_note(self, tab):
         """失败: 错误消息追加在消息流内."""

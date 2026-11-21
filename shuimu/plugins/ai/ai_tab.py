@@ -13,8 +13,9 @@ core/ai_math 轻量转换(占位符 -> LaTeX 子集 HTML). 思考不持久化,
 """
 
 import html as html_mod
+import queue
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -169,6 +170,37 @@ class AiHistoryDialog(QDialog):
             self._update_buttons()
 
 
+class _AskWorkerSignals(QObject):
+    """后台问答的跨线程通知."""
+
+    finished = Signal(object)
+
+
+class _AskJob(QRunnable):
+    """只执行 controller 动作, 不触碰任何 Qt 控件."""
+
+    def __init__(self, ctl, question, course_ids, include_learn, session_id,
+                 think):
+        super().__init__()
+        self._ctl = ctl
+        self._question = question
+        self._course_ids = course_ids
+        self._include_learn = include_learn
+        self._session_id = session_id
+        self._think = think
+        self.signals = _AskWorkerSignals()
+        self._events = queue.Queue()
+
+    def run(self) -> None:
+        result = self._ctl.ai_ask(
+            self._question, course_ids=self._course_ids,
+            include_learn=self._include_learn, session_id=self._session_id,
+            stream=True, think=self._think,
+            on_delta=lambda piece: self._events.put(("delta", piece)),
+            on_thinking=lambda piece: self._events.put(("thinking", piece)))
+        self.signals.finished.emit(result)
+
+
 class AiTab(QWidget):
     """右栏 AI 页签: 三态 + 对话视图."""
 
@@ -183,6 +215,14 @@ class AiTab(QWidget):
         self._thinking_parts = []    # 本轮流式的思考增量缓存
         self._thinking_shown = False # 本轮流式是否已显示过思考段
         self._config_loading = False  # 刷新配置表单时避免下拉触发切换动作
+        self._ask_running = False
+        self._ask_question = ""
+        self._ask_pool = QThreadPool(self)
+        self._ask_pool.setMaxThreadCount(1)  # 同页一次一问, 避免并发写会话
+        self._ask_job = None
+        self._ask_timer = QTimer(self)
+        self._ask_timer.setInterval(30)
+        self._ask_timer.timeout.connect(self._drain_ask_events)
         self.context_box = None
         self.learn_check = None
         self.think_check = None
@@ -303,7 +343,7 @@ class AiTab(QWidget):
         layout.setContentsMargins(8, 6, 8, 8)
         layout.setSpacing(5)
         context = QHBoxLayout()
-        context.addWidget(QLabel("上下文"))
+        context.addWidget(QLabel("附带资料"))
         self.context_box = QComboBox()
         context.addWidget(self.context_box, 1)
         self.learn_check = QCheckBox("学堂")
@@ -513,8 +553,10 @@ class AiTab(QWidget):
         for index, latex in enumerate(formulas):
             # 仅在当前消息范围内替换; 每个占位符按序号精确定位,
             # 不搜索或修改此前轮次的文本.
-            hit = document.find(f"⁣F{index}⁣", scope_start)
-            if not hit.isNull() and hit.position() + len(f"F{index}") <= scope_end:
+            finder = QTextCursor(document)
+            finder.setPosition(scope_start)
+            hit = document.find(f"⁣F{index}⁣", finder)
+            if not hit.isNull() and hit.position() <= scope_end:
                 hit.insertHtml(latex_to_html(latex))
 
     def _append_plain(self, piece: str) -> None:
@@ -627,18 +669,26 @@ class AiTab(QWidget):
         return [data]
 
     def _send(self) -> None:
-        """发送问题; 思考与回答流式纯文本追加, 完成后整流重渲染."""
+        """后台发送: 资料整理与模型调用不阻塞主线程, 增量经信号回到 UI."""
+        if self._ask_running:
+            return
         question = self.input_edit.toPlainText().strip()
         if not question:
             return
+        self._ask_running = True
+        self._ask_question = question
         self.send_button.setEnabled(False)
         self.new_chat_button.setEnabled(False)
-        self.status_label.setText("回答中...")
-        self.repaint()
+        self.session_box.setEnabled(False)
+        self.history_button.setEnabled(False)
+        self.status_label.setText(
+            "正在整理附带资料..." if self._selected_course_ids()
+            or self.learn_check.isChecked() else "正在等待模型回复...")
         cursor = self.chat_browser.textCursor()
         if self._rounds:
             self._append_html(cursor, "<p><br></p>")
         self._append_html(cursor, USER_HEAD.format(primary=theme.tokens().accent))
+        self._append_html(cursor, "<p><br></p>")
         self._append_plain(question)
         self._append_html(cursor, "<p><br></p>" + AI_HEAD.format(
             dim=theme.tokens().fg_dim))
@@ -646,19 +696,43 @@ class AiTab(QWidget):
         self._thinking_parts = []
         self._thinking_shown = False
         self.input_edit.clear()
-        result = self._ctl.ai_ask(
-            question, course_ids=self._selected_course_ids(),
-            include_learn=self.learn_check.isChecked(),
-            session_id=self._session_id, stream=True,
-            think=self.think_check.isChecked(),
-            on_thinking=self._on_thinking,
-            on_delta=self._on_delta)
+        self._ask_job = _AskJob(
+            self._ctl, question, self._selected_course_ids(),
+            self.learn_check.isChecked(), self._session_id,
+            self.think_check.isChecked())
+        self._ask_job.signals.finished.connect(self._ask_finished)
+        self._ask_timer.start()
+        self._ask_pool.start(self._ask_job)
+
+    def _drain_ask_events(self) -> None:
+        """在 UI 线程按后台产生顺序消费流式增量."""
+        if self._ask_job is None:
+            return
+        while True:
+            try:
+                kind, piece = self._ask_job._events.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "delta":
+                self._on_delta(piece)
+            else:
+                self._on_thinking(piece)
+
+    def _ask_finished(self, result) -> None:
+        """UI 线程接收后台问答结果, 更新消息与用量并恢复操作."""
+        self._drain_ask_events()
+        self._ask_timer.stop()
+        self._ask_running = False
+        self._ask_job = None
         self.send_button.setEnabled(True)
         self.new_chat_button.setEnabled(True)
+        self.session_box.setEnabled(True)
+        self.history_button.setEnabled(True)
         self.status_label.setText("")
         thinking = "".join(self._thinking_parts)
         if not result.ok:
-            self._rounds.append(_new_round(question, thinking=thinking,
+            self._rounds.append(_new_round(self._ask_question,
+                                           thinking=thinking,
                                            answer=result.message,
                                            failed=True))
             self._rebuild_chat()
@@ -666,7 +740,7 @@ class AiTab(QWidget):
             return
         self._session_id = result.detail["session_id"]
         self._rounds.append(_new_round(
-            question, thinking=thinking,
+            self._ask_question, thinking=thinking,
             answer=result.detail.get("answer", ""),
             footnote=self._build_footnote(result.detail)))
         self._update_tokens(result.detail.get("usage") or {})
@@ -761,6 +835,8 @@ class AiTab(QWidget):
 
     def _clear_history(self) -> None:
         """清除全部对话历史(确认框)."""
+        if self._ask_running:
+            return  # 请求进行中不改会话归属, 完成后再管理历史
         if not _confirm(self, "清除全部 AI 对话历史?"):
             return
         result = self._ctl.ai_clear_history()
@@ -770,3 +846,10 @@ class AiTab(QWidget):
         self._refresh_sessions()
         self._rebuild_chat()
         self._reset_tokens()
+
+    def closeEvent(self, event) -> None:
+        """关闭页面前停止增量刷新并等待后台问答结束."""
+        self._ask_timer.stop()
+        if self._ask_running:
+            self._ask_pool.waitForDone()
+        super().closeEvent(event)
