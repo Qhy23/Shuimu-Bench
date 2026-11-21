@@ -111,6 +111,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # gh release --generate-notes 需要完整历史与标签
       - uses: actions/download-artifact@v4
         with:
           pattern: ShuimuBench-*
@@ -121,5 +124,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
               --verify-tag --generate-notes \
-            || gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+            || gh release upload "$GITHUB_REF_NAME" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" --clobber
