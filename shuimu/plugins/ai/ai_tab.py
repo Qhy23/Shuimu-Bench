@@ -576,14 +576,14 @@ class AiTab(QWidget):
         scope_start = document.characterCount() - 1
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertMarkdown(plain)
-        scope_end = document.characterCount()
         for index, latex in enumerate(formulas):
-            # 仅在当前消息范围内替换; 每个占位符按序号精确定位,
-            # 不搜索或修改此前轮次的文本.
+            # 每条从当前消息起点独立定位. 插入公式 HTML 会改变文档长度,
+            # 不能用插入前的 scope_end 判断后续命中是否越界, 否则长公式
+            # 序列后半段会被误跳过, 留下 F数字 占位符.
             finder = QTextCursor(document)
             finder.setPosition(scope_start)
             hit = document.find(f"⁣F{index}⁣", finder)
-            if not hit.isNull() and hit.position() <= scope_end:
+            if not hit.isNull():
                 hit.insertHtml(latex_to_html(latex))
 
     def _append_plain(self, piece: str) -> None:

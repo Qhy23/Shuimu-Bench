@@ -371,6 +371,25 @@ class TestChat:
         assert "⁣" not in widget.chat_browser.toPlainText()
         del ctl.ask_answer
 
+    def test_long_complex_formula_sequence_has_no_placeholders(self, tab):
+        """含分数/中文说明的长公式序列后半段不再被旧文档边界跳过."""
+        widget, ctl = tab
+        ctl.ask_answer = ("前 $a$ 后 " + " ".join(
+            f"$\\frac{{x_{{{i}}}}}{{y_{{{i}}}}}$" for i in range(1, 50)))
+        widget.input_edit.setPlainText("公式")
+        widget._send()
+        text = widget.chat_browser.toPlainText()
+        assert "⁣" not in text
+        assert "(x49)/(y49)" in text
+        ctl.ask_answer = ("前 $a$ 后 " + " ".join(
+            f"$x_{{{i}}} + \\text{{中文说明}} $" for i in range(1, 50)))
+        widget.input_edit.setPlainText("再问")
+        widget._send()
+        text = widget.chat_browser.toPlainText()
+        assert "⁣" not in text
+        assert "x49 + 中文说明" in text
+        del ctl.ask_answer
+
     def test_answer_rendered_as_markdown(self, tab):
         """完成后整流重渲染: 标题/加粗生效, 历史轮次不丢."""
         widget, ctl = tab
